@@ -1,0 +1,107 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{amsmath,amssymb}
+
+\title{SoICT 2026: Integrated Passenger and Parcel Transportation}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Input}
+
+Let $\mathcal K=\{1,\ldots,K\}$, $\mathcal N=\{1,\ldots,N\}$, and
+$\mathcal M=\{1,\ldots,M\}$ index taxis, passenger requests, and parcel
+requests, respectively. The input consists of:
+
+\begin{center}
+\renewcommand{\arraystretch}{1.35}
+\begin{tabular}{@{}p{0.23\linewidth}p{0.70\linewidth}@{}}
+\hline
+\textbf{Input} & \textbf{Given parameters} \\
+\hline
+Taxi $k\in\mathcal K$
+    & $O_k$: initial location; $Q_k$: parcel capacity. Available at time $0$. \\
+\hline
+Passenger $i\in\mathcal N$
+    & $P_i^n,D_i^n$: pickup and drop-off points; $T_i^n$: revenue;
+      $[E_i^n,L_i^n]$: pickup time window; $S_i^n$: service duration at
+      each endpoint. \\
+\hline
+Parcel $j\in\mathcal M$
+    & $P_j^h,D_j^h$: pickup and drop-off points; $T_j^h$: revenue;
+      $w_j$: weight; $[E_j^{h,p},L_j^{h,p}]$: pickup time window;
+      $[E_j^{h,d},L_j^{h,d}]$: delivery time window; $S_j^h$: service
+      duration at each endpoint. \\
+\hline
+Travel $(u,v)$
+    & $t(u,v)\geq 0$: travel time; $c(u,v)\geq 0$: travel cost for every
+      ordered pair of points. Neither function need be symmetric. \\
+\hline
+\end{tabular}
+\end{center}
+
+The network has $K+2N+2M$ labeled vertices: one starting point per taxi and
+two service nodes per request.
+
+\section{Output}
+
+A schedule consists of one route per taxi,
+\[
+    R_k=(v_0^k,v_1^k,\ldots,v_{m_k}^k),\qquad
+    v_0^k=O_k,\quad m_k\geq 0,
+\]
+where subsequent nodes are the pickup and drop-off points of served requests.
+The routes identify which requests are served and which taxi serves each one.
+An unused taxi has $m_k=0$. Service times must make every route feasible under
+the constraints below. The problem description does not prescribe a file format
+for this schedule.
+
+\section{Objective}
+
+Let $x_i^n,x_j^h\in\{0,1\}$ indicate whether passenger $i$ and parcel $j$ are
+served. Maximize total revenue from served requests minus the travel cost of all
+taxi routes:
+\[
+\begin{aligned}
+    \max_{\text{feasible }R_1,\ldots,R_K}\quad
+    &\sum_{i=1}^{N} T_i^n x_i^n
+     +\sum_{j=1}^{M} T_j^h x_j^h \\
+    &-\sum_{k=1}^{K}\sum_{r=1}^{m_k} c(v_{r-1}^k,v_r^k).
+\end{aligned}
+\]
+Requests are optional. Serving no requests is feasible and gives benefit $0$.
+Travel cost includes the leg from a taxi's starting point to its first stop;
+there is no return-to-start leg.
+
+\section{Feasibility constraints}
+
+\begin{enumerate}
+    \item \textbf{Complete service and assignment.} A served request has one
+    pickup and one drop-off, performed in that order by the same taxi. A request
+    may instead be left entirely unserved.
+
+    \item \textbf{Time windows.} Passenger pickups and both endpoints of every
+    parcel request have time windows. Arrival at such a point must be no later
+    than the window's latest time. If arrival precedes its earliest time, the
+    taxi waits before starting service. Passenger drop-offs have no time window
+    and service begins immediately upon arrival. The stated service duration
+    applies at both endpoints of a request.
+
+    \item \textbf{Direct passenger trip.} If taxi $k$ serves passenger $i$,
+    $D_i^n$ immediately follows $P_i^n$ in $R_k$. No other request point may
+    be visited between them, so the taxi carries at most one passenger at a
+    time.
+
+    \item \textbf{Parcel capacity.} Picking up parcel $j$ increases the taxi's
+    parcel load by $w_j$; delivering it decreases the load by $w_j$. The load
+    must never exceed $Q_k$ for taxi $k$. Passengers do not consume parcel
+    capacity, so parcels may remain onboard during a passenger trip.
+
+    \item \textbf{Route timing.} Each taxi starts at $O_k$ at time $0$. Travel
+    from consecutive points $u$ and $v$ takes $t(u,v)$, and service at a point
+    takes the request's service duration. A taxi may finish at its last service
+    point without returning to $O_k$.
+\end{enumerate}
+
+\end{document}
