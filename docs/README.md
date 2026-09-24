@@ -10,3 +10,5 @@ These are development targets; the [problem statement](Problem%20description.pdf
 | Final target | 2,000 | Produce a feasible solution and maximize benefit within a provisional 5-minute budget. |
 
 Revise the scale and runtime targets when official limits become available.
+
+The development instance format and generator are documented in [synthetic-data.md](synthetic-data.md).
