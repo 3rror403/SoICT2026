@@ -12,3 +12,5 @@ These are development targets; the [problem statement](Problem%20description.pdf
 Revise the scale and runtime targets when official limits become available.
 
 The development instance format and generator are documented in [synthetic-data.md](synthetic-data.md).
+The exact CPLEX solver for 10-request cases is documented in [mip.md](mip.md).
+Heuristic run records and best-known routes are documented in [evaluation.md](evaluation.md).

@@ -1,0 +1,6 @@
+instance,objective,is_optimal,solution,solver,version,seed
+r10_p0_m10_s1.txt,473.40322669928167,1,r10_p0_m10_s1.sol,mip,cplex-exact,
+r10_p10_m0_s5.txt,334.00060814445521,1,r10_p10_m0_s5.sol,mip,cplex-exact,
+r10_p2_m8_s2.txt,430.7343148549304,1,r10_p2_m8_s2.sol,mip,cplex-exact,
+r10_p5_m5_s3.txt,286.09605116835957,1,r10_p5_m5_s3.sol,mip,cplex-exact,
+r10_p8_m2_s4.txt,419.3523027999085,1,r10_p8_m2_s4.sol,mip,cplex-exact,

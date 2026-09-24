@@ -1,5 +1,6 @@
 #include "io/SyntheticGenerator.hpp"
 #include "io/InstanceIO.hpp"
+#include "io/SolutionIO.hpp"
 #include "model/Solution.hpp"
 
 #include <cmath>
@@ -60,6 +61,9 @@ int main() {
     const auto result = valid.evaluate(instance);
     require(result.feasible);
     require(std::abs(result.benefit - 27.0) < 1e-9);
+    std::stringstream saved_solution;
+    write_solution(saved_solution, valid);
+    require(std::abs(read_solution(saved_solution).evaluate(instance).benefit - 27.0) < 1e-9);
     // Waiting at an early passenger pickup delays the subsequent delivery.
     instance.parcels[0].delivery.latest = 14;
     require(!valid.evaluate(instance).feasible);
