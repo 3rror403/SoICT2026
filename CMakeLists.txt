@@ -7,7 +7,10 @@ add_library(soict_core
     src/io/InstanceIO.cpp
     src/io/SolutionIO.cpp
     src/io/SyntheticGenerator.cpp
-    src/eval/SolutionValidation.cpp)
+    src/eval/SolutionValidation.cpp
+    src/search/alns/State.cpp
+    src/search/alns/Operators.cpp
+    src/search/alns/ALNSSolver.cpp)
 target_compile_features(soict_core PUBLIC cxx_std_20)
 target_include_directories(soict_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
