@@ -11,8 +11,27 @@ add_library(soict_core
 target_compile_features(soict_core PUBLIC cxx_std_20)
 target_include_directories(soict_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
+add_library(soict_alns
+    src/search/alns/RouteCache.cpp
+    src/search/alns/SearchState.cpp
+    src/search/alns/Balance.cpp
+    src/search/alns/ALNS.cpp
+    src/search/alns/operators/Destroy/RandomRemoval.cpp
+    src/search/alns/operators/Destroy/WorstRemoval.cpp
+    src/search/alns/operators/Destroy/RelatedRemoval.cpp
+    src/search/alns/operators/Repair/InsertionSearch.cpp
+    src/search/alns/operators/Repair/GreedyInsertion.cpp
+    src/search/alns/operators/Repair/RegretInsertion.cpp
+    src/search/alns/operators/LocalSearch/LocalSearch.cpp
+    src/search/alns/operators/LocalSearch/AddRequest.cpp
+    src/search/alns/operators/LocalSearch/RemoveRequest.cpp
+    src/search/alns/operators/LocalSearch/PassengerRelocate.cpp
+    src/search/alns/operators/LocalSearch/ParcelRelocate.cpp)
+target_link_libraries(soict_alns PUBLIC soict_core)
+target_compile_features(soict_alns PUBLIC cxx_std_20)
+
 add_executable(SoICT2026 src/main.cpp)
-target_link_libraries(SoICT2026 PRIVATE soict_core)
+target_link_libraries(SoICT2026 PRIVATE soict_core soict_alns)
 
 if(DEFINED ENV{CPLEX_STUDIO_DIR2211})
     set(_cplex_default_root "$ENV{CPLEX_STUDIO_DIR2211}")
@@ -100,6 +119,9 @@ if(BUILD_TESTING)
     add_executable(soict_core_test tests/CoreTest.cpp)
     target_link_libraries(soict_core_test PRIVATE soict_core)
     add_test(NAME soict_core_test COMMAND soict_core_test)
+    add_executable(soict_alns_test tests/ALNSTest.cpp)
+    target_link_libraries(soict_alns_test PRIVATE soict_alns)
+    add_test(NAME soict_alns_test COMMAND soict_alns_test)
     if(Python3_Interpreter_FOUND)
         add_test(NAME soict_evaluator_test
             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/EvaluatorTest.py" "$<TARGET_FILE:SoICT2026>")

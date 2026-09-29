@@ -3,6 +3,7 @@
 #include "io/SolutionIO.hpp"
 #include "eval/SolutionValidation.hpp"
 #include "model/Solution.hpp"
+#include "search/alns/ALNS.hpp"
 #ifdef SOICT_WITH_CPLEX
 #include "search/mip/MIPSolver.hpp"
 #endif
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 
@@ -32,11 +34,22 @@ double positive_arg(const char* value) {
     return number;
 }
 #endif
+double alns_positive_arg(const char* value) {
+    const std::string text(value);
+    std::size_t position = 0;
+    const double number = std::stod(text, &position);
+    if (position != text.size() || !std::isfinite(number) || number <= 0)
+        throw std::invalid_argument("invalid positive number: " + text);
+    return number;
+}
 void usage() {
     std::cerr << "Usage:\n"
               << "  SoICT2026 generate --passengers N --parcels M --taxis K --seed S --out FILE\n"
               << "  SoICT2026 inspect FILE\n";
     std::cerr << "  SoICT2026 check-solution INSTANCE SOLUTION\n";
+    std::cerr << "  SoICT2026 solve-alns --instance FILE --seed S --time-limit SEC --out SOLUTION\n"
+              << "  SoICT2026 --instance FILE --seed S --time-limit SEC --out SOLUTION\n"
+              << "    Optional: --log DIR --temp T --cooling RATE --check --disable-ls --ls-interval N --balance-thompson\n";
 #ifdef SOICT_WITH_CPLEX
     std::cerr << "  SoICT2026 solve-mip FILE [--time-limit SECONDS] [--out SOLUTION]\n";
 #endif
@@ -45,6 +58,58 @@ void usage() {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--help") {
+            usage();
+            return 0;
+        }
+        if (argc >= 2 && (std::string(argv[1]) == "solve-alns" ||
+                          std::string(argv[1]) == "--instance")) {
+            const int start = std::string(argv[1]) == "solve-alns" ? 2 : 1;
+            soict::alns::Config config;
+            std::string instance_path, solution_path;
+            for (int i = start; i < argc; ++i) {
+                const std::string key(argv[i]);
+                if (key == "--check") { config.check = true; continue; }
+                if (key == "--disable-ls") { config.local_search = false; continue; }
+                if (key == "--balance-thompson") { config.thompson = true; continue; }
+                if (i + 1 >= argc) throw std::invalid_argument("option needs a value: " + key);
+                const char* value = argv[++i];
+                if (key == "--instance" || key == "--input" || key == "-i")
+                    instance_path = value;
+                else if (key == "--out" || key == "--output" || key == "-o")
+                    solution_path = value;
+                else if (key == "--seed") config.seed = count_arg(value);
+                else if (key == "--ls-interval") {
+                    config.ls_interval = count_arg(value);
+                    if (!config.ls_interval) throw std::invalid_argument("ls interval must be positive");
+                }
+                else if (key == "--time-limit" || key == "--time" || key == "-t") {
+                    const double requested = alns_positive_arg(value);
+                    config.time_limit = requested > 2 ? requested - 1 : requested * 0.9;
+                } else if (key == "--temp" || key == "-T")
+                    config.temperature = alns_positive_arg(value);
+                else if (key == "--cooling") {
+                    config.cooling = alns_positive_arg(value);
+                    if (config.cooling >= 1) throw std::invalid_argument("cooling must be below 1");
+                } else if (key == "--log") config.log_directory = value;
+                else throw std::invalid_argument("unknown solve-alns option: " + key);
+            }
+            if (instance_path.empty() || solution_path.empty())
+                throw std::invalid_argument("solve-alns requires --instance and --out");
+            std::ifstream in(instance_path);
+            if (!in) throw std::runtime_error("cannot open instance file");
+            const auto instance = soict::read_instance(in);
+            const auto result = soict::alns::solve(instance, config);
+            std::ofstream out(solution_path);
+            if (!out) throw std::runtime_error("cannot create solution file");
+            soict::write_solution(out, result.solution);
+            std::cout << std::setprecision(17) << "benefit=" << result.benefit
+                      << " iterations=" << result.iterations
+                      << " seconds=" << result.seconds
+                      << " stop=" << (result.annealing_complete ? "temperature" : "time_limit")
+                      << '\n';
+            return 0;
+        }
 #ifdef SOICT_WITH_CPLEX
         if (argc >= 3 && std::string(argv[1]) == "solve-mip") {
             double time_limit = 300;

@@ -63,7 +63,36 @@ int main() {
     require(std::abs(result.benefit - 27.0) < 1e-9);
     std::stringstream saved_solution;
     write_solution(saved_solution, valid);
+    require(saved_solution.str() == "SOICT2026_SOLUTION 3\n2 1\n0 4 2 3 5\n");
     require(std::abs(read_solution(saved_solution).evaluate(instance).benefit - 27.0) < 1e-9);
+    const Solution sparse{{{}, {pp, pd}, {}, {fp, fd}}};
+    std::stringstream sparse_file;
+    write_solution(sparse_file, sparse);
+    require(sparse_file.str() == "SOICT2026_SOLUTION 3\n4 2\n1 2 3\n3 4 5\n");
+    require(read_solution(sparse_file).routes == sparse.routes);
+    std::stringstream empty_file;
+    write_solution(empty_file, Solution{{{}, {}}});
+    require(empty_file.str() == "SOICT2026_SOLUTION 3\n2 0\n");
+    require(read_solution(empty_file).routes == Solution{{{}, {}}}.routes);
+    std::stringstream legacy("SOICT2026_SOLUTION 1\n2\n4 4 2 3 5\n0\n");
+    require(read_solution(legacy).routes == valid.routes);
+    std::stringstream version_two("SOICT2026_SOLUTION 2\n2 1\n0 4 4 2 3 5\n");
+    require(read_solution(version_two).routes == valid.routes);
+    for (const char* bad : {
+             "SOICT2026_SOLUTION 3\n2 2\n0 4\n0 5\n",
+             "SOICT2026_SOLUTION 3\n2 2\n1 4\n0 5\n",
+             "SOICT2026_SOLUTION 3\n2 1\n2 4\n",
+             "SOICT2026_SOLUTION 3\n2 1\n0\n",
+             "SOICT2026_SOLUTION 3\n2 1\n0 4 x\n",
+             "SOICT2026_SOLUTION 3\n2 0\n0 4\n",
+             "SOICT2026_SOLUTION 3\n2 1 extra\n0 4\n",
+             "SOICT2026_SOLUTION 2\n2 1\n0 2 4\n"}) {
+        std::stringstream malformed(bad);
+        bool rejected = false;
+        try { (void)read_solution(malformed); }
+        catch (const std::runtime_error&) { rejected = true; }
+        require(rejected);
+    }
     // Waiting at an early passenger pickup delays the subsequent delivery.
     instance.parcels[0].delivery.latest = 14;
     require(!valid.evaluate(instance).feasible);
