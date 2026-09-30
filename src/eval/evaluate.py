@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RUN_FIELDS = ["instance", "instance_seed", "solver_seed", "status", "objective", "wall_seconds", "log"]
+RUN_FIELDS = ["instance", "instance_seed", "solver_seed", "status", "objective", "wall_seconds", "iterations", "stop_reason", "log"]
 BEST_FIELDS = ["instance", "objective", "is_optimal", "solution", "solver", "version", "seed"]
 
 
@@ -74,7 +74,7 @@ def kill_process(process):
     process.wait()
 
 
-def run_one(case, seed, solver, checker, run_dir, limit):
+def run_one(case, seed, solver, checker, run_dir, limit, solver_cooling=None):
     row, instance = case
     name = row["file"]
     stem = f"{instance.stem}_seed{seed}"
@@ -83,6 +83,8 @@ def run_one(case, seed, solver, checker, run_dir, limit):
     internal_limit = min(59.0, max(0.01, limit - 1.0))
     args = ["--instance", str(instance), "--seed", str(seed),
             "--time-limit", str(internal_limit), "--out", str(solution)]
+    if solver_cooling is not None:
+        args += ["--cooling", str(solver_cooling)]
     started = time.monotonic()
     elapsed = None
     status = "process_error"
@@ -118,9 +120,21 @@ def run_one(case, seed, solver, checker, run_dir, limit):
             status = "process_error"
     if elapsed is None:
         elapsed = time.monotonic() - started
+    stop_reason = "hard_timeout" if status == "timeout" else ""
+    iterations = ""
+    if status == "feasible":
+        log_text = log.read_text(encoding="utf-8", errors="replace")
+        match = re.search(r"\biterations=(\d+)\s+seconds=", log_text)
+        if match:
+            iterations = int(match.group(1))
+        match = re.search(r"\bstop=(temperature|time_limit)\b", log_text)
+        if match:
+            stop_reason = match.group(1)
     return ({"instance": name, "instance_seed": row["seed"], "solver_seed": seed,
              "status": status, "objective": objective,
              "wall_seconds": f"{elapsed:.6f}",
+             "iterations": iterations,
+             "stop_reason": stop_reason,
              "log": str(log.relative_to(run_dir))}, solution if status == "feasible" else None)
 
 
@@ -179,10 +193,14 @@ def main():
     parser.add_argument("--solver-exe", type=Path, required=True)
     parser.add_argument("--checker", type=Path, default=ROOT / "cmake-build-debug" / ("SoICT2026.exe" if os.name == "nt" else "SoICT2026"))
     parser.add_argument("--manifest", type=Path, default=ROOT / "data/synthetic/manifest.csv")
+    parser.add_argument("--instance", action="append", default=[],
+                        help="select an instance filename from the manifest; repeat to select several")
     parser.add_argument("--best-known", type=Path, default=ROOT / "data/synthetic/best-known")
     parser.add_argument("--results", type=Path, default=ROOT / "results")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--time-limit", type=float, default=60.0)
+    parser.add_argument("--solver-cooling", type=float,
+                        help="pass a geometric cooling factor to the ALNS solver")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.solver_name):
         parser.error("solver name may contain only letters, digits, underscores, and hyphens")
@@ -190,12 +208,23 @@ def main():
         parser.error("jobs must be between 1 and 64")
     if not math.isfinite(args.time_limit) or not 0 < args.time_limit <= 60:
         parser.error("time limit must be positive and at most 60 seconds")
+    if args.solver_cooling is not None and (not math.isfinite(args.solver_cooling) or
+                                            not 0 < args.solver_cooling < 1):
+        parser.error("solver cooling must be between 0 and 1")
     solver = args.solver_exe.resolve()
     checker = args.checker.resolve()
     if not solver.is_file() or not checker.is_file():
         parser.error("solver executable and checker must exist")
     manifest = args.manifest.resolve()
     cases, instances = read_cases(manifest)
+    if args.instance:
+        selected = set(args.instance)
+        available = {row["file"] for row, _ in cases}
+        unknown = selected - available
+        if unknown:
+            parser.error("selected instance not eligible or absent from manifest: " +
+                         ", ".join(sorted(unknown)))
+        cases = [(row, path) for row, path in cases if row["file"] in selected]
     best_dir = args.best_known.resolve()
     best_dir.mkdir(parents=True, exist_ok=True)
     index = best_dir / "best-known.csv"
@@ -205,13 +234,16 @@ def main():
     metadata = {"solver": args.solver_name, "solver_exe": str(solver),
                 "manifest": str(manifest), "jobs": args.jobs,
                 "solver_seeds": list(range(1, 11)), "max_requests": 100,
+                "selected_instances": [row["file"] for row, _ in cases],
                 "hard_timeout_seconds": args.time_limit,
+                "solver_cooling": args.solver_cooling,
                 "started_utc": dt.datetime.now(dt.timezone.utc).isoformat(), **source_state}
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     print(f"Running {len(cases)} instances x 10 seeds with {args.jobs} jobs; results: {run_dir}", flush=True)
     completed = []
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = [pool.submit(run_one, case, seed, solver, checker, run_dir, args.time_limit)
+        futures = [pool.submit(run_one, case, seed, solver, checker, run_dir,
+                               args.time_limit, args.solver_cooling)
                    for case in cases for seed in range(1, 11)]
         for count, future in enumerate(as_completed(futures), 1):
             completed.append(future.result())
@@ -227,9 +259,17 @@ def main():
     for row, _ in cases:
         subset = [item for item in run_rows if item["instance"] == row["file"]]
         values = [float(item["objective"]) for item in subset if item["status"] == "feasible"]
+        feasible = [item for item in subset if item["status"] == "feasible"]
+        measured = [item for item in feasible if item["iterations"] != ""]
+        measured_seconds = sum(float(item["wall_seconds"]) for item in measured)
+        speed = (sum(int(item["iterations"]) for item in measured) / measured_seconds
+                 if len(measured) == len(feasible) and measured_seconds > 0 else "")
         summary.append({"instance": row["file"], "best_obj": max(values) if values else "",
                         "mean_obj": statistics.mean(values) if values else "",
                         "mean_time_sec": statistics.mean(float(item["wall_seconds"]) for item in subset),
+                        "speed (it/s)": speed,
+                        "temperature_stops": sum(item["stop_reason"] == "temperature" for item in subset),
+                        "time_limit_stops": sum(item["stop_reason"] == "time_limit" for item in subset),
                         "feasible_runs": len(values),
                         "timeout_runs": sum(item["status"] == "timeout" for item in subset),
                         "total_runs": len(subset)})
