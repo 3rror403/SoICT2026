@@ -14,7 +14,7 @@ struct Config {
     double cooling = std::exp(std::log(1e-4) / 60000.0);
     bool check = false;
     bool local_search = true;
-    std::size_t ls_interval = 1;
+    std::size_t ls_interval = 10;
     bool thompson = false;
     std::string log_directory;
     // Phase 0d: deterministic mode — if set, loop runs exactly N iterations

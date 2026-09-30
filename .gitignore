@@ -1,0 +1,39 @@
+# Build directories
+cmake-build-*/
+build/
+bin/
+lib/
+
+# Object files and executables
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+*.out
+SoICT2026
+SoICT2026_*
+
+# Python caches
+__pycache__/
+*.pyc
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Benchmark outputs & data
+benchmark_results.csv
+benchmark_results_summary.csv
+benchmark_sols/
+*.sol
+dummy.sol
+
+# Temp debug files
+ALNS_master.txt
+orig_alns.cpp
+update_localsearch_plan.md
+alns_blocker_slack_operators.md

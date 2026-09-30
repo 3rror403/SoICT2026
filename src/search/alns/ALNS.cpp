@@ -121,10 +121,8 @@ Result solve(const Instance& instance, const Config& config) {
     }
 
     // ── Main SA loop ─────────────────────────────────────────────────────────
-    // Terminates when progress >= 1.0. In time mode this means elapsed >= limit;
-    // in iteration mode, iter >= max_iterations. Deadline hard-cap is kept for safety.
-    while (get_progress(iterations) < 1.0) {
-        if (!iteration_mode && Clock::now() >= deadline) break;
+    while (temperature > Tmin) {
+        if (Clock::now() >= deadline) break;
 
         const auto selection = balance.select(rng, current.served_count());
         const auto couple = couples[selection.couple];
@@ -149,7 +147,6 @@ Result solve(const Instance& instance, const Config& config) {
             current = std::move(candidate);
             if (current.benefit() > best.benefit() + 1e-9) {
                 best = current;
-                last_improvement_progress = get_progress(iterations);
                 std::cerr << "ALNS best iteration=" << iterations + 1
                           << " benefit=" << best.benefit() << '\n';
             }
@@ -157,21 +154,11 @@ Result solve(const Instance& instance, const Config& config) {
         balance.update(selection, reward);
         ++iterations;
 
-        // Phase 6a: Reheating (dựa trên progress để hỗ trợ cả iteration và time mode)
-        const double progress = get_progress(iterations);
-        
-        if (progress - last_improvement_progress > 0.05 && progress < 0.8) {
-            anchor_temp = 0.2 * T0;
-            anchor_progress = progress;
-            last_improvement_progress = progress;
-            current = best;
-        }
-
-        const double local_progress = (progress - anchor_progress) / std::max(1e-9, 1.0 - anchor_progress);
-        temperature = anchor_temp * std::pow(Tmin / anchor_temp, std::min(local_progress, 1.0));
+        temperature = std::max(Tmin, temperature * config.cooling);
 
         // Phase 0c: profiling log every 1000 iterations.
         if (iterations % 1000 == 0) {
+            const double progress = get_progress(iterations);
             const double elapsed = std::chrono::duration<double>(Clock::now() - start).count();
             if (trace) trace << iterations << ',' << elapsed << ',' << progress << ','
                              << temperature << ',' << current.benefit() << ','
