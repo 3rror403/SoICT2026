@@ -46,6 +46,7 @@ These operators take a complete `SearchState` and remove a configurable number o
 *   **`WorstRemoval`**: Calculates the *removal gain* (how much cost is saved / benefit gained by removing the request) for all assigned requests. Removes the `q` requests with the highest removal gain (i.e., those that are most expensive to serve).
 *   **`RelatedRemoval`** (Shaw Removal): Removes a cluster of requests that are "similar". 
     *   *Logic*: It selects a random anchor request. Then, it removes requests that are geographically and temporally close to the anchor. Distance is measured by combining travel time between pickup nodes and the difference in their earliest time windows.
+*   **`RouteRemoval`**: Selects a taxi route randomly (weighted by the inverse of the number of requests it serves) and completely removes all requests currently assigned to that route. This creates a large, clean slate for repair operators to optimize.
 
 #### 2.2.3 Repair Operators (`src/search/alns/operators/Repair/`)
 These operators take the unassigned requests and re-insert them into the routes heuristically. They rely heavily on the `InsertionSearch` subsystem.
@@ -59,10 +60,12 @@ These operators take the unassigned requests and re-insert them into the routes 
     *   It inserts the request with the highest regret. This prioritizes requests that have one good insertion option but very poor alternative options, preventing them from being left out.
 
 #### 2.2.4 Local Search (`src/search/alns/operators/LocalSearch/`)
-Applied periodically during the ALNS loop to find local optima.
+Applied periodically during the ALNS loop to find local optima. While these operators significantly increase the computational cost per ALNS iteration (running fewer iterations per second), they dramatically improve the quality of each move, accelerating convergence to the Best Known Solution (BKS).
 
 *   **`AddRequest` / `RemoveRequest`**: Standard moves to toggle request assignments.
 *   **`PassengerRelocate` / `ParcelRelocate`**: Takes a request currently assigned to a route and attempts to move it to a *better* position within the same route or a different taxi's route. This relies heavily on the fast evaluation capabilities of `RouteCache`.
+*   **`ReplaceRequest`**: Attempts to remove one assigned request and insert one unassigned request into the newly freed route in a single atomic operation.
+*   **`SwapRequest` (SWAP*)**: Evaluates inter-route exchanges by swapping requests between two different taxis. It uses Branch and Bound with a Top-K cache of the best insertion positions to aggressively prune suboptimal swaps without running expensive `FastRouteCheck` evaluations.
 
 #### 2.2.5 Adaptive Mechanism (`Balance`)
 *   **Roulette-wheel Selection**: At each ALNS iteration, one Destroy and one Repair operator are chosen randomly based on their weights.
@@ -84,17 +87,19 @@ Applied periodically during the ALNS loop to find local optima.
     *   Create an empty `SearchState`.
     *   Generate a random permutation of all requests.
     *   Greedily insert requests into the state one by one.
-2.  **Simulated Annealing Loop**:
+2.  **Simulated Annealing Loop (Time-Based)**:
     *   Initialize `temperature = config.start_temperature`.
-    *   While `temperature > minimum_temperature`:
+    *   The loop runs based on a `progress` variable, mapped precisely to the elapsed real-time vs the specified `time_limit`.
+    *   While `progress < 1.0`:
         *   **Select** a pair of (Destroy, Repair) operators based on historical weights (`Balance`).
         *   **Apply Destroy**: Remove `q` requests from the `SearchState`.
         *   **Apply Repair**: Re-insert the `q` requests to create a candidate state.
-        *   **Local Search (Optional)**: Every `ls_interval` iterations, apply `PassengerRelocate` and `ParcelRelocate` until a local minimum is reached.
+        *   **Local Search (Optional)**: Every `ls_interval` iterations, apply the local search operators sequentially until a local minimum is reached.
         *   **Acceptance**:
             *   Calculate $\Delta = \text{Candidate Benefit} - \text{Current Benefit}$.
             *   If $\Delta \ge 0$, accept the candidate.
             *   If $\Delta < 0$, accept with probability $P = \exp(\Delta / \text{temperature})$.
         *   **Update**: Update operator weights based on the outcome (New Best / Better / Accepted / Rejected).
-        *   **Cooling**: `temperature = temperature * config.cooling_rate`.
+        *   **Reheating (Stagnation Recovery)**: If the search fails to find a new best solution after a certain percentage of the total time (e.g., 5%), the temperature is artificially "reheated" (spiked back up to 20% of `T0`), and the state resets to the global best. This prevents getting permanently stuck in local optima.
+        *   **Cooling**: `temperature` is exponentially decayed smoothly such that it exactly hits the minimum threshold at the very last millisecond of the `time_limit`.
 3.  **Termination**: Return the best solution found during the search.
