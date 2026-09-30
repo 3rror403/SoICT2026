@@ -82,7 +82,7 @@ bool SwapRequest::improve(SearchState& state) const {
 
         // Sort requests by removal savings to allow Branch & Bound
         std::sort(served.begin(), served.end(), [&](std::size_t a, std::size_t b) {
-            return state.removal_gain(a).value() > state.removal_gain(b).value();
+            return state.removal_gain(a).value_or(-1e18) > state.removal_gain(b).value_or(-1e18);
         });
 
         std::size_t best_r1 = 0, best_r2 = 0;
@@ -95,7 +95,9 @@ bool SwapRequest::improve(SearchState& state) const {
             const auto r1 = served[i];
             const auto loc1 = state.location(r1);
             const auto t1 = static_cast<std::size_t>(loc1.taxi);
-            const double s1 = state.removal_gain(r1).value();
+            const auto removal_gain1 = state.removal_gain(r1);
+            if (!removal_gain1) continue;
+            const double s1 = *removal_gain1;
             const auto& route1 = state.cache(t1);
 
             for (std::size_t j = i + 1; j < served.size(); ++j) {
@@ -104,7 +106,9 @@ bool SwapRequest::improve(SearchState& state) const {
                 const auto t2 = static_cast<std::size_t>(loc2.taxi);
                 if (t1 == t2) continue; // Must be different routes
                 
-                const double s2 = state.removal_gain(r2).value();
+                const auto removal_gain2 = state.removal_gain(r2);
+                if (!removal_gain2) continue;
+                const double s2 = *removal_gain2;
                 const double upper_bound = s1 + s2;
                 if (upper_bound + kTolerance < best_gain) break; // Prune inner loop!
                 
