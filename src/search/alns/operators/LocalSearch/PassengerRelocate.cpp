@@ -3,9 +3,17 @@
 #include "search/alns/MoveCost.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace soict::alns {
+namespace {
+constexpr double kMinGain = 1e-9;
+constexpr double kTolerance = 1e-8;
+} // namespace
+
 PassengerRelocationContext::PassengerRelocationContext(const SearchState& state,
                                                        std::size_t request)
     : state_(state), request_(request), source_(0), removed_at_(0) {
@@ -85,18 +93,32 @@ std::optional<InsertionChoice> PassengerRelocate::best_on_taxi(
     if (taxi != source && !context.removal_feasible()) return std::nullopt;
     return cache_.get(r, taxi, state.taxi_count(),
         state.cache(source).version(), route.version(),
-        context.removal_savings(), taxi == source, [&] {
-                std::optional<InsertionChoice> route_best;
+        context.removal_savings(), taxi == source, [&]() -> std::optional<InsertionChoice> {
+                // Phase 1a: Best-first search.
+                // Step 1: tính objective O(1) cho tất cả vị trí, lọc bỏ những vị trí
+                //         không thể vượt kMinGain. Chưa gọi FastRouteCheck.
+                // Step 2: sort giảm dần theo objective.
+                // Step 3: duyệt best-first, gọi gain() (FastRouteCheck) theo thứ tự.
+                //         Candidate khả thi đầu tiên = tối ưu vì gain == objective
+                //         khi khả thi. Tie-break theo a tăng dần.
+                thread_local std::vector<std::pair<double, std::size_t>> candidates;
+                candidates.clear();
                 const auto length = context.length(taxi);
                 for (std::size_t a = 0; a <= length; ++a) {
                     const auto objective = context.calculate_delta_fast(taxi, route, a);
-                    if (!objective || *objective + 1e-8 <
-                        std::max(1e-9, route_best ? route_best->gain : 1e-9)) continue;
-                    const auto gain = context.gain(taxi, route, a);
-                    if (gain && (!route_best || *gain > route_best->gain))
-                        route_best = InsertionChoice{r, taxi, a, a, *gain};
+                    if (objective && *objective + kTolerance >= kMinGain)
+                        candidates.emplace_back(*objective, a);
                 }
-                return route_best;
+                std::sort(candidates.begin(), candidates.end(),
+                          [](const auto& x, const auto& y) {
+                              return x.first != y.first ? x.first > y.first
+                                                        : x.second < y.second;
+                          });
+                for (const auto& [obj, a] : candidates) {
+                    if (const auto gain = context.gain(taxi, route, a))
+                        return InsertionChoice{r, taxi, a, a, *gain};
+                }
+                return std::nullopt;
             });
 }
 

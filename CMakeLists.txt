@@ -29,7 +29,8 @@ add_library(soict_alns
     src/search/alns/operators/LocalSearch/AddRequest.cpp
     src/search/alns/operators/LocalSearch/RemoveRequest.cpp
     src/search/alns/operators/LocalSearch/PassengerRelocate.cpp
-    src/search/alns/operators/LocalSearch/ParcelRelocate.cpp)
+    src/search/alns/operators/LocalSearch/ParcelRelocate.cpp
+    src/search/alns/operators/LocalSearch/ReplaceRequest.cpp)
 target_link_libraries(soict_alns PUBLIC soict_core)
 target_compile_features(soict_alns PUBLIC cxx_std_20)
 

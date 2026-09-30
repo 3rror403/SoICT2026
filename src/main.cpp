@@ -49,7 +49,9 @@ void usage() {
     std::cerr << "  SoICT2026 check-solution INSTANCE SOLUTION\n";
     std::cerr << "  SoICT2026 solve-alns --instance FILE --seed S --time-limit SEC --out SOLUTION\n"
               << "  SoICT2026 --instance FILE --seed S --time-limit SEC --out SOLUTION\n"
-              << "    Optional: --log DIR --temp T --cooling RATE --check --disable-ls --ls-interval N --balance-thompson\n";
+              << "    Optional: --log DIR --temp T --cooling RATE --check --disable-ls\n"
+              << "              --ls-interval N --balance-thompson\n"
+              << "              --iterations N  (deterministic mode: run exactly N iterations)\n";
 #ifdef SOICT_WITH_CPLEX
     std::cerr << "  SoICT2026 solve-mip FILE [--time-limit SECONDS] [--out SOLUTION]\n";
 #endif
@@ -92,6 +94,9 @@ int main(int argc, char** argv) {
                     config.cooling = alns_positive_arg(value);
                     if (config.cooling >= 1) throw std::invalid_argument("cooling must be below 1");
                 } else if (key == "--log") config.log_directory = value;
+                // Phase 0d: deterministic iteration-count mode.
+                else if (key == "--iterations")
+                    config.max_iterations = count_arg(value);
                 else throw std::invalid_argument("unknown solve-alns option: " + key);
             }
             if (instance_path.empty() || solution_path.empty())

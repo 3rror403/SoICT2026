@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/soict_core_test.dir/tests/CoreTest.cpp.o -o soict_core_test  libsoict_core.a 
