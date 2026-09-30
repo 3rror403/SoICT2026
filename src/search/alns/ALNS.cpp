@@ -3,6 +3,7 @@
 #include "search/alns/SearchState.hpp"
 #include "search/alns/operators/Destroy/RandomRemoval.hpp"
 #include "search/alns/operators/Destroy/RelatedRemoval.hpp"
+#include "search/alns/operators/Destroy/RouteRemoval.hpp"
 #include "search/alns/operators/Destroy/WorstRemoval.hpp"
 #include "search/alns/operators/LocalSearch/LocalSearch.hpp"
 #include "search/alns/operators/LocalSearch/ParcelRelocate.hpp"
@@ -10,6 +11,7 @@
 #include "search/alns/operators/LocalSearch/AddRequest.hpp"
 #include "search/alns/operators/LocalSearch/RemoveRequest.hpp"
 #include "search/alns/operators/LocalSearch/ReplaceRequest.hpp"
+#include "search/alns/operators/LocalSearch/SwapRequest.hpp"
 #include "search/alns/operators/Repair/GreedyInsertion.hpp"
 #include "search/alns/operators/Repair/RegretInsertion.hpp"
 #include "search/alns/operators/Repair/InsertionSearch.hpp"
@@ -50,6 +52,7 @@ Result solve(const Instance& instance, const Config& config) {
     destroys.push_back(std::make_unique<RandomRemoval>());
     destroys.push_back(std::make_unique<WorstRemoval>());
     destroys.push_back(std::make_unique<RelatedRemoval>());
+    destroys.push_back(std::make_unique<RouteRemoval>());
     std::vector<std::unique_ptr<RepairOperator>> repairs;
     repairs.push_back(std::make_unique<GreedyInsertion>());
     repairs.push_back(std::make_unique<RegretInsertionV0>());
@@ -67,6 +70,7 @@ Result solve(const Instance& instance, const Config& config) {
     local_search.add_move(std::make_unique<PassengerRelocate>());
     local_search.add_move(std::make_unique<ParcelRelocate>());
     local_search.add_move(std::make_unique<ReplaceRequest>());
+    local_search.add_move(std::make_unique<SwapRequest>());
 
     std::ofstream trace, operator_log;
     if (!config.log_directory.empty()) {
@@ -105,6 +109,10 @@ Result solve(const Instance& instance, const Config& config) {
     const double Tmin = T0 * 1e-4;
     double temperature = T0;
 
+    double anchor_temp = T0;
+    double anchor_progress = 0.0;
+    double last_improvement_progress = 0.0;
+    
     std::size_t iterations = 0;
     if (trace) {
         const double elapsed0 = std::chrono::duration<double>(Clock::now() - start).count();
@@ -141,6 +149,7 @@ Result solve(const Instance& instance, const Config& config) {
             current = std::move(candidate);
             if (current.benefit() > best.benefit() + 1e-9) {
                 best = current;
+                last_improvement_progress = get_progress(iterations);
                 std::cerr << "ALNS best iteration=" << iterations + 1
                           << " benefit=" << best.benefit() << '\n';
             }
@@ -148,11 +157,18 @@ Result solve(const Instance& instance, const Config& config) {
         balance.update(selection, reward);
         ++iterations;
 
-        // Phase 0d: unified progress-based cooling.
-        // progress advances by 1/N per iteration (iter mode) or by elapsed/limit (time mode).
-        // Using progress at end of iteration for next temperature.
+        // Phase 6a: Reheating (dựa trên progress để hỗ trợ cả iteration và time mode)
         const double progress = get_progress(iterations);
-        temperature = T0 * std::pow(Tmin / T0, std::min(progress, 1.0));
+        
+        if (progress - last_improvement_progress > 0.05 && progress < 0.8) {
+            anchor_temp = 0.2 * T0;
+            anchor_progress = progress;
+            last_improvement_progress = progress;
+            current = best;
+        }
+
+        const double local_progress = (progress - anchor_progress) / std::max(1e-9, 1.0 - anchor_progress);
+        temperature = anchor_temp * std::pow(Tmin / anchor_temp, std::min(local_progress, 1.0));
 
         // Phase 0c: profiling log every 1000 iterations.
         if (iterations % 1000 == 0) {

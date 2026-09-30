@@ -69,9 +69,10 @@ def load_bks(path):
         with open(path) as f:
             reader = csv.DictReader(f)
             for row in reader:
-                # CSV columns: instance, benefit  (or instance, best_benefit)
                 key = row.get("instance", "").strip()
-                val = row.get("benefit") or row.get("best_benefit") or row.get("best_known")
+                if key.endswith(".txt"):
+                    key = key[:-4]
+                val = row.get("benefit") or row.get("best_benefit") or row.get("objective")
                 if key and val:
                     bks[key] = float(val)
     except FileNotFoundError:
