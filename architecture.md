@@ -34,12 +34,13 @@ Evaluating whether an insertion (e.g., picking up a parcel at node A and deliver
 *   **`RouteCache`**: 
     *   Uses a **Disjoint Sparse Table (DST)** to cache the `Segment` properties for all power-of-two contiguous sub-routes.
     *   *Logic*: The DST allows querying the combined `Segment` statistics of *any* arbitrary range `[first, last]` in $O(1)$ time, making sub-route evaluations incredibly fast without re-iterating over nodes.
+    *   *Cache Versioning*: `RouteCache` tracks a globally atomic `version_`. When a taxi's route changes, a new `RouteCache` is built with an incremented version, allowing operators to instantly detect stale node states and avoid redundant computations.
 *   **`FastRouteCheck`**: Uses the properties of `Segment`s to quickly check if inserting a node into a route maintains feasibility (time windows and capacity) by accumulating segment bounds left-to-right.
 
 #### 2.2.2 Destroy Operators (`src/search/alns/operators/Destroy/`)
 These operators take a complete `SearchState` and remove a configurable number of requests (`q`), putting them into an unassigned pool.
 
-*   **`RandomRemoval.cpp`**: Randomly picks `q` assigned requests and removes them. Ensures pure diversity.
+*   **`RandomRemoval.cpp`**: Randomly picks `q` assigned requests and removes them. Ensures pure diversity to escape local minima.
 *   **`WorstRemoval.cpp`**: Calculates the *removal gain* (how much cost is saved by removing the request) for all assigned requests. It uses a **Randomized Ropke-Pisinger algorithm**: instead of strictly removing the absolute worst, it selects elements based on $idx = y^p \cdot N$ where $y \sim U(0,1)$ and $p=3$. This ensures heavy-cost requests are highly likely to be removed, but maintains stochastic variance. To maximize performance, it uses `std::nth_element` for $O(N)$ selection instead of $O(N \log N)$ sorting.
 *   **`RelatedRemoval.cpp`** (Shaw Removal): Removes a cluster of requests that are "similar". It selects a random anchor request. Then, it removes requests that are geographically and temporally close to the anchor. Distance is measured by combining travel time between pickup nodes and the difference in their earliest time windows.
 *   **`RouteRemoval.cpp`**: Selects a taxi route randomly and completely empties it. The selection probability is inversely proportional to the number of requests in the route ($W_i = 1 / |R_i|$). This targets short, inefficient routes and forces the repair operators to pack those requests into other, denser routes.
@@ -60,11 +61,12 @@ Applied periodically (every `ls_interval` iterations) during ALNS to find local 
 *   **`LocalSearch.cpp` (VND Controller)**: Uses a Variable Neighborhood Descent (VND) loop. It applies operators sequentially. If an operator finds an improvement, the search restarts. It includes a dynamic cap limit (`4 * moves.size()`) to prevent infinite loops and `no_improve = 1` logic to skip re-evaluating operators that just converged.
 *   **`AddRequest` / `RemoveRequest`**: Standard $O(N)$ moves to toggle single request assignments.
 *   **`PassengerRelocate.cpp` & `ParcelRelocate.cpp`**: Evaluates moving a request to a better position. 
-    *   *Algorithm (Best-First)*: Instead of checking `FastRouteCheck` sequentially, it first gathers all $O(1)$ arc-cost bounds, sorts them, and strictly evaluates the highest potential gains first. It uses `thread_local` memory arrays to eliminate dynamic allocations during the intensive scan.
+    *   *Algorithm (Best-First)*: Instead of checking `FastRouteCheck` sequentially, it first gathers all $O(1)$ arc-cost bounds, sorts them, and strictly evaluates the highest potential gains first. It utilizes `thread_local` cache memory (`std::vector`) to absolutely eliminate dynamic heap allocations (`std::malloc`) during the intensive scanning loops, allowing the operator to execute in microseconds.
 *   **`ReplaceRequest.cpp`**: Attempts to remove one assigned request and insert one unassigned request into the newly freed route in a single atomic operation. 
-    *   *Logic*: Computes `net_gain = [cost_saved(r_out) - revenue(r_out)] + [revenue(r_in) - cost_insert(r_in)]`. It heavily reuses the arc-cost bound infrastructure from Relocate to aggressively prune invalid replacements.
+    *   *Logic*: Computes `net_gain = [cost_saved(r_out) - revenue(r_out)] + [revenue(r_in) - cost_insert(r_in)]`. It heavily reuses the arc-cost bound infrastructure from Relocate to aggressively prune invalid replacements. It enforces strict boundary constraint checks `boundary_allowed` for parcels to prevent physically impossible pickup/delivery sequencing.
 *   **`SwapRequest.cpp` (SWAP*)**: Evaluates inter-route exchanges by swapping requests between two different taxis. This is the heaviest but most powerful operator.
-    *   *Algorithm*: Employs a Branch and Bound strategy. For each request and taxi, it caches the `Top-K` (K=3) best insertion positions and their approximate costs. When considering swapping $r_1$ and $r_2$, it computes an absolute upper bound: `upper_bound = savings(r_1) + savings(r_2)`. If `upper_bound - min_insert(r_1) - min_insert(r_2) > best_gain`, it proceeds to the expensive exact evaluation; otherwise, the pair is pruned in $O(1)$ time.
+    *   *Algorithm (Descriptor Pools)*: Employs a highly optimized descriptor pool pattern (`SwapPool`). During the first iteration, it scans all $O(N^2)$ request pairs and evaluates them. All pairs yielding positive exact gain are encoded as `SwapDescriptor` structs and cached. When a swap is applied (modifying $t_1$ and $t_2$), the pool incrementally invalidates and re-scans only the pairs involving the affected taxis $t_1$ or $t_2$, completely skipping redundant evaluations of undisturbed routes. 
+    *   *Branch and Bound*: It caches the `Top-K` (K=3) best insertion positions and their approximate costs per taxi. When evaluating pairs, it computes an absolute upper bound: `upper_bound = savings(r_1) + savings(r_2)`. If `upper_bound - min_insert(r_1) - min_insert(r_2) < 0`, it prunes the pair in $O(1)$ time without running `FastRouteCheck`.
 
 #### 2.2.5 Adaptive Mechanism (`Balance`)
 *   **Roulette-wheel Selection**: At each iteration, one Destroy and one Repair operator are chosen randomly based on their weights.
@@ -77,21 +79,19 @@ Applied periodically (every `ls_interval` iterations) during ALNS to find local 
 
 ## 3. Main Algorithm Flow (ALNS)
 
-The main ALNS logic in `ALNS.cpp` is strictly bound to a **Time-Based Simulated Annealing** schedule, optimizing the available CPU time to the very last millisecond.
+The main ALNS logic in `ALNS.cpp` is strictly bound to a **Simulated Annealing (SA)** schedule. It evaluates iterative improvements while probabilistically accepting worse solutions to escape local optima.
 
 1.  **Initialization**:
     *   Create an empty `SearchState`.
     *   Generate a random permutation of all requests and greedily insert them.
-2.  **Simulated Annealing Loop (Time-Based)**:
-    *   Initialize `anchor_temp = config.start_temperature`.
-    *   The loop tracks `progress = elapsed_time / time_limit`. It guarantees termination exactly when `progress >= 1.0`.
-    *   While `progress < 1.0`:
-        *   **Select & Apply**: Apply Destroy and Repair operators.
-        *   **Local Search (Optional)**: Every `ls_interval` iterations (e.g. 10), apply the VND local search.
-        *   **Acceptance**:
-            *   Calculate $\Delta = \text{Candidate Benefit} - \text{Current Benefit}$.
-            *   Accept if $\Delta \ge 0$, else accept with probability $P = \exp(\Delta / \text{temperature})$.
-        *   **Update**: Update operator weights based on the outcome.
-        *   **Reheating (Stagnation Recovery)**: If the search fails to find a new global best solution after `5%` of the total time (e.g., `progress - last_improvement_progress > 0.05`) and we are not in the final 20% of the run, the temperature is forcefully "reheated". `anchor_temp` spikes back to `0.2 * T0`, `anchor_progress` is reset, and the state reverts to `best`. This ensures the algorithm systematically escapes deep local optima without requiring manual temperature tuning.
-        *   **Dynamic Cooling**: `temperature` is exponentially decayed using a relative progress window mapped between Reheating anchors. Equation: $T(t) = T_{anchor} \cdot (T_{min} / T_{anchor})^p$ where $p$ is the relative progress.
-3.  **Termination**: Return the best solution found.
+2.  **Simulated Annealing Loop**:
+    *   Initialize `temperature = config.start_temperature`.
+    *   The loop iterates until `temperature <= Tmin` (or time limit runs out).
+    *   **Select & Apply**: Apply Destroy and Repair operators.
+    *   **Local Search (Optional)**: Every `ls_interval` iterations (e.g. 10), apply the VND local search.
+    *   **Acceptance**:
+        *   Calculate $\Delta = \text{Candidate Benefit} - \text{Current Benefit}$.
+        *   Accept if $\Delta \ge 0$, else accept with probability $P = \exp(\Delta / \text{temperature})$.
+    *   **Update**: Update operator weights based on the outcome.
+    *   **Cooling**: `temperature = max(Tmin, temperature * config.cooling)`.
+3.  **Termination**: Return the best solution found (`best`).

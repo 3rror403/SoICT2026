@@ -1,4 +1,4 @@
-instance,best_obj,mean_obj,mean_time_sec,speed (it/s),temperature_stops,time_limit_stops,feasible_runs,timeout_runs,total_runs
+instance,best_obj,mean_obj,mean_time_sec,speed (it/s),temperature_stops,time_limcit_stops,feasible_runs,timeout_runs,total_runs
 r10_p0_m10_s1.txt,473.40322669928145,473.40322669928145,1.7406276999999999,34470.32355052146,10,0,10,0,10
 r10_p2_m8_s2.txt,430.7343148549302,430.7343148549302,1.2117821,49513.85236669201,10,0,10,0,10
 r10_p5_m5_s3.txt,286.0960511683597,286.0960511683597,0.8448997,71014.34643662437,10,0,10,0,10

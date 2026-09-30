@@ -15,12 +15,28 @@ constexpr double kTolerance = 1e-8;
 
 bool ReplaceRequest::improve(SearchState& state) const {
     bool changed = false;
+
+    // thread_local scratch to avoid repeated heap allocations
+    thread_local std::vector<std::size_t> unserved;
+    thread_local std::vector<std::pair<double, std::size_t>> served_by_savings;
+    thread_local std::vector<double> pickup_cost, delivery_cost, adjacent_cost, suffix_delivery;
+
     for (;;) {
-        std::vector<std::size_t> unserved;
+        unserved.clear();
         for (std::size_t r = 0; r < state.request_count(); ++r) {
             if (state.location(r).taxi < 0) unserved.push_back(r);
         }
         if (unserved.empty()) break;
+
+        // Sort served requests by removal savings descending for B&B pruning
+        served_by_savings.clear();
+        for (std::size_t r = 0; r < state.request_count(); ++r) {
+            if (state.location(r).taxi < 0) continue;
+            const auto g = state.removal_gain(r);
+            if (g) served_by_savings.emplace_back(*g, r);
+        }
+        std::sort(served_by_savings.begin(), served_by_savings.end(),
+                  [](const auto& a, const auto& b) { return a.first > b.first; });
 
         std::size_t best_r_out = 0;
         std::size_t best_r_in = 0;
@@ -29,23 +45,24 @@ bool ReplaceRequest::improve(SearchState& state) const {
         std::size_t best_delivery = 0;
         double best_gain = kMinGain;
         
-        for (std::size_t r_out = 0; r_out < state.request_count(); ++r_out) {
+        for (const auto& [savings, r_out] : served_by_savings) {
+            // B&B: savings is the absolute upper bound for any replacement
+            // involving this r_out. If it's below best_gain, all remaining
+            // r_out (sorted descending) are also below → break.
+            if (savings + kTolerance < best_gain) break;
+
             const auto loc_out = state.location(r_out);
-            if (loc_out.taxi < 0) continue;
-            
             const auto taxi = static_cast<std::size_t>(loc_out.taxi);
-            const auto removal_gain_opt = state.removal_gain(r_out);
-            if (!removal_gain_opt) continue;
-            const double savings = *removal_gain_opt;
             
             const auto& route = state.cache(taxi);
             const RouteView view{route.nodes(), loc_out.pickup, loc_out.dropoff, true};
             const auto length = view.size();
             const auto& in = state.instance();
             
-            // Reusable allocations
-            std::vector<double> pickup_cost(length + 1), delivery_cost(length + 1),
-                                adjacent_cost(length + 1), suffix_delivery(length + 2);
+            // Reuse thread_local scratch vectors (suffix_delivery is filled per r_in)
+            pickup_cost.resize(length + 1);
+            delivery_cost.resize(length + 1);
+            adjacent_cost.resize(length + 1);
 
             auto map_pos = [&](std::size_t p) {
                 return p < loc_out.pickup ? p : p + 2;
@@ -101,6 +118,8 @@ bool ReplaceRequest::improve(SearchState& state) const {
                         const auto best_delta = std::min(adjacent_cost[a], pickup_cost[a] + suffix_delivery[a + 1]);
                         if (savings - best_delta + kTolerance < best_gain) continue;
                         
+                        if (a && !route.boundary_allowed(in, map_pos(a - 1) + 1)) continue;
+
                         RouteCandidate prefix(in, taxi, route);
                         add_range(prefix, 0, a);
                         prefix.add_node(pickup_node);
@@ -110,6 +129,8 @@ bool ReplaceRequest::improve(SearchState& state) const {
                             const double delta = b == a ? adjacent_cost[a] : pickup_cost[a] + delivery_cost[b];
                             const double objective = savings - delta;
                             if (objective + kTolerance < best_gain) continue;
+                            
+                            if (b != a && !route.boundary_allowed(in, map_pos(b - 1) + 1)) continue;
                             
                             RouteCandidate candidate = prefix;
                             add_range(candidate, a, b);
