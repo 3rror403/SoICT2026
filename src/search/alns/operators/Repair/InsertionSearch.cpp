@@ -48,17 +48,26 @@ std::shared_ptr<const EmptyTaxiIndex> build_empty_taxi_index(
 }
 
 namespace {
-void consider(InsertionOptions& result, InsertionChoice choice) {
-    if (!result.best || choice.gain > result.best->gain ||
-        (choice.gain == result.best->gain && choice.taxi < result.best->taxi)) {
-        if (result.best) result.second_gain = std::max(result.second_gain, result.best->gain);
-        result.best = choice;
-    } else result.second_gain = std::max(result.second_gain, choice.gain);
+void consider(InsertionOptions& result, InsertionChoice choice, std::size_t K = 3) {
+    auto& top = result.global_top;
+    if (std::find(top.begin(), top.end(), choice) != top.end()) return;
+    top.push_back(choice);
+    std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) {
+        return a.gain > b.gain || (a.gain == b.gain && a.taxi < b.taxi);
+    });
+    if (top.size() > K) top.resize(K);
 }
 
-void combine(InsertionOptions& result, const InsertionOptions& route) {
-    if (route.best) consider(result, *route.best);
-    result.second_gain = std::max(result.second_gain, route.second_gain);
+void combine(InsertionOptions& result, const InsertionOptions& route, std::size_t K = 3) {
+    if (route.global_top.empty()) return;
+    for (const auto& choice : route.global_top) consider(result, choice, K);
+    
+    auto& rb = result.route_best;
+    rb.push_back(route.global_top[0]);
+    std::sort(rb.begin(), rb.end(), [](const auto& a, const auto& b) {
+        return a.gain > b.gain || (a.gain == b.gain && a.taxi < b.taxi);
+    });
+    if (rb.size() > K) rb.resize(K);
 }
 
 bool add_empty_taxis(InsertionOptions& result, const SearchState& state,
@@ -69,9 +78,15 @@ bool add_empty_taxis(InsertionOptions& result, const SearchState& state,
         std::size_t found = 0;
         for (const auto& empty : index->choices(request)) {
             if (state.is_active(empty.taxi)) continue;
-            consider(result, {request, empty.taxi, 0, 0, empty.gain});
-            if (++found == 2) break;
+            InsertionChoice choice{request, empty.taxi, 0, 0, empty.gain};
+            consider(result, choice);
+            result.route_best.push_back(choice);
+            if (++found == 3) break;
         }
+        std::sort(result.route_best.begin(), result.route_best.end(), [](const auto& a, const auto& b) {
+            return a.gain > b.gain || (a.gain == b.gain && a.taxi < b.taxi);
+        });
+        if (result.route_best.size() > 3) result.route_best.resize(3);
     }
     return indexed;
 }
@@ -146,7 +161,7 @@ InsertionOptions scan_route(const SearchState& state, std::size_t request,
     
     for (std::size_t a = 0; a <= length; ++a) {
         if (!route.boundary_allowed(in, a)) continue;
-        const auto threshold = [&] { return std::max(global_second, result.second_gain); };
+        const auto threshold = [&] { return std::max(global_second, result.second_gain()); };
         
         if (data.passenger) {
             const auto delta = adjacent_delta[a];
@@ -177,7 +192,7 @@ InsertionOptions scan_route(const SearchState& state, std::size_t request,
     std::optional<FastRouteCheck> prefix;
 
     for (const auto& pair : pairs) {
-        const auto threshold = std::max(global_second, result.second_gain);
+        const auto threshold = std::max(global_second, result.second_gain());
         if (data.revenue - pair.delta + 1e-8 < threshold) break; 
         
         if (data.passenger) {
@@ -188,7 +203,7 @@ InsertionOptions scan_route(const SearchState& state, std::size_t request,
             candidate.range(pair.a, length);
             if (candidate.feasible()) {
                 consider(result, {request, taxi, pair.a, pair.a, data.revenue - pair.delta});
-                if (++feasible_count >= 2) break;
+                if (++feasible_count >= 3) break;
             }
         } else {
             if (pair.a != prefix_a) {
@@ -209,7 +224,7 @@ InsertionOptions scan_route(const SearchState& state, std::size_t request,
             
             if (candidate.feasible()) {
                 consider(result, {request, taxi, pair.a, pair.b, data.revenue - pair.delta});
-                if (++feasible_count >= 2) break;
+                if (++feasible_count >= 3) break;
             }
         }
     }
@@ -225,8 +240,7 @@ InsertionOptions insertion_options_impl(const SearchState& state, std::size_t re
     const bool indexed = add_empty_taxis(result, state, request);
     const auto data = request_segments(state, request);
     const auto threshold = [&] {
-        return need_second ? result.second_gain :
-            (result.best ? result.best->gain : -std::numeric_limits<double>::infinity());
+        return need_second ? result.threshold(3) : result.threshold(1);
     };
     if (indexed) {
         for (const auto& [taxi, route] : state.active_routes())
@@ -247,7 +261,7 @@ InsertionOptions insertion_options(const SearchState& state, std::size_t request
 
 std::optional<InsertionChoice> best_insertion(const SearchState& state,
                                               std::size_t request) {
-    return insertion_options_impl(state, request, false).best;
+    return insertion_options_impl(state, request, false).best();
 }
 
 std::optional<InsertionChoice> BestInsertionCache::best(const SearchState& state,
@@ -262,16 +276,16 @@ std::optional<InsertionChoice> BestInsertionCache::best(const SearchState& state
     const auto data = request_segments(state, request);
     for (const auto& [taxi, route] : state.active_routes()) {
         auto& entry = row[taxi];
-        const auto threshold = result.best ? result.best->gain :
+        const auto threshold = result.best() ? result.best()->gain :
             -std::numeric_limits<double>::infinity();
         if (entry.route_version != route.version() || threshold < entry.threshold) {
-            entry.best = scan_route(state, request, taxi, route, data, threshold).best;
+            entry.best = scan_route(state, request, taxi, route, data, threshold).best();
             entry.route_version = route.version();
             entry.threshold = threshold;
         }
-        if (entry.best) consider(result, *entry.best);
+        if (entry.best) consider(result, *entry.best, 1);
     }
-    return result.best;
+    return result.best();
 }
 
 bool RepairInsertionCache::enabled_for(const SearchState& state) {

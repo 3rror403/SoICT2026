@@ -11,11 +11,33 @@ namespace soict::alns {
 using Deadline = std::chrono::steady_clock::time_point;
 struct InsertionChoice {
     std::size_t request = 0, taxi = 0, pickup = 0, delivery = 0;
-    double gain = 0;
+    double gain = -std::numeric_limits<double>::infinity();
+    
+    bool operator==(const InsertionChoice& o) const {
+        return taxi == o.taxi && pickup == o.pickup && delivery == o.delivery;
+    }
 };
 struct InsertionOptions {
-    std::optional<InsertionChoice> best;
-    double second_gain = -std::numeric_limits<double>::infinity();
+    std::vector<InsertionChoice> global_top;
+    std::vector<InsertionChoice> route_best;
+    
+    std::optional<InsertionChoice> best() const {
+        if (global_top.empty()) return std::nullopt;
+        return global_top[0];
+    }
+    double second_gain() const {
+        if (global_top.size() < 2) return -std::numeric_limits<double>::infinity();
+        return global_top[1].gain;
+    }
+    double third_gain() const {
+        if (global_top.size() < 3) return -std::numeric_limits<double>::infinity();
+        return global_top[2].gain;
+    }
+    
+    // threshold for considering a new move
+    double threshold(std::size_t k) const {
+        return global_top.size() >= k ? global_top[k-1].gain : -std::numeric_limits<double>::infinity();
+    }
 };
 struct EmptyTaxiChoice {
     std::size_t taxi = 0;

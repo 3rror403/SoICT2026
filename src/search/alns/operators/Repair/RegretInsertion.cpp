@@ -26,12 +26,12 @@ void regret_apply(SearchState& state,
         for (const auto request : removed) {
             if (!pending[request]) continue;
             const auto options = insertion_options(state, request);
-            if (!options.best || options.best->gain <= 1e-9) continue;
+            if (!options.best() || options.best()->gain <= 1e-9) continue;
             const double regret = regret_of(options);
             // Tie-break: prefer higher best->gain when regret is equal.
             if (!choice || regret > best_regret ||
-                (regret == best_regret && options.best->gain > choice->gain)) {
-                choice = options.best;
+                (regret == best_regret && options.best()->gain > choice->gain)) {
+                choice = options.best();
                 best_regret = regret;
             }
         }
@@ -53,9 +53,10 @@ void RegretInsertionV0::apply(SearchState& state,
                                std::span<const std::size_t> removed,
                                std::mt19937_64&) const {
     regret_apply(state, removed, [](const InsertionOptions& opts) -> double {
-        return std::isfinite(opts.second_gain)
-            ? opts.best->gain - opts.second_gain
-            : opts.best->gain;
+        const double second = opts.second_gain();
+        return std::isfinite(second)
+            ? opts.best()->gain - second
+            : opts.best()->gain;
     });
 }
 
@@ -67,7 +68,7 @@ void RegretInsertionV1::apply(SearchState& state,
                                std::span<const std::size_t> removed,
                                std::mt19937_64&) const {
     regret_apply(state, removed, [](const InsertionOptions& opts) -> double {
-        return opts.best->gain - std::max(opts.second_gain, 0.0);
+        return opts.best()->gain - std::max(opts.second_gain(), 0.0);
     });
 }
 
@@ -80,9 +81,60 @@ void RegretInsertionV2::apply(SearchState& state,
                                std::span<const std::size_t> removed,
                                std::mt19937_64&) const {
     regret_apply(state, removed, [](const InsertionOptions& opts) -> double {
-        return std::isfinite(opts.second_gain)
-            ? opts.best->gain - opts.second_gain
+        const double second = opts.second_gain();
+        return std::isfinite(second)
+            ? opts.best()->gain - second
             : std::numeric_limits<double>::infinity();
+    });
+}
+
+void GlobalRegret3::apply(SearchState& state,
+                          std::span<const std::size_t> removed,
+                          std::mt19937_64&) const {
+    regret_apply(state, removed, [](const InsertionOptions& opts) -> double {
+        const double first = opts.best()->gain;
+        const double second = opts.second_gain();
+        const double third = opts.third_gain();
+        
+        double regret = 0;
+        if (std::isfinite(second)) regret += first - second;
+        else return std::numeric_limits<double>::infinity();
+        
+        if (std::isfinite(third)) regret += first - third;
+        return regret;
+    });
+}
+
+void RouteRegret2::apply(SearchState& state,
+                         std::span<const std::size_t> removed,
+                         std::mt19937_64&) const {
+    regret_apply(state, removed, [](const InsertionOptions& opts) -> double {
+        const double first = opts.best()->gain;
+        double second = -std::numeric_limits<double>::infinity();
+        if (opts.route_best.size() >= 2) second = opts.route_best[1].gain;
+        
+        return std::isfinite(second)
+            ? first - second
+            : std::numeric_limits<double>::infinity();
+    });
+}
+
+void RouteRegret3::apply(SearchState& state,
+                         std::span<const std::size_t> removed,
+                         std::mt19937_64&) const {
+    regret_apply(state, removed, [](const InsertionOptions& opts) -> double {
+        const double first = opts.best()->gain;
+        double second = -std::numeric_limits<double>::infinity();
+        double third = -std::numeric_limits<double>::infinity();
+        if (opts.route_best.size() >= 2) second = opts.route_best[1].gain;
+        if (opts.route_best.size() >= 3) third = opts.route_best[2].gain;
+        
+        double regret = 0;
+        if (std::isfinite(second)) regret += first - second;
+        else return std::numeric_limits<double>::infinity();
+        
+        if (std::isfinite(third)) regret += first - third;
+        return regret;
     });
 }
 

@@ -62,9 +62,12 @@ Result solve(const Instance& instance, const Config& config) {
     destroys.push_back(std::make_unique<RouteRemoval>());
     std::vector<std::unique_ptr<RepairOperator>> repairs;
     repairs.push_back(std::make_unique<GreedyInsertion>());
-    repairs.push_back(std::make_unique<RegretInsertionV0>());
+    // repairs.push_back(std::make_unique<RegretInsertionV0>()); // Weak standard regret
     repairs.push_back(std::make_unique<RegretInsertionV1>());
     repairs.push_back(std::make_unique<RegretInsertionV2>());
+    // repairs.push_back(std::make_unique<GlobalRegret3>());     // Weak global regret
+    // repairs.push_back(std::make_unique<RouteRegret2>());      // Suboptimal route regret
+    repairs.push_back(std::make_unique<RouteRegret3>());
     struct Couple { std::size_t destroy, repair; };
     std::vector<Couple> couples;
     for (std::size_t d = 0; d < destroys.size(); ++d)

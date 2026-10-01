@@ -29,6 +29,24 @@ public:
     void apply(SearchState&, std::span<const std::size_t>, std::mt19937_64&) const override;
 };
 
+class GlobalRegret3 final : public RepairOperator {
+public:
+    std::string_view name() const override { return "regret_3_global"; }
+    void apply(SearchState&, std::span<const std::size_t>, std::mt19937_64&) const override;
+};
+
+class RouteRegret2 final : public RepairOperator {
+public:
+    std::string_view name() const override { return "regret_2_route"; }
+    void apply(SearchState&, std::span<const std::size_t>, std::mt19937_64&) const override;
+};
+
+class RouteRegret3 final : public RepairOperator {
+public:
+    std::string_view name() const override { return "regret_3_route"; }
+    void apply(SearchState&, std::span<const std::size_t>, std::mt19937_64&) const override;
+};
+
 // Legacy alias kept for backward compatibility.
 using RegretInsertion = RegretInsertionV0;
 
