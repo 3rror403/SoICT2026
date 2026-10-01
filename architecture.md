@@ -100,6 +100,49 @@ The `SoICT2026` project solves a complex vehicle routing and scheduling problem 
                     q -= 1
         ```
 
+*   **`DelayRemoval`**
+    *   **Purpose**: Removes requests that are scheduled very close to their late deadline, targeting tight constraints to relieve localized scheduling congestion.
+    *   **Input**: Current `SearchState`, `q`.
+    *   **Output**: Modified `SearchState`.
+    *   **Pseudocode**:
+        ```python
+        def DelayRemoval(state, q):
+            L = []
+            for request r in state.assigned_requests:
+                # How close is the vehicle arriving compared to the late deadline?
+                delay_risk = r.late_tw - state.get_arrival_time(r.pickup)
+                L.append((r, delay_risk))
+            
+            sort L ascending by delay_risk (smallest margin = highest risk)
+            
+            while q > 0:
+                y = Random.Uniform(0.0, 1.0)
+                idx = floor(y^3 * len(L))
+                state.unassign(L[idx].request)
+                remove L[idx] from L
+                q -= 1
+        ```
+
+*   **`TimeBucketRemoval`**
+    *   **Purpose**: Removes requests that fall into the same temporal bucket (e.g., peak hour) to disrupt dense blocks of time where vehicles are overloaded.
+    *   **Input**: Current `SearchState`, `q`.
+    *   **Output**: Modified `SearchState`.
+    *   **Pseudocode**:
+        ```python
+        def TimeBucketRemoval(state, q):
+            bucket_size = config.time_limit / 10 # Example chunk size
+            target_bucket = Random.Integer(0, 9)
+            
+            L = []
+            for request r in state.assigned_requests:
+                if r.early_tw falls inside target_bucket:
+                    L.append(r)
+                    
+            shuffle(L)
+            for i = 0 to min(q, len(L)) - 1:
+                state.unassign(L[i])
+        ```
+
 ---
 
 ### 3.2 Repair Operators
@@ -129,31 +172,43 @@ The `SoICT2026` project solves a complex vehicle routing and scheduling problem 
                 state.insert(best_request, best_insertion_pos)
         ```
 
-*   **`RegretInsertion`**
-    *   **Purpose**: Looks ahead to prevent hard-to-insert requests from being stranded by prioritizing requests with the largest difference between their best and second-best insertion routes.
+*   **`RegretInsertion` (V1, V2, RouteRegret3)**
+    *   **Purpose**: Looks ahead to prevent hard-to-insert requests from being stranded by prioritizing requests with the largest difference between their best and alternative insertion options.
     *   **Input**: Current `SearchState`.
     *   **Output**: Modified `SearchState`.
     *   **Pseudocode**:
         ```python
-        def RegretInsertion(state):
+        def RegretInsertion(state, variant):
             while not state.unassigned_pool.is_empty():
                 best_request = null
                 max_regret = -INFINITY
                 best_insertion_pos = null
+                best_gain = -INFINITY
                 
                 for request u in state.unassigned_pool:
-                    # Find top 2 best insertions strictly in DIFFERENT routes
-                    (pos1, gain1), (pos2, gain2) = InsertionSearch.find_top_2_insertions(state, u)
+                    # Find top insertions globally OR across unique routes
+                    choices = InsertionSearch.find_top_k_insertions(state, u, k=3, route_unique=(variant=="RouteRegret3"))
                     
-                    regret = gain1 - gain2 
-                    # If V1 variant: regret = gain1 - max(gain2, 0)
-                    # If V2 variant: if pos2 is null, regret = INFINITY
+                    gain1 = choices[0].gain
+                    gain2 = choices[1].gain if len(choices) > 1 else -INFINITY
                     
-                    if regret > max_regret:
-                        max_regret = regret
-                        best_request = u
-                        best_insertion_pos = pos1
+                    if variant == "V1":
+                        regret = gain1 - max(gain2, 0.0) # Assume 0 gain if second is infeasible
+                    elif variant == "V2":
+                        if len(choices) == 1:
+                            regret = INFINITY # Absolute priority if only 1 option exists
+                        else:
+                            regret = gain1 - gain2
+                    elif variant == "RouteRegret3":
+                        gain3 = choices[2].gain if len(choices) > 2 else -INFINITY
+                        regret = gain1 - gain3 # Pushes to distribute across multiple vehicles
                         
+                    if regret > max_regret or (regret == max_regret and gain1 > best_gain):
+                        max_regret = regret
+                        best_gain = gain1
+                        best_request = u
+                        best_insertion_pos = choices[0].pos
+                
                 if best_request is null:
                     break
                     
@@ -304,7 +359,12 @@ The `SoICT2026` project solves a complex vehicle routing and scheduling problem 
             best_state = state
             temperature = config.start_temperature
             
-            while temperature > config.min_temperature:
+            # Progress controls termination (Time-based or Iteration-based)
+            while True:
+                progress = get_progress() # elapsed_time / time_limit
+                if progress >= 1.0:
+                    break
+                
                 # 1. Roulette-Wheel Selection
                 destroy_op = select_random(DestroyOperators, weights)
                 repair_op = select_random(RepairOperators, weights)
@@ -314,15 +374,18 @@ The `SoICT2026` project solves a complex vehicle routing and scheduling problem 
                 destroy_op(candidate_state)
                 repair_op(candidate_state)
                 
-                # 3. Apply Local Search (VND)
+                # 3. Multi-Tier Local Search
                 if iterations % config.ls_interval == 0:
-                    while True:
-                        improved = False
-                        for ls_op in [Relocate, Replace, Swap]:
-                            if ls_op(candidate_state):
-                                improved = True
-                                break # Restart VND loop
-                        if not improved: break
+                    # Gating Mechanism: Calculate Gap to Best Solution
+                    gap = (best_state.benefit - candidate_state.benefit) / abs(best_state.benefit)
+                    
+                    # Tier 1 (Fast moves: Relocate, Add/Remove)
+                    if gap <= config.ls_tier1_threshold:
+                        apply_local_search_tier(candidate_state, tier=1)
+                        
+                    # Tier 2 (Expensive moves: Swap, 2-Opt*)
+                    if gap <= config.ls_tier2_threshold:
+                        apply_local_search_tier(candidate_state, tier=2)
                 
                 # 4. Simulated Annealing Acceptance
                 delta = candidate_state.benefit - state.benefit
@@ -337,6 +400,8 @@ The `SoICT2026` project solves a complex vehicle routing and scheduling problem 
                 
                 # 5. Update Weights & Cool down
                 update_operator_weights(outcome)
+                
+                # Zero-Waste CPU: Clamp temperature, never exit early based on T
                 temperature = max(config.min_temperature, temperature * config.cooling_rate)
                 
             return best_state

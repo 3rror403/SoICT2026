@@ -18,6 +18,7 @@
 #include "search/alns/operators/LocalSearch/CleanCut2OptStar.hpp"
 #include "search/alns/operators/Repair/GreedyInsertion.hpp"
 #include "search/alns/operators/Repair/RegretInsertion.hpp"
+#include "search/alns/operators/Repair/SharedGapPairRepair.hpp"
 #include "search/alns/operators/Repair/InsertionSearch.hpp"
 
 #include <algorithm>
@@ -62,6 +63,7 @@ Result solve(const Instance& instance, const Config& config) {
     destroys.push_back(std::make_unique<RouteRemoval>());
     std::vector<std::unique_ptr<RepairOperator>> repairs;
     repairs.push_back(std::make_unique<GreedyInsertion>());
+    repairs.push_back(std::make_unique<SharedGapPairRepair>(instance));
     // repairs.push_back(std::make_unique<RegretInsertionV0>()); // Weak standard regret
     repairs.push_back(std::make_unique<RegretInsertionV1>());
     repairs.push_back(std::make_unique<RegretInsertionV2>());
@@ -83,6 +85,8 @@ Result solve(const Instance& instance, const Config& config) {
     
     local_search.add_tier2(std::make_unique<SwapRequest>());
     local_search.add_tier2(std::make_unique<CleanCut2OptStar>());
+
+    SharedGapPairRepair pair_detector(instance);
 
     std::ofstream trace, operator_log;
     if (!config.log_directory.empty()) {
@@ -133,7 +137,9 @@ Result solve(const Instance& instance, const Config& config) {
     }
 
     // ── Main SA loop ─────────────────────────────────────────────────────────
-    while (temperature > Tmin) {
+    while (true) {
+        const double progress = get_progress(iterations);
+        if (progress >= 1.0) break;
         if (Clock::now() >= deadline) break;
 
         const auto selection = balance.select(rng, current.served_count());
@@ -141,6 +147,7 @@ Result solve(const Instance& instance, const Config& config) {
         SearchState candidate = current;
         const auto removed = destroys[couple.destroy]->apply(
             candidate, selection.removal_count, rng);
+
         repairs[couple.repair]->apply(candidate, removed, rng);
         if (config.local_search && iterations % config.ls_interval == 0) {
             const double denominator = std::max(1.0, std::abs(best.benefit()));

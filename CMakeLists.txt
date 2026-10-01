@@ -29,6 +29,7 @@ add_library(soict_alns
     src/search/alns/operators/Repair/InsertionSearch.cpp
     src/search/alns/operators/Repair/GreedyInsertion.cpp
     src/search/alns/operators/Repair/RegretInsertion.cpp
+    src/search/alns/operators/Repair/SharedGapPairRepair.cpp
     src/search/alns/operators/LocalSearch/LocalSearch.cpp
     src/search/alns/operators/LocalSearch/AddRequest.cpp
     src/search/alns/operators/LocalSearch/RemoveRequest.cpp
