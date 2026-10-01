@@ -54,6 +54,8 @@ public:
                 std::size_t pickup_boundary, std::size_t delivery_boundary);
     bool relocate_within_route(std::size_t request, std::size_t pickup_boundary,
                                std::size_t delivery_boundary);
+    bool apply_clean_cut(std::size_t taxiA, std::size_t cutA,
+                         std::size_t taxiB, std::size_t cutB, double delta_benefit);
     void check() const;
 
 private:

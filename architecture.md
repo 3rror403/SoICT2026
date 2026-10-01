@@ -2,96 +2,342 @@
 
 ## 1. Overview
 
-The `SoICT2026` project is designed to solve a complex vehicle routing and scheduling problem with pickups and deliveries. Specifically, the problem includes mixed requests:
-*   **Passengers**: Require direct transport from a pickup location to a drop-off location within specified time windows.
-*   **Parcels**: Require transport from a pickup to a delivery location, but unlike passengers, a taxi can carry multiple parcels simultaneously up to its `parcel_capacity`.
-
-The software is implemented in C++20 and separated into core domain logic (`soict_core`), meta-heuristic search (`soict_alns`), and exact mathematical programming (`soict_mip`).
+The `SoICT2026` project solves a complex vehicle routing and scheduling problem with pickups and deliveries for mixed requests (Passengers and Parcels). The software is implemented in C++20, segmented into `soict_core` (domain logic), `soict_alns` (meta-heuristic search), and `soict_mip` (exact formulation).
 
 ---
 
-## 2. Project Architecture and Class Responsibilities
+## 2. Advanced Route Evaluation (`RouteCache` & `FastRouteCheck`)
 
-### 2.1 Core Library (`soict_core`)
-This library provides the foundational data structures for the problem definition and solution state.
-
-*   **`Instance` (`src/model/Instance.hpp`)**: Defines the immutable parameters of a problem instance. It stores arrays of `Taxi` (fleet with capacity), `Passenger`, and `Parcel`. It holds a precalculated, flattened distance/time matrix (`travel_time`, `travel_cost`).
-    *   *Nodes Layout*: `0` to `K-1` for taxi origins; `K` to `K+N-1` for passenger pickups; `K+N` to `K+2N-1` for passenger drop-offs; similarly for parcels. This continuous indexing enables fast array-based lookups for matrices without hash maps.
-*   **`Solution`**: Represents a completed sequence of node visits for each taxi.
-*   **`State`**: Used during the search to represent a partially constructed solution. It keeps track of which requests are `unassigned` and provides fast query methods to check constraints and evaluate objective value changes.
-
-### 2.2 ALNS Solver (`soict_alns`)
-This library implements the Adaptive Large Neighborhood Search (ALNS) meta-heuristic. This is the primary engine for finding high-quality solutions efficiently.
-
-#### 2.2.1 Advanced Route Evaluation (`RouteCache` & `FastRouteCheck`)
-Evaluating whether an insertion (e.g., picking up a parcel at node A and delivering at node B) is feasible under strict time window and capacity constraints is computationally expensive. The project addresses this with highly optimized data structures:
-
-*   **`Segment` (`RouteCache.hpp`)**: A struct summarizing a sequence of visited nodes. It records:
-    *   `duration`, `cost`
-    *   `ready`: The earliest time the vehicle can leave the last node of the segment.
-    *   `latest_input`: The latest time the vehicle can arrive at the first node without violating any time windows within the segment.
-    *   `load_change`, `min_load`, `max_load`: Changes and extrema of parcel weight.
-*   **`RouteCache`**: 
-    *   Uses a **Disjoint Sparse Table (DST)** to cache the `Segment` properties for all power-of-two contiguous sub-routes.
-    *   *Logic*: The DST allows querying the combined `Segment` statistics of *any* arbitrary range `[first, last]` in $O(1)$ time, making sub-route evaluations incredibly fast without re-iterating over nodes.
-    *   *Cache Versioning*: `RouteCache` tracks a globally atomic `version_`. When a taxi's route changes, a new `RouteCache` is built with an incremented version, allowing operators to instantly detect stale node states and avoid redundant computations.
-*   **`FastRouteCheck`**: Uses the properties of `Segment`s to quickly check if inserting a node into a route maintains feasibility (time windows and capacity) by accumulating segment bounds left-to-right.
-
-#### 2.2.2 Destroy Operators (`src/search/alns/operators/Destroy/`)
-These operators take a complete `SearchState` and remove a configurable number of requests (`q`), putting them into an unassigned pool.
-
-*   **`RandomRemoval.cpp`**: Randomly picks `q` assigned requests and removes them. Ensures pure diversity to escape local minima.
-*   **`WorstRemoval.cpp`**: Calculates the *removal gain* (how much cost is saved by removing the request) for all assigned requests. It uses a **Randomized Ropke-Pisinger algorithm**: instead of strictly removing the absolute worst, it selects elements based on $idx = y^p \cdot N$ where $y \sim U(0,1)$ and $p=3$. This ensures heavy-cost requests are highly likely to be removed, but maintains stochastic variance. To maximize performance, it uses `std::nth_element` for $O(N)$ selection instead of $O(N \log N)$ sorting.
-*   **`RelatedRemoval.cpp`** (Shaw Removal): Removes a cluster of requests that are "similar". It selects a random anchor request. Then, it removes requests that are geographically and temporally close to the anchor. Distance is measured by combining travel time between pickup nodes and the difference in their earliest time windows.
-*   **`RouteRemoval.cpp`**: Selects a taxi route randomly and completely empties it. The selection probability is inversely proportional to the number of requests in the route ($W_i = 1 / |R_i|$). This targets short, inefficient routes and forces the repair operators to pack those requests into other, denser routes.
-
-#### 2.2.3 Repair Operators (`src/search/alns/operators/Repair/`)
-These operators take the unassigned requests and re-insert them heuristically.
-
-*   **`InsertionSearch.cpp`**: The core logic that iterates over all taxis and all possible insertion positions `(pickup_pos, dropoff_pos)` to find the best valid insertion.
-    *   *Optimization*: It pre-filters insertions by computing a lower bound of the cost increase using just the replaced adjacent arcs. If this lower bound exceeds the current best found insertion, the heavy constraint check (`FastRouteCheck`) is skipped entirely.
-*   **`GreedyInsertion.cpp`**: Evaluates the best valid insertion for *each* unassigned request and inserts the one providing the highest immediate gain.
-*   **`RegretInsertion.cpp`**: 
-    *   *Logic*: Calculates the *regret value* for each request (difference in gain between its best insertion and its second-best insertion). Inserts the request with the highest regret to prevent hard-to-insert requests from being left out.
-    *   *Variants*: Includes V0 (default `best - second`), V1 (`best - max(second, 0)`), and V2 (absolute priority if only 1 option exists).
-
-#### 2.2.4 Local Search (`src/search/alns/operators/LocalSearch/`)
-Applied periodically (every `ls_interval` iterations) during ALNS to find local optima. **Trade-off Note**: The operators below significantly increase the computational cost per ALNS iteration, but they dramatically improve the quality of each move, accelerating convergence to the Best Known Solution (BKS).
-
-*   **`LocalSearch.cpp` (VND Controller)**: Uses a Variable Neighborhood Descent (VND) loop. It applies operators sequentially. If an operator finds an improvement, the search restarts. It includes a dynamic cap limit (`4 * moves.size()`) to prevent infinite loops and `no_improve = 1` logic to skip re-evaluating operators that just converged.
-*   **`AddRequest` / `RemoveRequest`**: Standard $O(N)$ moves to toggle single request assignments.
-*   **`PassengerRelocate.cpp` & `ParcelRelocate.cpp`**: Evaluates moving a request to a better position. 
-    *   *Algorithm (Best-First)*: Instead of checking `FastRouteCheck` sequentially, it first gathers all $O(1)$ arc-cost bounds, sorts them, and strictly evaluates the highest potential gains first. It utilizes `thread_local` cache memory (`std::vector`) to absolutely eliminate dynamic heap allocations (`std::malloc`) during the intensive scanning loops, allowing the operator to execute in microseconds.
-*   **`ReplaceRequest.cpp`**: Attempts to remove one assigned request and insert one unassigned request into the newly freed route in a single atomic operation. 
-    *   *Logic*: Computes `net_gain = [cost_saved(r_out) - revenue(r_out)] + [revenue(r_in) - cost_insert(r_in)]`. It heavily reuses the arc-cost bound infrastructure from Relocate to aggressively prune invalid replacements. It enforces strict boundary constraint checks `boundary_allowed` for parcels to prevent physically impossible pickup/delivery sequencing.
-*   **`SwapRequest.cpp` (SWAP*)**: Evaluates inter-route exchanges by swapping requests between two different taxis. This is the heaviest but most powerful operator.
-    *   *Algorithm (Descriptor Pools)*: Employs a highly optimized descriptor pool pattern (`SwapPool`). During the first iteration, it scans all $O(N^2)$ request pairs and evaluates them. All pairs yielding positive exact gain are encoded as `SwapDescriptor` structs and cached. When a swap is applied (modifying $t_1$ and $t_2$), the pool incrementally invalidates and re-scans only the pairs involving the affected taxis $t_1$ or $t_2$, completely skipping redundant evaluations of undisturbed routes. 
-    *   *Branch and Bound*: It caches the `Top-K` (K=3) best insertion positions and their approximate costs per taxi. When evaluating pairs, it computes an absolute upper bound: `upper_bound = savings(r_1) + savings(r_2)`. If `upper_bound - min_insert(r_1) - min_insert(r_2) < 0`, it prunes the pair in $O(1)$ time without running `FastRouteCheck`.
-
-#### 2.2.5 Adaptive Mechanism (`Balance`)
-*   **Roulette-wheel Selection**: At each iteration, one Destroy and one Repair operator are chosen randomly based on their weights.
-*   **Scoring & Decay**: Weights are updated via exponential smoothing: `new_weight = (1 - decay) * old_weight + decay * score` based on outcomes (New Best / Better / Accepted / Rejected).
-
-### 2.3 Mixed Integer Programming Solver (`soict_mip`)
-*   **`MIPSolver`**: Translates constraints (time windows, capacities) into linear constraints and solves using CPLEX's branch-and-cut algorithm to prove optimality or provide tight bounds.
+*   **`RouteCache` & `Segment`**
+    *   **Purpose**: Caches the temporal and capacity statistics of any contiguous sequence of nodes in $O(1)$ time using a Disjoint Sparse Table (DST).
+    *   **Input**: A sequence of nodes (sub-route).
+    *   **Output**: A `Segment` struct containing `duration`, `cost`, `ready_time`, `latest_input`, and `load` extrema.
+    *   **Mechanism**: Uses a globally atomic `version_` tracker. Operators check if `route.version() == cache.version()` to instantly bypass redundant constraint checks.
 
 ---
 
-## 3. Main Algorithm Flow (ALNS)
+## 3. ALNS Operators Detailed Pseudocode
 
-The main ALNS logic in `ALNS.cpp` is strictly bound to a **Simulated Annealing (SA)** schedule. It evaluates iterative improvements while probabilistically accepting worse solutions to escape local optima.
+### 3.1 Destroy Operators
 
-1.  **Initialization**:
-    *   Create an empty `SearchState`.
-    *   Generate a random permutation of all requests and greedily insert them.
-2.  **Simulated Annealing Loop**:
-    *   Initialize `temperature = config.start_temperature`.
-    *   The loop iterates until `temperature <= Tmin` (or time limit runs out).
-    *   **Select & Apply**: Apply Destroy and Repair operators.
-    *   **Local Search (Optional)**: Every `ls_interval` iterations (e.g. 10), apply the VND local search.
-    *   **Acceptance**:
-        *   Calculate $\Delta = \text{Candidate Benefit} - \text{Current Benefit}$.
-        *   Accept if $\Delta \ge 0$, else accept with probability $P = \exp(\Delta / \text{temperature})$.
-    *   **Update**: Update operator weights based on the outcome.
-    *   **Cooling**: `temperature = max(Tmin, temperature * config.cooling)`.
-3.  **Termination**: Return the best solution found (`best`).
+*   **`RandomRemoval`**
+    *   **Purpose**: Randomly removes requests to ensure pure stochastic diversity, helping escape local minima.
+    *   **Input**: Current `SearchState`, `q` (number of requests to remove).
+    *   **Output**: Modified `SearchState` with `q` unassigned requests.
+    *   **Pseudocode**:
+        ```python
+        def RandomRemoval(state, q):
+            assigned_list = get_all_assigned_requests(state)
+            shuffle(assigned_list)
+            for i = 0 to q - 1:
+                state.unassign(assigned_list[i])
+        ```
+
+*   **`WorstRemoval` (Randomized Ropke-Pisinger)**
+    *   **Purpose**: Removes requests that incur the highest cost in their current routes, using a randomized exponential distribution ($p=3$) to avoid deterministic cycling.
+    *   **Input**: Current `SearchState`, `q`.
+    *   **Output**: Modified `SearchState`.
+    *   **Pseudocode**:
+        ```python
+        def WorstRemoval(state, q):
+            L = []
+            for request r in state.assigned_requests:
+                cost_savings = state.cost(r.route) - state.cost(r.route \ {r})
+                L.append( (r, cost_savings) )
+            
+            sort L descending by cost_savings # In code: uses std::nth_element for O(N) performance
+            
+            while q > 0:
+                y = Random.Uniform(0.0, 1.0)
+                idx = floor(y^3 * len(L))
+                state.unassign(L[idx].request)
+                remove L[idx] from L
+                q -= 1
+        ```
+
+*   **`RelatedRemoval` (Shaw Removal)**
+    *   **Purpose**: Removes a cluster of requests that are physically and temporally close, as they likely compete for the same vehicle capacity.
+    *   **Input**: Current `SearchState`, `q`.
+    *   **Output**: Modified `SearchState`.
+    *   **Pseudocode**:
+        ```python
+        def RelatedRemoval(state, q):
+            anchor = select_random_assigned_request(state)
+            L = []
+            for request r in state.assigned_requests:
+                if r == anchor: continue
+                # Calculate geographical & temporal distance
+                dist = travel_time(anchor.pickup, r.pickup) 
+                       + alpha * abs(anchor.early_tw - r.early_tw)
+                L.append( (r, dist) )
+            
+            sort L ascending by dist
+            
+            state.unassign(anchor)
+            q -= 1
+            while q > 0:
+                y = Random.Uniform(0.0, 1.0)
+                idx = floor(y^3 * len(L))
+                state.unassign(L[idx].request)
+                remove L[idx] from L
+                q -= 1
+        ```
+
+*   **`RouteRemoval`**
+    *   **Purpose**: Completely empties an entire taxi route. Targets short/inefficient routes to minimize the active fleet size.
+    *   **Input**: Current `SearchState`.
+    *   **Output**: Modified `SearchState` with one route fully emptied.
+    *   **Pseudocode**:
+        ```python
+        def RouteRemoval(state, q):
+            while q > 0 and has_active_routes(state):
+                # Weight inversely proportional to route size
+                weights = [ 1.0 / len(route) for route in state.routes ]
+                target_route = Random.RouletteWheel(state.routes, weights)
+                
+                for request r in target_route:
+                    state.unassign(r)
+                    q -= 1
+        ```
+
+---
+
+### 3.2 Repair Operators
+
+*   **`GreedyInsertion`**
+    *   **Purpose**: Inserts the single unassigned request that yields the highest immediate profit (or lowest insertion cost) across all possible positions.
+    *   **Input**: Current `SearchState`.
+    *   **Output**: Modified `SearchState` with unassigned requests re-inserted.
+    *   **Pseudocode**:
+        ```python
+        def GreedyInsertion(state):
+            while not state.unassigned_pool.is_empty():
+                best_request = null
+                best_gain = -INFINITY
+                best_insertion_pos = null
+                
+                for request u in state.unassigned_pool:
+                    pos, gain = InsertionSearch.find_best_insertion(state, u)
+                    if gain > best_gain:
+                        best_gain = gain
+                        best_request = u
+                        best_insertion_pos = pos
+                
+                if best_request is null:
+                    break # No feasible insertion exists for any request
+                    
+                state.insert(best_request, best_insertion_pos)
+        ```
+
+*   **`RegretInsertion`**
+    *   **Purpose**: Looks ahead to prevent hard-to-insert requests from being stranded by prioritizing requests with the largest difference between their best and second-best insertion routes.
+    *   **Input**: Current `SearchState`.
+    *   **Output**: Modified `SearchState`.
+    *   **Pseudocode**:
+        ```python
+        def RegretInsertion(state):
+            while not state.unassigned_pool.is_empty():
+                best_request = null
+                max_regret = -INFINITY
+                best_insertion_pos = null
+                
+                for request u in state.unassigned_pool:
+                    # Find top 2 best insertions strictly in DIFFERENT routes
+                    (pos1, gain1), (pos2, gain2) = InsertionSearch.find_top_2_insertions(state, u)
+                    
+                    regret = gain1 - gain2 
+                    # If V1 variant: regret = gain1 - max(gain2, 0)
+                    # If V2 variant: if pos2 is null, regret = INFINITY
+                    
+                    if regret > max_regret:
+                        max_regret = regret
+                        best_request = u
+                        best_insertion_pos = pos1
+                        
+                if best_request is null:
+                    break
+                    
+                state.insert(best_request, best_insertion_pos)
+        ```
+
+---
+
+### 3.3 Local Search Operators (VND)
+
+*   **`PassengerRelocate` / `ParcelRelocate`**
+    *   **Purpose**: Ejects an assigned request and inserts it into a better position (inter-route or intra-route). Uses `thread_local` caching and Best-First $O(1)$ pruning.
+    *   **Input**: `SearchState`.
+    *   **Output**: `boolean` indicating if an improvement was found and applied.
+    *   **Pseudocode**:
+        ```python
+        thread_local Array<InsertionBound> bounds_cache;
+
+        def Relocate(state):
+            for request v in state.assigned_requests:
+                origin_route = state.route(v)
+                savings = state.cost(origin_route) - state.cost(origin_route \ {v})
+                
+                bounds_cache.clear()
+                
+                for route in state.routes:
+                    for pos in route.possible_insertions:
+                        # O(1) Arc replacement calculation
+                        arc_cost = Cost(A -> Pickup) + Cost(Pickup -> Dropoff) + Cost(Dropoff -> B) - Cost(A -> B)
+                        net_gain_bound = savings - arc_cost
+                        bounds_cache.append( {route, pos, net_gain_bound} )
+                
+                sort bounds_cache descending by net_gain_bound
+                
+                best_actual_gain = 0
+                best_pos = null
+                
+                for bound in bounds_cache:
+                    if bound.net_gain_bound <= best_actual_gain:
+                        break # PRUNING: No subsequent bound can beat the actual gain
+                        
+                    if FastRouteCheck.is_feasible(bound.route, bound.pos, v):
+                        actual_gain = savings - FastRouteCheck.evaluate_cost(bound.route, bound.pos, v)
+                        if actual_gain > best_actual_gain:
+                            best_actual_gain = actual_gain
+                            best_pos = bound.pos
+                            
+                if best_actual_gain > 0:
+                    state.unassign(v)
+                    state.insert(v, best_pos)
+                    return TRUE
+            return FALSE
+        ```
+
+*   **`ReplaceRequest`**
+    *   **Purpose**: Forcefully ejects an assigned request $v$ to make room for an unassigned request $u$ in a single atomic transaction. Enforces `boundary_allowed` for contiguous passenger rides.
+    *   **Input**: `SearchState`.
+    *   **Output**: `boolean` indicating if an improvement was found.
+    *   **Pseudocode**:
+        ```python
+        def ReplaceRequest(state):
+            for request u in state.unassigned_pool:
+                for route in state.routes:
+                    for request v in route.assigned_requests:
+                        route_without_v = route \ {v}
+                        savings_v = state.cost(route) - state.cost(route_without_v) - Revenue(v)
+                        
+                        for pos in route_without_v.possible_insertions:
+                            # CRITICAL CONSTRAINT: Parcels cannot break passenger contiguous boundaries
+                            if u is Parcel and not route_without_v.boundary_allowed(u, pos):
+                                continue 
+                                
+                            arc_cost = calculate_O1_arc_cost(route_without_v, pos, u)
+                            net_gain_bound = savings_v + Revenue(u) - arc_cost
+                            
+                            if net_gain_bound <= 0:
+                                continue # Pruning
+                                
+                            if FastRouteCheck.is_feasible(route_without_v, pos, u):
+                                actual_gain = savings_v + Revenue(u) - FastRouteCheck.evaluate_cost(...)
+                                if actual_gain > 0:
+                                    state.unassign(v)
+                                    state.insert_into_route(route, u, pos)
+                                    return TRUE
+            return FALSE
+        ```
+
+*   **`SwapRequest` (SWAP* with Descriptor Pools)**
+    *   **Purpose**: Exchanges two assigned requests $r_1$ and $r_2$ between two different routes. Extremely heavy $O(N^4)$, optimized using incremental $O(1)$ pool updates and Branch and Bound.
+    *   **Input**: `SearchState`.
+    *   **Output**: `boolean` indicating if an improvement was found.
+    *   **Pseudocode**:
+        ```python
+        global SwapPool pool # Preserved across iterations
+
+        def SwapRequest(state):
+            # 1. Precompute MaxSavings and MinInsertCost for all requests/routes
+            for request r in state.assigned_requests:
+                r.MaxSavings = state.cost(r.route) - state.cost(r.route \ {r})
+            for route in state.routes:
+                for request r in state.assigned_requests:
+                    route.MinInsertCost[r] = find_top_1_insert_cost_O1(route, r)
+
+            # 2. Update Pool (Incremental Evaluation)
+            dirty_routes = get_modified_routes_since_last_swap()
+            pool.remove_descriptors_involving(dirty_routes)
+            
+            for request r1 in dirty_routes.requests:
+                for request r2 in state.assigned_requests:
+                    if r1.route == r2.route: continue
+                    
+                    # Branch and Bound Pruning
+                    upper_bound = r1.MaxSavings + r2.MaxSavings 
+                                  - r1.route.MinInsertCost[r2] 
+                                  - r2.route.MinInsertCost[r1]
+                                  
+                    if upper_bound <= 0:
+                        continue # Pruned in O(1)
+                        
+                    # Heavy exact evaluation
+                    route1_new = (r1.route \ {r1}) U {r2}
+                    route2_new = (r2.route \ {r2}) U {r1}
+                    if FastRouteCheck.is_feasible(route1_new) and FastRouteCheck.is_feasible(route2_new):
+                        actual_gain = (Cost(r1.route) + Cost(r2.route)) - (Cost(route1_new) + Cost(route2_new))
+                        if actual_gain > 0:
+                            pool.add( SwapDescriptor(r1, r2, actual_gain, positions...) )
+
+            # 3. Apply Best Swap
+            best_swap = pool.get_max_gain_descriptor()
+            if best_swap is not null:
+                state.apply_swap(best_swap)
+                mark_routes_as_dirty(best_swap.route1, best_swap.route2)
+                return TRUE
+                
+            return FALSE
+        ```
+
+---
+
+## 4. Main Algorithm Flow (Simulated Annealing)
+
+*   **`ALNS Main Loop`**
+    *   **Purpose**: Orchestrates the Destroy/Repair and Local Search using a thermodynamic cooling schedule to probabilistically accept worse states and escape local optima.
+    *   **Pseudocode**:
+        ```python
+        def ALNSSolve(instance, config):
+            state = generate_initial_solution(instance)
+            best_state = state
+            temperature = config.start_temperature
+            
+            while temperature > config.min_temperature:
+                # 1. Roulette-Wheel Selection
+                destroy_op = select_random(DestroyOperators, weights)
+                repair_op = select_random(RepairOperators, weights)
+                
+                # 2. Apply Perturbation
+                candidate_state = state.clone()
+                destroy_op(candidate_state)
+                repair_op(candidate_state)
+                
+                # 3. Apply Local Search (VND)
+                if iterations % config.ls_interval == 0:
+                    while True:
+                        improved = False
+                        for ls_op in [Relocate, Replace, Swap]:
+                            if ls_op(candidate_state):
+                                improved = True
+                                break # Restart VND loop
+                        if not improved: break
+                
+                # 4. Simulated Annealing Acceptance
+                delta = candidate_state.benefit - state.benefit
+                if delta >= 0:
+                    state = candidate_state
+                    if state.benefit > best_state.benefit:
+                        best_state = state
+                else:
+                    probability = exp(delta / temperature)
+                    if Random.Uniform(0, 1) < probability:
+                        state = candidate_state # Accept worse solution
+                
+                # 5. Update Weights & Cool down
+                update_operator_weights(outcome)
+                temperature = max(config.min_temperature, temperature * config.cooling_rate)
+                
+            return best_state
+        ```

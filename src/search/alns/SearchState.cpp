@@ -182,6 +182,56 @@ bool SearchState::relocate_within_route(std::size_t request, std::size_t a,
     return true;
 }
 
+bool SearchState::apply_clean_cut(std::size_t taxiA, std::size_t cutA,
+                                  std::size_t taxiB, std::size_t cutB, double delta_benefit) {
+    if (!is_active(taxiA) || !is_active(taxiB)) return false;
+    const auto& in = *instance_;
+    const auto n = in.passengers.size(), m = in.parcels.size(), k_count = in.taxis.size();
+    
+    const auto old_nodesA = cache(taxiA).nodes();
+    const auto old_nodesB = cache(taxiB).nodes();
+    if (cutA > old_nodesA.size() || cutB > old_nodesB.size()) return false;
+    
+    auto clear_locs = [&](const std::vector<std::size_t>& nodes) {
+        for (const auto node : nodes) {
+            const auto request = node < k_count + 2 * n ? (node - k_count) % n : n + (node - k_count - 2 * n) % m;
+            locations_[request] = {};
+        }
+    };
+    clear_locs(old_nodesA);
+    clear_locs(old_nodesB);
+    
+    std::vector<std::size_t> newA, newB;
+    newA.reserve(cutA + old_nodesB.size() - cutB);
+    newB.reserve(cutB + old_nodesA.size() - cutA);
+    
+    newA.insert(newA.end(), old_nodesA.begin(), old_nodesA.begin() + cutA);
+    newA.insert(newA.end(), old_nodesB.begin() + cutB, old_nodesB.end());
+    
+    newB.insert(newB.end(), old_nodesB.begin(), old_nodesB.begin() + cutB);
+    newB.insert(newB.end(), old_nodesA.begin() + cutA, old_nodesA.end());
+    
+    benefit_ += delta_benefit;
+    
+    auto assign_route = [&](std::size_t taxi, std::vector<std::size_t> route) {
+        if (route.empty()) active_routes_.erase(taxi);
+        else active_routes_.insert_or_assign(taxi, RouteCache(in, taxi, route));
+        for (std::size_t p = 0; p < route.size(); ++p) {
+            const auto node = route[p];
+            const bool passenger = node < k_count + 2 * n;
+            const auto request = passenger ? (node - k_count) % n : n + (node - k_count - 2 * n) % m;
+            auto& loc = locations_[request];
+            loc.taxi = static_cast<int>(taxi);
+            if (node == pickup_node(request)) loc.pickup = p;
+            else loc.dropoff = p;
+        }
+    };
+    
+    assign_route(taxiA, std::move(newA));
+    assign_route(taxiB, std::move(newB));
+    return true;
+}
+
 void SearchState::check() const {
     const auto result = solution().evaluate(*instance_);
     if (!result.feasible || std::abs(result.benefit - benefit_) >

@@ -21,6 +21,7 @@ add_library(soict_alns
     src/search/alns/ALNS.cpp
     src/search/alns/operators/Destroy/RandomRemoval.cpp
     src/search/alns/operators/Destroy/WorstRemoval.cpp
+    src/search/alns/operators/Destroy/WorstMarginalBenefitRemoval.cpp
     src/search/alns/operators/Destroy/RelatedRemoval.cpp
     src/search/alns/operators/Destroy/RouteRemoval.cpp
     src/search/alns/operators/Repair/InsertionSearch.cpp
@@ -32,7 +33,8 @@ add_library(soict_alns
     src/search/alns/operators/LocalSearch/PassengerRelocate.cpp
     src/search/alns/operators/LocalSearch/ParcelRelocate.cpp
     src/search/alns/operators/LocalSearch/ReplaceRequest.cpp
-    src/search/alns/operators/LocalSearch/SwapRequest.cpp)
+    src/search/alns/operators/LocalSearch/SwapRequest.cpp
+    src/search/alns/operators/LocalSearch/CleanCut2OptStar.cpp)
 target_link_libraries(soict_alns PUBLIC soict_core)
 target_compile_features(soict_alns PUBLIC cxx_std_20)
 

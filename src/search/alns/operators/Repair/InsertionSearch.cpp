@@ -136,34 +136,80 @@ InsertionOptions scan_route(const SearchState& state, std::size_t request,
         for (std::size_t pos = length + 1; pos-- > 0;)
             suffix_delivery[pos] = std::min(delivery_delta[pos], suffix_delivery[pos + 1]);
     }
+    
+    struct PairCandidate {
+        double delta;
+        std::size_t a, b;
+    };
+    thread_local std::vector<PairCandidate> pairs;
+    pairs.clear();
+    
     for (std::size_t a = 0; a <= length; ++a) {
         if (!route.boundary_allowed(in, a)) continue;
         const auto threshold = [&] { return std::max(global_second, result.second_gain); };
-        const auto best_delta = data.passenger ? adjacent_delta[a] :
-            std::min(adjacent_delta[a], pickup_delta[a] + suffix_delivery[a + 1]);
-        if (data.revenue - best_delta + 1e-8 < threshold()) continue;
-        FastRouteCheck prefix(in, taxi, route);
-        prefix.range(0, a);
-        prefix.segment(data.pickup);
+        
         if (data.passenger) {
-            auto candidate = prefix;
-            candidate.segment(data.delivery);
-            candidate.range(a, length);
-            if (candidate.feasible())
-                consider(result, {request, taxi, a, a,
-                    data.revenue - adjacent_delta[a]});
+            const auto delta = adjacent_delta[a];
+            if (data.revenue - delta + 1e-8 >= threshold()) {
+                pairs.push_back({delta, a, a});
+            }
         } else {
+            const auto best_delta = std::min(adjacent_delta[a], pickup_delta[a] + suffix_delivery[a + 1]);
+            if (data.revenue - best_delta + 1e-8 < threshold()) continue;
             for (std::size_t b = a; b <= length; ++b) {
                 if (!route.boundary_allowed(in, b)) continue;
-                const auto delta = b == a ? adjacent_delta[a] :
-                                   pickup_delta[a] + delivery_delta[b];
-                if (data.revenue - delta + 1e-8 < threshold()) continue;
-                auto candidate = prefix;
-                candidate.range(a, b);
+                const auto delta = b == a ? adjacent_delta[a] : pickup_delta[a] + delivery_delta[b];
+                if (data.revenue - delta + 1e-8 >= threshold()) {
+                    pairs.push_back({delta, a, b});
+                }
+            }
+        }
+    }
+    
+    std::sort(pairs.begin(), pairs.end(), [](const PairCandidate& x, const PairCandidate& y) {
+        if (x.delta != y.delta) return x.delta < y.delta;
+        if (x.a != y.a) return x.a < y.a;
+        return x.b < y.b;
+    });
+
+    int feasible_count = 0;
+    std::size_t prefix_a = std::numeric_limits<std::size_t>::max();
+    std::optional<FastRouteCheck> prefix;
+
+    for (const auto& pair : pairs) {
+        const auto threshold = std::max(global_second, result.second_gain);
+        if (data.revenue - pair.delta + 1e-8 < threshold) break; 
+        
+        if (data.passenger) {
+            FastRouteCheck candidate(in, taxi, route);
+            candidate.range(0, pair.a);
+            candidate.segment(data.pickup);
+            candidate.segment(data.delivery);
+            candidate.range(pair.a, length);
+            if (candidate.feasible()) {
+                consider(result, {request, taxi, pair.a, pair.a, data.revenue - pair.delta});
+                if (++feasible_count >= 2) break;
+            }
+        } else {
+            if (pair.a != prefix_a) {
+                prefix_a = pair.a;
+                FastRouteCheck cand(in, taxi, route);
+                cand.range(0, pair.a);
+                cand.segment(data.pickup);
+                prefix.emplace(cand);
+            }
+            auto candidate = *prefix;
+            if (pair.a == pair.b) {
                 candidate.segment(data.delivery);
-                candidate.range(b, length);
-                if (candidate.feasible())
-                    consider(result, {request, taxi, a, b, data.revenue - delta});
+            } else {
+                candidate.range(pair.a, pair.b);
+                candidate.segment(data.delivery);
+            }
+            candidate.range(pair.b, length);
+            
+            if (candidate.feasible()) {
+                consider(result, {request, taxi, pair.a, pair.b, data.revenue - pair.delta});
+                if (++feasible_count >= 2) break;
             }
         }
     }

@@ -5,6 +5,7 @@
 #include "search/alns/operators/Destroy/RelatedRemoval.hpp"
 #include "search/alns/operators/Destroy/RouteRemoval.hpp"
 #include "search/alns/operators/Destroy/WorstRemoval.hpp"
+#include "search/alns/operators/Destroy/WorstMarginalBenefitRemoval.hpp"
 #include "search/alns/operators/LocalSearch/LocalSearch.hpp"
 #include "search/alns/operators/LocalSearch/ParcelRelocate.hpp"
 #include "search/alns/operators/LocalSearch/PassengerRelocate.hpp"
@@ -12,6 +13,7 @@
 #include "search/alns/operators/LocalSearch/RemoveRequest.hpp"
 #include "search/alns/operators/LocalSearch/ReplaceRequest.hpp"
 #include "search/alns/operators/LocalSearch/SwapRequest.hpp"
+#include "search/alns/operators/LocalSearch/CleanCut2OptStar.hpp"
 #include "search/alns/operators/Repair/GreedyInsertion.hpp"
 #include "search/alns/operators/Repair/RegretInsertion.hpp"
 #include "search/alns/operators/Repair/InsertionSearch.hpp"
@@ -51,6 +53,7 @@ Result solve(const Instance& instance, const Config& config) {
     std::vector<std::unique_ptr<DestroyOperator>> destroys;
     destroys.push_back(std::make_unique<RandomRemoval>());
     destroys.push_back(std::make_unique<WorstRemoval>());
+    destroys.push_back(std::make_unique<WorstMarginalBenefitRemoval>());
     destroys.push_back(std::make_unique<RelatedRemoval>());
     destroys.push_back(std::make_unique<RouteRemoval>());
     std::vector<std::unique_ptr<RepairOperator>> repairs;
@@ -71,6 +74,7 @@ Result solve(const Instance& instance, const Config& config) {
     local_search.add_move(std::make_unique<ParcelRelocate>());
     local_search.add_move(std::make_unique<ReplaceRequest>());
     local_search.add_move(std::make_unique<SwapRequest>());
+    local_search.add_move(std::make_unique<CleanCut2OptStar>());
 
     std::ofstream trace, operator_log;
     if (!config.log_directory.empty()) {
