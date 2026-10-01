@@ -61,8 +61,37 @@ Segment join(const Instance& in, const Segment& a, const Segment& b) {
 }
 
 RouteCache::RouteCache(const Instance& in, std::size_t taxi,
-                       const std::vector<std::size_t>& route)
-    : nodes_(route), version_(next_route_version.fetch_add(1, std::memory_order_relaxed)) {
+                       const std::vector<std::size_t>& route) {
+    rebuild(in, taxi, route);
+}
+
+void RouteCache::clear() {
+    nodes_.clear(); singles_.clear();
+    arrival_.clear(); departure_.clear(); load_.clear();
+    for (auto& level : table_) level.clear();
+    cost_ = 0;
+    version_ = 0;
+}
+
+void RouteCache::copy_from(const RouteCache& other) {
+    if (this == &other) return;
+    nodes_ = other.nodes_;
+    singles_ = other.singles_;
+    arrival_ = other.arrival_; departure_ = other.departure_; load_ = other.load_;
+    if (table_.size() < other.table_.size()) table_.resize(other.table_.size());
+    for (std::size_t i = 0; i < other.table_.size(); ++i) table_[i] = other.table_[i];
+    for (std::size_t i = other.table_.size(); i < table_.size(); ++i) table_[i].clear();
+    cost_ = other.cost_;
+    version_ = other.version_;
+}
+
+void RouteCache::rebuild(const Instance& in, std::size_t taxi,
+                          const std::vector<std::size_t>& route) {
+    if (&route != &nodes_) nodes_ = route;
+    singles_.clear(); arrival_.clear(); departure_.clear(); load_.clear();
+    for (auto& level : table_) level.clear();
+    cost_ = 0;
+    version_ = next_route_version.fetch_add(1, std::memory_order_relaxed);
     const auto size = route.size();
     singles_.reserve(size);
     arrival_.reserve(size); departure_.reserve(size); load_.reserve(size);
@@ -80,8 +109,11 @@ RouteCache::RouteCache(const Instance& in, std::size_t taxi,
         previous = node;
     }
     // Disjoint sparse table: associative, order-preserving range summary in O(1).
-    for (std::size_t half = 1; half < size; half *= 2) {
-        auto& level = table_.emplace_back(size);
+    std::size_t level_index = 0;
+    for (std::size_t half = 1; half < size; half *= 2, ++level_index) {
+        if (level_index == table_.size()) table_.emplace_back();
+        auto& level = table_[level_index];
+        level.resize(size);
         const std::size_t block = half * 2;
         for (std::size_t start = 0; start < size; start += block) {
             const auto mid = std::min(start + half, size);

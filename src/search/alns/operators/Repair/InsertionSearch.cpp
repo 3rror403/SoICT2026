@@ -183,8 +183,8 @@ InsertionOptions insertion_options_impl(const SearchState& state, std::size_t re
             (result.best ? result.best->gain : -std::numeric_limits<double>::infinity());
     };
     if (indexed) {
-        for (const auto& [taxi, route] : state.active_routes())
-            combine(result, scan_route(state, request, taxi, route, data,
+        for (const auto taxi : state.active_taxis())
+            combine(result, scan_route(state, request, taxi, state.cache(taxi), data,
                                        threshold()));
     } else {
         for (std::size_t taxi = 0; taxi < state.taxi_count(); ++taxi)
@@ -214,7 +214,8 @@ std::optional<InsertionChoice> BestInsertionCache::best(const SearchState& state
     auto& row = entries_[request];
     if (row.size() < state.taxi_count()) row.resize(state.taxi_count());
     const auto data = request_segments(state, request);
-    for (const auto& [taxi, route] : state.active_routes()) {
+    for (const auto taxi : state.active_taxis()) {
+        const auto& route = state.cache(taxi);
         auto& entry = row[taxi];
         const auto threshold = result.best ? result.best->gain :
             -std::numeric_limits<double>::infinity();
@@ -239,9 +240,10 @@ RepairInsertionCache::RepairInsertionCache(const SearchState& state)
         if (state.location(request).taxi >= 0) continue;
         const auto data = request_segments(state, request);
         auto& options = route_options_[request];
-        options.reserve(state.active_routes().size());
-        for (const auto& [taxi, route] : state.active_routes())
-            options.emplace_back(taxi, scan_route(state, request, taxi, route, data));
+        options.reserve(state.active_taxis().size());
+        for (const auto taxi : state.active_taxis())
+            options.emplace_back(taxi, scan_route(state, request, taxi,
+                                                 state.cache(taxi), data));
     }
 }
 

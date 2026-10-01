@@ -64,7 +64,8 @@ std::optional<double> ParcelRelocationContext::gain(std::size_t taxi,
 
 std::optional<double> ParcelRelocationContext::calculate_delta_fast(std::size_t taxi,
     const RouteCache& route, std::size_t a, std::size_t b) const {
-    if (!valid() || taxi >= state_.taxi_count() || a > b || b > length(taxi) ||
+    if (!valid() || taxi >= state_.taxi_count() || a > b ||
+        b > route.nodes().size() - (taxi == source_ ? 2 : 0) ||
         (taxi != source_ && !removal_gain_)) return std::nullopt;
     const RouteView view{route.nodes(), pickup_at_, delivery_at_, taxi == source_};
     const auto delta = separated_insertion_cost(state_.instance(), taxi, view, a, b,
@@ -121,14 +122,15 @@ std::optional<double> ParcelRelocationContext::gain_from_prefix(
 
 std::optional<InsertionChoice> ParcelRelocate::best_on_taxi(
     const SearchState& state, const ParcelRelocationContext& context,
-    std::size_t r, std::size_t taxi, const RouteCache& route) const {
+    std::size_t r, std::size_t taxi, const RouteCache& route,
+    std::uint64_t source_version) const {
     const auto source = static_cast<std::size_t>(state.location(r).taxi);
     if (taxi != source && !context.removal_feasible()) return std::nullopt;
     return cache_.get(r, taxi, state.taxi_count(),
-        state.cache(source).version(), route.version(),
+        source_version, route.version(),
         context.removal_savings(), taxi == source, [&] {
                 std::optional<InsertionChoice> route_best;
-                const auto length = context.length(taxi);
+                const auto length = route.nodes().size() - (taxi == source ? 2 : 0);
                 const auto& in = state.instance();
                 const auto loc = state.location(r);
                 const RouteView view{route.nodes(), loc.pickup, loc.dropoff,
@@ -180,6 +182,8 @@ bool ParcelRelocate::improve(SearchState& state) const {
         ParcelRelocationContext context(state, r);
         const auto source = static_cast<std::size_t>(state.location(r).taxi);
         if (!context.valid()) return;
+        // The source stays unchanged throughout this request's destination scan.
+        const auto source_version = state.cache(source).version();
         const auto& index = state.empty_taxi_index();
         const bool indexed = index && index->ensure(r);
         if (indexed) {
@@ -192,13 +196,15 @@ bool ParcelRelocate::improve(SearchState& state) const {
                     break;
                 }
             }
-            for (const auto& [taxi, current] : state.active_routes())
+            for (const auto taxi : state.active_taxis())
                 if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, current), source);
+                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
+                                         source_version), source);
         } else {
             for (std::size_t taxi = 0; taxi < state.taxi_count(); ++taxi)
                 if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi)), source);
+                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
+                                         source_version), source);
         }
     };
     const auto scan_all = [&] {

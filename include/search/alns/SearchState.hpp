@@ -2,7 +2,6 @@
 
 #include "model/Solution.hpp"
 #include "search/alns/RouteCache.hpp"
-#include <map>
 #include <memory>
 #include <optional>
 #include <cstdint>
@@ -20,13 +19,16 @@ struct RequestLocation {
 class SearchState {
 public:
     SearchState(const Instance& instance, Solution solution);
+    void copy_from(const SearchState& other);
+    void swap(SearchState& other) noexcept;
     [[nodiscard]] Solution solution() const;
     [[nodiscard]] const RouteCache& cache(std::size_t taxi) const;
-    [[nodiscard]] const std::map<std::size_t, RouteCache>& active_routes() const {
-        return active_routes_;
+    [[nodiscard]] const std::vector<std::size_t>& active_taxis() const {
+        return active_taxis_;
     }
-    [[nodiscard]] std::vector<std::size_t> active_taxis() const;
-    [[nodiscard]] bool is_active(std::size_t taxi) const { return active_routes_.contains(taxi); }
+    [[nodiscard]] bool is_active(std::size_t taxi) const {
+        return taxi < routes_by_taxi_.size() && !routes_by_taxi_[taxi].nodes().empty();
+    }
     [[nodiscard]] std::size_t taxi_count() const { return instance_->taxis.size(); }
     [[nodiscard]] const RequestLocation& location(std::size_t request) const {
         return locations_.at(request);
@@ -58,8 +60,10 @@ public:
 
 private:
     const Instance* instance_;
-    // Only used taxis have route state. std::map keeps taxi ids ordered.
-    std::map<std::size_t, RouteCache> active_routes_;
+    // Empty routes retain their buffers for subsequent activation.
+    std::vector<RouteCache> routes_by_taxi_;
+    // Ordered iteration preserves move tie order and repair-cache sorting.
+    std::vector<std::size_t> active_taxis_;
     std::vector<RequestLocation> locations_;
     struct RemovalEntry {
         std::uint64_t route_version = 0;
@@ -68,7 +72,9 @@ private:
     mutable std::vector<RemovalEntry> removal_cache_;
     std::shared_ptr<const EmptyTaxiIndex> empty_taxi_index_;
     double benefit_ = 0;
-    void rebuild_route(std::size_t taxi, std::vector<std::size_t> route);
+    std::vector<std::size_t> route_scratch_;
+    RouteCache relocation_check_;
+    void rebuild_route(std::size_t taxi, const std::vector<std::size_t>& route);
     [[nodiscard]] std::size_t dropoff_node(std::size_t request) const;
 };
 } // namespace soict::alns

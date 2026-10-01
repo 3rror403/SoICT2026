@@ -41,6 +41,6 @@ private:
     mutable MoveCache cache_;
     [[nodiscard]] std::optional<InsertionChoice> best_on_taxi(
         const SearchState&, const PassengerRelocationContext&, std::size_t request,
-        std::size_t taxi, const RouteCache&) const;
+        std::size_t taxi, const RouteCache&, std::uint64_t source_version) const;
 };
 } // namespace soict::alns

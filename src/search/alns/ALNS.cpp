@@ -79,6 +79,7 @@ Result solve(const Instance& instance, const Config& config) {
     }
     if (config.check) current.check();
     SearchState best = current;
+    SearchState candidate = current;
     double temperature = config.temperature;
     const double minimum_temperature = config.temperature * 1e-4;
     std::size_t iterations = 0;
@@ -90,7 +91,7 @@ Result solve(const Instance& instance, const Config& config) {
         if (iteration_start >= deadline) break;
         const auto selection = balance.select(rng, current.served_count());
         const auto couple = couples[selection.couple];
-        SearchState candidate = current;
+        candidate.copy_from(current);
         const auto removed = destroys[couple.destroy]->apply(
             candidate, selection.removal_count, rng);
         repairs[couple.repair]->apply(candidate, removed, rng);
@@ -105,9 +106,9 @@ Result solve(const Instance& instance, const Config& config) {
             accept = uniform(rng) < std::exp(delta / temperature);
         }
         if (accept) {
-            current = std::move(candidate);
+            current.swap(candidate);
             if (current.benefit() > best.benefit() + 1e-9) {
-                best = current;
+                best.copy_from(current);
                 std::cerr << "ALNS best iteration=" << iterations + 1
                           << " benefit=" << best.benefit() << '\n';
             }
