@@ -72,13 +72,14 @@ Result solve(const Instance& instance, const Config& config) {
     Balance balance(couples.size(), instance.passengers.size() + instance.parcels.size(),
                     config.thompson);
     LocalSearch local_search;
-    local_search.add_move(std::make_unique<RemoveRequest>());
-    local_search.add_move(std::make_unique<AddRequest>());
-    local_search.add_move(std::make_unique<PassengerRelocate>());
-    local_search.add_move(std::make_unique<ParcelRelocate>());
-    local_search.add_move(std::make_unique<ReplaceRequest>());
-    local_search.add_move(std::make_unique<SwapRequest>());
-    local_search.add_move(std::make_unique<CleanCut2OptStar>());
+    local_search.add_tier1(std::make_unique<RemoveRequest>());
+    local_search.add_tier1(std::make_unique<AddRequest>());
+    local_search.add_tier1(std::make_unique<PassengerRelocate>());
+    local_search.add_tier1(std::make_unique<ParcelRelocate>());
+    local_search.add_tier1(std::make_unique<ReplaceRequest>());
+    
+    local_search.add_tier2(std::make_unique<SwapRequest>());
+    local_search.add_tier2(std::make_unique<CleanCut2OptStar>());
 
     std::ofstream trace, operator_log;
     if (!config.log_directory.empty()) {
@@ -138,8 +139,21 @@ Result solve(const Instance& instance, const Config& config) {
         const auto removed = destroys[couple.destroy]->apply(
             candidate, selection.removal_count, rng);
         repairs[couple.repair]->apply(candidate, removed, rng);
-        if (config.local_search && iterations % config.ls_interval == 0)
-            local_search.search(candidate);
+        if (config.local_search && iterations % config.ls_interval == 0) {
+            const double denominator = std::max(1.0, std::abs(best.benefit()));
+            const double gap = (best.benefit() - candidate.benefit()) / denominator;
+            if (gap <= config.ls_threshold) {
+                if (local_search.search_tier1(candidate)) {
+                    // re-evaluate gap after tier 1
+                    const double new_gap = (best.benefit() - candidate.benefit()) / denominator;
+                    if (new_gap <= config.ls_tier2_threshold) {
+                        local_search.search_tier2(candidate);
+                    }
+                } else if (gap <= config.ls_tier2_threshold) {
+                    local_search.search_tier2(candidate);
+                }
+            }
+        }
 
         // Phase 0b: validator hook — only in debug builds with --check.
         if (config.check) candidate.check();

@@ -15,6 +15,8 @@ struct Config {
     bool check = false;
     bool local_search = true;
     std::size_t ls_interval = 10;
+    double ls_threshold = 0.10;
+    double ls_tier2_threshold = 0.02;
     bool thompson = false;
     std::string log_directory;
     // Phase 0d: deterministic mode — if set, loop runs exactly N iterations
