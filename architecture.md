@@ -172,6 +172,68 @@ The `SoICT2026` project solves a complex vehicle routing and scheduling problem 
                 state.insert(best_request, best_insertion_pos)
         ```
 
+*   **`PairAwareGreedy` (`SharedGapPairRepair`)**
+    *   **Purpose**: Inserts pairs of unassigned requests as a **contiguous 4-node block** into a single taxi, exploiting synergy between co-located requests that a single-request greedy cannot capture. Unlike `GreedyInsertion`, which always inserts one request at a time, `PairAwareGreedy` will commit a pair when doing so yields strictly positive marginal synergy over inserting each request independently.
+    *   **Key concept — Synergy**: For a candidate pair $(u, v)$:
+        $$Syn(u,v) = G_{uv} - \max(0, g_u^*) - \max(0, g_v^*)$$
+        where $G_{uv}$ = gain of co-inserting the pair as a block, and $g_u^*, g_v^*$ = best single-insertion gain for each request independently in the **same** state.
+    *   **Conflict-aware selection rule**: Pair insertion is only preferred over the best single when:
+        1. No profitable single exists, **or**
+        2. The best single request is one of the pair members, **or**
+        3. The best single and best pair share the same taxi (route conflict).
+        Otherwise, the profitable single is applied first and the loop repeats.
+    *   **Block patterns**: All valid interleavings for the 4 nodes $(u_p, u_d, v_p, v_d)$ are generated per type combination (2 patterns for pass+pass, 3 for pass+parcel, 6 for parcel+parcel).
+    *   **Complexity**: $O(U^2 \cdot P \cdot T \cdot L)$ per outer loop step, where $U$ = unassigned count ($\le 40$), $P$ = patterns (2–6), $T$ = taxi count, $L$ = max route length. Full $O(U^2)$ scan with 100% coverage (no partner bank).
+    *   **Termination**: Stops when neither a profitable single $(g > \epsilon)$ nor a positive-gain pair exists. Unprofitable requests are left unassigned.
+    *   **Input**: `SearchState`, `removed` span from Destroy operator.
+    *   **Output**: Modified `SearchState` with as many unassigned requests re-inserted as profitable.
+    *   **Benchmark result (r100, 20s, seed=1)**:
+        - BKS improved on 3/5 instances within 20s.
+        - Best-pair synergy confirmed positive (`+85.7`, `+30.8`, `+23.7`) after `RelatedRemoval` and `DelayRemoval`.
+        - `TimeBucketRemoval` yields negative synergy — operator learns lower weight for that pair via Thompson Sampling.
+    *   **Pseudocode**:
+        ```python
+        def PairAwareGreedy(state, removed):
+            unassigned = [r for r in removed if r not assigned]
+            EPS = 1e-8
+            while True:
+                # Phase 1: best single insertion per unassigned request
+                single_gain = {}
+                best_single = None
+                for u in unassigned:
+                    pos, gain = find_best_insertion(state, u)
+                    single_gain[u] = gain
+                    if gain > EPS and (not best_single or gain > best_single.gain):
+                        best_single = SingleDesc(u, pos, gain)
+
+                # Phase 2: full O(U^2) pair scan
+                best_pair = None
+                for u, v in combinations(unassigned, 2):
+                    if single_gain[u] == -INF or single_gain[v] == -INF: continue
+                    for pattern in get_valid_patterns(u, v):  # 2-6 patterns
+                        block = create_4node_block(pattern)
+                        if not block.feasible: continue
+                        for taxi in all_taxis:
+                            for gap in all_gaps(taxi):
+                                gain = evaluate_block(block, taxi, gap)
+                                if gain > EPS:
+                                    synergy = gain - max(0, single_gain[u]) - max(0, single_gain[v])
+                                    if synergy > (best_pair.synergy if best_pair else -INF):
+                                        best_pair = PairDesc(u, v, ...)
+
+                # Phase 3: conflict-aware selection
+                if not best_single and not best_pair: break
+                if best_pair and best_pair.synergy > EPS:
+                    conflict = best_single and best_single.taxi == best_pair.taxi
+                    if not best_single or best_single.req in (best_pair.u, best_pair.v) or conflict:
+                        apply_pair(state, best_pair); continue
+                if best_single:
+                    apply_single(state, best_single); continue
+                if best_pair and best_pair.gain > EPS:
+                    apply_pair(state, best_pair); continue
+                break
+        ```
+
 *   **`RegretInsertion` (V1, V2, RouteRegret3)**
     *   **Purpose**: Looks ahead to prevent hard-to-insert requests from being stranded by prioritizing requests with the largest difference between their best and alternative insertion options.
     *   **Input**: Current `SearchState`.
@@ -365,9 +427,15 @@ The `SoICT2026` project solves a complex vehicle routing and scheduling problem 
                 if progress >= 1.0:
                     break
                 
-                # 1. Roulette-Wheel Selection
+                # 1. Roulette-Wheel Selection (Thompson Sampling / UCB)
+                # Destroy pool (7): RandomRemoval, WorstRemoval, WorstMarginalBenefit,
+                #                   DelayRemoval, TimeBucketRemoval, RelatedRemoval, RouteRemoval
+                # Repair pool (5) : GreedyInsertion, PairAwareGreedy,
+                #                   RegretV1, RegretV2, RouteRegret3
+                # -> 35 Destroy x Repair couples total, each tracked by Thompson Sampling.
+                # PairAwareGreedy synergy is empirically highest after RelatedRemoval/DelayRemoval.
                 destroy_op = select_random(DestroyOperators, weights)
-                repair_op = select_random(RepairOperators, weights)
+                repair_op  = select_random(RepairOperators, weights)
                 
                 # 2. Apply Perturbation
                 candidate_state = state.clone()
