@@ -15,9 +15,6 @@ public:
     void apply(SearchState& state, std::span<const std::size_t> removed,
                std::mt19937_64& rng) const override;
 
-    // Run the detector immediately after destroy
-    void detect_after_destroy(const SearchState& state, std::span<const std::size_t> removed, std::string_view destroy_name) const;
-
 private:
     void precompute_partner_bank(const Instance& instance);
 

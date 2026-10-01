@@ -86,8 +86,6 @@ Result solve(const Instance& instance, const Config& config) {
     local_search.add_tier2(std::make_unique<SwapRequest>());
     local_search.add_tier2(std::make_unique<CleanCut2OptStar>());
 
-    SharedGapPairRepair pair_detector(instance);
-
     std::ofstream trace, operator_log;
     if (!config.log_directory.empty()) {
         const std::filesystem::path root(config.log_directory);
@@ -181,8 +179,18 @@ Result solve(const Instance& instance, const Config& config) {
                 best = current;
                 std::cerr << "ALNS best iteration=" << iterations + 1
                           << " benefit=" << best.benefit() << '\n';
+                last_improvement_progress = progress;
             }
         }
+        
+        if (progress - last_improvement_progress > 0.15 && progress < 0.85) {
+            temperature = T0 * 0.3;
+            current = best;
+            last_improvement_progress = progress;
+            std::cerr << "ALNS reheat at iteration=" << iterations 
+                      << " progress=" << static_cast<int>(progress * 100) << "%\n";
+        }
+        
         balance.update(selection, reward);
         ++iterations;
 

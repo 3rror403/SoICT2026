@@ -156,11 +156,8 @@ void SharedGapPairRepair::apply(SearchState& state, std::span<const std::size_t>
                            -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
         
         for (std::size_t u : unassigned) {
-            if (single_gain[u] == -std::numeric_limits<double>::infinity()) continue;
-            
             for (std::size_t v : unassigned) {
                 if (u >= v) continue; 
-                if (single_gain[v] == -std::numeric_limits<double>::infinity()) continue;
                 
                 auto patterns = get_valid_patterns(state.instance(), u, v);
                 for (const auto& pat : patterns) {
@@ -217,8 +214,9 @@ void SharedGapPairRepair::apply(SearchState& state, std::span<const std::size_t>
 
         if (best_pair.exists() && best_pair.synergy > EPS) {
             bool conflict = false;
-            if (best_single.exists()) {
-                conflict = (best_single.taxi == best_pair.taxi);
+            if (best_single.exists() && best_single.taxi == best_pair.taxi) {
+                // Check if the single insertion is near the pair block
+                conflict = (best_single.pickup >= best_pair.gap && best_single.pickup <= best_pair.gap + 4);
             }
             if (!best_single.exists() || best_single.request == best_pair.u || 
                 best_single.request == best_pair.v || conflict) {
@@ -249,86 +247,6 @@ void SharedGapPairRepair::apply(SearchState& state, std::span<const std::size_t>
     }
 }
 
-void SharedGapPairRepair::detect_after_destroy(const SearchState& state, std::span<const std::size_t> removed, std::string_view destroy_name) const {
-    if (removed.size() < 2) return;
-    
-    std::vector<double> single_gain(state.request_count(), -std::numeric_limits<double>::infinity());
-    double best_single = -std::numeric_limits<double>::infinity();
-    for (auto u : removed) {
-        auto choice = best_insertion(state, u);
-        if (choice) {
-            single_gain[u] = choice->gain;
-            best_single = std::max(best_single, choice->gain);
-        }
-    }
-
-    double best_pair_gain = -std::numeric_limits<double>::infinity();
-    double best_synergy = -std::numeric_limits<double>::infinity();
-    int pairs_checked = 0;
-
-    for (std::size_t i = 0; i < removed.size(); ++i) {
-        for (std::size_t j = i + 1; j < removed.size(); ++j) {
-            std::size_t u = removed[i];
-            std::size_t v = removed[j];
-            
-            pairs_checked++;
-            auto patterns = get_valid_patterns(state.instance(), u, v);
-            for (const auto& pat : patterns) {
-                auto block = create_block(state.instance(), pat.nodes);
-                if (!block.feasible) continue;
-                
-                for (std::size_t taxi = 0; taxi < state.instance().taxis.size(); ++taxi) {
-                    if (state.is_active(taxi)) {
-                        const auto& route = state.cache(taxi);
-                        for (std::size_t gap = 0; gap <= route.nodes().size(); ++gap) {
-                            RouteCandidate candidate(state.instance(), taxi, route);
-                            candidate.add_range(0, gap);
-                            candidate.add_segment(block.segment);
-                            candidate.add_range(gap, route.nodes().size());
-                            
-                            auto cost = candidate.cost_if_feasible();
-                            if (cost) {
-                                double delta = *cost - route.cost();
-                                double gain = state.revenue(u) + state.revenue(v) - delta;
-                                
-                                double gu = single_gain[u];
-                                double gv = single_gain[v];
-                                double safe_gu = (gu == -std::numeric_limits<double>::infinity()) ? 0.0 : gu;
-                                double safe_gv = (gv == -std::numeric_limits<double>::infinity()) ? 0.0 : gv;
-                                double synergy = gain - std::max(0.0, safe_gu) - std::max(0.0, safe_gv);
-                                
-                                best_pair_gain = std::max(best_pair_gain, gain);
-                                best_synergy = std::max(best_synergy, synergy);
-                            }
-                        }
-                    } else {
-                        RouteCandidate candidate(state.instance(), taxi, state.cache(taxi));
-                        candidate.add_segment(block.segment);
-                        auto cost = candidate.cost_if_feasible();
-                        if (cost) {
-                            double delta = *cost;
-                            double gain = state.revenue(u) + state.revenue(v) - delta;
-                            
-                            double gu = single_gain[u];
-                            double gv = single_gain[v];
-                            double safe_gu = (gu == -std::numeric_limits<double>::infinity()) ? 0.0 : gu;
-                            double safe_gv = (gv == -std::numeric_limits<double>::infinity()) ? 0.0 : gv;
-                            double synergy = gain - std::max(0.0, safe_gu) - std::max(0.0, safe_gv);
-                            
-                            best_pair_gain = std::max(best_pair_gain, gain);
-                            best_synergy = std::max(best_synergy, synergy);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    std::cerr << "[PairDetect] destroy=" << destroy_name 
-              << " unassigned=" << removed.size()
-              << " best_single=" << best_single 
-              << " best_pair=" << best_pair_gain
-              << " synergy=" << best_synergy << "\n";
-}
+// detect_after_destroy removed
 
 } // namespace soict::alns
