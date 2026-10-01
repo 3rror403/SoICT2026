@@ -6,6 +6,8 @@
 #include "search/alns/operators/Destroy/RouteRemoval.hpp"
 #include "search/alns/operators/Destroy/WorstRemoval.hpp"
 #include "search/alns/operators/Destroy/WorstMarginalBenefitRemoval.hpp"
+#include "search/alns/operators/Destroy/DelayRemoval.hpp"
+#include "search/alns/operators/Destroy/TimeBucketRemoval.hpp"
 #include "search/alns/operators/LocalSearch/LocalSearch.hpp"
 #include "search/alns/operators/LocalSearch/ParcelRelocate.hpp"
 #include "search/alns/operators/LocalSearch/PassengerRelocate.hpp"
@@ -54,6 +56,8 @@ Result solve(const Instance& instance, const Config& config) {
     destroys.push_back(std::make_unique<RandomRemoval>());
     destroys.push_back(std::make_unique<WorstRemoval>());
     destroys.push_back(std::make_unique<WorstMarginalBenefitRemoval>());
+    destroys.push_back(std::make_unique<DelayRemoval>());
+    destroys.push_back(std::make_unique<TimeBucketRemoval>());
     destroys.push_back(std::make_unique<RelatedRemoval>());
     destroys.push_back(std::make_unique<RouteRemoval>());
     std::vector<std::unique_ptr<RepairOperator>> repairs;

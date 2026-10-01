@@ -22,6 +22,8 @@ add_library(soict_alns
     src/search/alns/operators/Destroy/RandomRemoval.cpp
     src/search/alns/operators/Destroy/WorstRemoval.cpp
     src/search/alns/operators/Destroy/WorstMarginalBenefitRemoval.cpp
+    src/search/alns/operators/Destroy/DelayRemoval.cpp
+    src/search/alns/operators/Destroy/TimeBucketRemoval.cpp
     src/search/alns/operators/Destroy/RelatedRemoval.cpp
     src/search/alns/operators/Destroy/RouteRemoval.cpp
     src/search/alns/operators/Repair/InsertionSearch.cpp

@@ -28,6 +28,17 @@ public:
                s.max_load <= in_.taxis[taxi_].parcel_capacity + 1e-8;
     }
 
+    [[nodiscard]] std::optional<double> duration() const {
+        if (!summary_) return 0.0;
+        return summary_->duration;
+    }
+
+    [[nodiscard]] std::optional<double> departure() const {
+        if (!summary_) return 0.0;
+        const double travel_to_start = in_.time(taxi_, summary_->first);
+        return std::max(travel_to_start + summary_->duration, summary_->ready);
+    }
+
 private:
     void append(const Segment& next) {
         if (!summary_) {
