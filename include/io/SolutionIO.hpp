@@ -5,7 +5,7 @@
 
 namespace soict {
 
-Solution read_solution(std::istream& in);
-void write_solution(std::ostream& out, const Solution& solution);
+Solution read_solution(std::istream& in, const Instance& instance);
+void write_solution(std::ostream& out, const Solution& solution, const Instance& instance);
 
 } // namespace soict

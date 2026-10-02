@@ -3,17 +3,9 @@
 #include "search/alns/MoveCost.hpp"
 
 #include <algorithm>
-#include <optional>
 #include <stdexcept>
-#include <utility>
-#include <vector>
 
 namespace soict::alns {
-namespace {
-constexpr double kMinGain = 1e-9;
-constexpr double kTolerance = 1e-8;
-} // namespace
-
 PassengerRelocationContext::PassengerRelocationContext(const SearchState& state,
                                                        std::size_t request)
     : state_(state), request_(request), source_(0), removed_at_(0) {
@@ -54,7 +46,8 @@ std::optional<double> PassengerRelocationContext::gain(std::size_t taxi,
 
 std::optional<double> PassengerRelocationContext::calculate_delta_fast(std::size_t taxi,
     const RouteCache& route, std::size_t boundary) const {
-    if (!valid() || taxi >= state_.taxi_count() || boundary > length(taxi) ||
+    if (!valid() || taxi >= state_.taxi_count() ||
+        boundary > route.nodes().size() - (taxi == source_ ? 2 : 0) ||
         (taxi != source_ && !removal_gain_)) return std::nullopt;
     const RouteView view{route.nodes(), removed_at_, removed_at_ + 1, taxi == source_};
     const auto delta = adjacent_insertion_cost(state_.instance(), taxi, view, boundary,
@@ -88,37 +81,24 @@ std::optional<double> PassengerRelocationContext::gain(std::size_t taxi,
 
 std::optional<InsertionChoice> PassengerRelocate::best_on_taxi(
     const SearchState& state, const PassengerRelocationContext& context,
-    std::size_t r, std::size_t taxi, const RouteCache& route) const {
+    std::size_t r, std::size_t taxi, const RouteCache& route,
+    std::uint64_t source_version) const {
     const auto source = static_cast<std::size_t>(state.location(r).taxi);
     if (taxi != source && !context.removal_feasible()) return std::nullopt;
     return cache_.get(r, taxi, state.taxi_count(),
-        state.cache(source).version(), route.version(),
-        context.removal_savings(), taxi == source, [&]() -> std::optional<InsertionChoice> {
-                // Phase 1a: Best-first search.
-                // Step 1: tính objective O(1) cho tất cả vị trí, lọc bỏ những vị trí
-                //         không thể vượt kMinGain. Chưa gọi FastRouteCheck.
-                // Step 2: sort giảm dần theo objective.
-                // Step 3: duyệt best-first, gọi gain() (FastRouteCheck) theo thứ tự.
-                //         Candidate khả thi đầu tiên = tối ưu vì gain == objective
-                //         khi khả thi. Tie-break theo a tăng dần.
-                thread_local std::vector<std::pair<double, std::size_t>> candidates;
-                candidates.clear();
-                const auto length = context.length(taxi);
+        source_version, route.version(),
+        context.removal_savings(), taxi == source, [&] {
+                std::optional<InsertionChoice> route_best;
+                const auto length = route.nodes().size() - (taxi == source ? 2 : 0);
                 for (std::size_t a = 0; a <= length; ++a) {
                     const auto objective = context.calculate_delta_fast(taxi, route, a);
-                    if (objective && *objective + kTolerance >= kMinGain)
-                        candidates.emplace_back(*objective, a);
+                    if (!objective || *objective + 1e-8 <
+                        std::max(1e-9, route_best ? route_best->gain : 1e-9)) continue;
+                    const auto gain = context.gain(taxi, route, a);
+                    if (gain && (!route_best || *gain > route_best->gain))
+                        route_best = InsertionChoice{r, taxi, a, a, *gain};
                 }
-                std::sort(candidates.begin(), candidates.end(),
-                          [](const auto& x, const auto& y) {
-                              return x.first != y.first ? x.first > y.first
-                                                        : x.second < y.second;
-                          });
-                for (const auto& [obj, a] : candidates) {
-                    if (const auto gain = context.gain(taxi, route, a))
-                        return InsertionChoice{r, taxi, a, a, *gain};
-                }
-                return std::nullopt;
+                return route_best;
             });
 }
 
@@ -130,6 +110,8 @@ bool PassengerRelocate::improve(SearchState& state) const {
         PassengerRelocationContext context(state, r);
         const auto source = static_cast<std::size_t>(state.location(r).taxi);
         if (!context.valid()) return;
+        // The source stays unchanged throughout this request's destination scan.
+        const auto source_version = state.cache(source).version();
         const auto& index = state.empty_taxi_index();
         const bool indexed = index && index->ensure(r);
         if (indexed) {
@@ -142,13 +124,15 @@ bool PassengerRelocate::improve(SearchState& state) const {
                     break;
                 }
             }
-            for (const auto& [taxi, route] : state.active_routes())
+            for (const auto taxi : state.active_taxis())
                 if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, route), source);
+                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
+                                         source_version), source);
         } else {
             for (std::size_t taxi = 0; taxi < state.taxi_count(); ++taxi)
                 if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi)), source);
+                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
+                                         source_version), source);
         }
     };
     const auto scan_all = [&] {

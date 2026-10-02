@@ -1,0 +1,31 @@
+{
+  "sources": [
+    {
+      "file": "r10_p5_m5_s2.txt",
+      "sha256": "8f361e840b400122073d803ea2bcc4014846acc6e2be97988137ad33cdb9780b"
+    },
+    {
+      "file": "r30_p15_m15_s3.txt",
+      "sha256": "43a51df111f47623bf90e2615129c009eb275ccae13cd8c2d39e3fd08a344e32"
+    },
+    {
+      "file": "r100_p50_m50_s4.txt",
+      "sha256": "8536961497a725a8840a556a639ea43b2f906709144cad125be34207fe7731fb"
+    },
+    {
+      "file": "r240_p120_m120_s5.txt",
+      "sha256": "93baf239e2d2ccb44cfb2b2a14bb15c42804acfc6f8f186cc9f05896e62b86e4"
+    }
+  ],
+  "case_weight": "equal",
+  "revenue_fits": {
+    "passengers": {
+      "slope": 1.9343018896773239,
+      "intercept": 13.234628073857863
+    },
+    "parcels": {
+      "slope": 1.8241777188152437,
+      "intercept": 22.809288635165586
+    }
+  }
+}

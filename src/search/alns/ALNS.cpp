@@ -3,22 +3,13 @@
 #include "search/alns/SearchState.hpp"
 #include "search/alns/operators/Destroy/RandomRemoval.hpp"
 #include "search/alns/operators/Destroy/RelatedRemoval.hpp"
-#include "search/alns/operators/Destroy/RouteRemoval.hpp"
 #include "search/alns/operators/Destroy/WorstRemoval.hpp"
-#include "search/alns/operators/Destroy/WorstMarginalBenefitRemoval.hpp"
-#include "search/alns/operators/Destroy/DelayRemoval.hpp"
-#include "search/alns/operators/Destroy/TimeBucketRemoval.hpp"
 #include "search/alns/operators/LocalSearch/LocalSearch.hpp"
 #include "search/alns/operators/LocalSearch/ParcelRelocate.hpp"
 #include "search/alns/operators/LocalSearch/PassengerRelocate.hpp"
 #include "search/alns/operators/LocalSearch/AddRequest.hpp"
 #include "search/alns/operators/LocalSearch/RemoveRequest.hpp"
-#include "search/alns/operators/LocalSearch/ReplaceRequest.hpp"
-#include "search/alns/operators/LocalSearch/SwapRequest.hpp"
-#include "search/alns/operators/LocalSearch/CleanCut2OptStar.hpp"
 #include "search/alns/operators/Repair/GreedyInsertion.hpp"
-#include "search/alns/operators/Repair/RegretInsertion.hpp"
-#include "search/alns/operators/Repair/SharedGapPairRepair.hpp"
 #include "search/alns/operators/Repair/InsertionSearch.hpp"
 
 #include <algorithm>
@@ -39,37 +30,13 @@ Result solve(const Instance& instance, const Config& config) {
     const auto start = Clock::now();
     const auto deadline = start + std::chrono::duration_cast<Clock::duration>(
                                   std::chrono::duration<double>(config.time_limit));
-
-    // ── Phase 0d: progress ∈ [0,1] controls both cooling and loop termination.
-    // Iteration mode: progress = iteration / max_iterations (deterministic).
-    // Time mode:      progress = elapsed / time_limit        (default).
-    const bool iteration_mode = config.max_iterations.has_value();
-    const std::size_t max_iter = iteration_mode ? *config.max_iterations : 0;
-    const auto get_progress = [&](std::size_t iter) -> double {
-        if (iteration_mode)
-            return static_cast<double>(iter) / static_cast<double>(max_iter);
-        const double elapsed = std::chrono::duration<double>(Clock::now() - start).count();
-        return elapsed / config.time_limit;
-    };
-
     std::mt19937_64 rng(config.seed);
     std::vector<std::unique_ptr<DestroyOperator>> destroys;
     destroys.push_back(std::make_unique<RandomRemoval>());
     destroys.push_back(std::make_unique<WorstRemoval>());
-    destroys.push_back(std::make_unique<WorstMarginalBenefitRemoval>());
-    destroys.push_back(std::make_unique<DelayRemoval>());
-    destroys.push_back(std::make_unique<TimeBucketRemoval>());
     destroys.push_back(std::make_unique<RelatedRemoval>());
-    destroys.push_back(std::make_unique<RouteRemoval>());
     std::vector<std::unique_ptr<RepairOperator>> repairs;
     repairs.push_back(std::make_unique<GreedyInsertion>());
-    repairs.push_back(std::make_unique<SharedGapPairRepair>(instance));
-    // repairs.push_back(std::make_unique<RegretInsertionV0>()); // Weak standard regret
-    repairs.push_back(std::make_unique<RegretInsertionV1>());
-    repairs.push_back(std::make_unique<RegretInsertionV2>());
-    // repairs.push_back(std::make_unique<GlobalRegret3>());     // Weak global regret
-    // repairs.push_back(std::make_unique<RouteRegret2>());      // Suboptimal route regret
-    repairs.push_back(std::make_unique<RouteRegret3>());
     struct Couple { std::size_t destroy, repair; };
     std::vector<Couple> couples;
     for (std::size_t d = 0; d < destroys.size(); ++d)
@@ -77,14 +44,10 @@ Result solve(const Instance& instance, const Config& config) {
     Balance balance(couples.size(), instance.passengers.size() + instance.parcels.size(),
                     config.thompson);
     LocalSearch local_search;
-    local_search.add_tier1(std::make_unique<RemoveRequest>());
-    local_search.add_tier1(std::make_unique<AddRequest>());
-    local_search.add_tier1(std::make_unique<PassengerRelocate>());
-    local_search.add_tier1(std::make_unique<ParcelRelocate>());
-    local_search.add_tier1(std::make_unique<ReplaceRequest>());
-    
-    local_search.add_tier2(std::make_unique<SwapRequest>());
-    local_search.add_tier2(std::make_unique<CleanCut2OptStar>());
+    local_search.add_move(std::make_unique<RemoveRequest>());
+    local_search.add_move(std::make_unique<AddRequest>());
+    local_search.add_move(std::make_unique<PassengerRelocate>());
+    local_search.add_move(std::make_unique<ParcelRelocate>());
 
     std::ofstream trace, operator_log;
     if (!config.log_directory.empty()) {
@@ -94,8 +57,7 @@ Result solve(const Instance& instance, const Config& config) {
         trace.open(root / "alns" / "progress.csv");
         operator_log.open(root / "operator" / "stats.csv");
         if (!trace || !operator_log) throw std::runtime_error("cannot create ALNS logs");
-        // Phase 0c: added seconds and progress columns for profiling.
-        trace << "iteration,seconds,progress,temperature,current_benefit,best_benefit\n";
+        trace << "iteration,seconds,temperature,current_benefit,best_benefit\n";
         operator_log << "destroy,repair,calls,reward_sum\n";
     }
 
@@ -117,95 +79,56 @@ Result solve(const Instance& instance, const Config& config) {
     }
     if (config.check) current.check();
     SearchState best = current;
-
-    const double T0 = config.temperature;
-    const double Tmin = T0 * 1e-4;
-    double temperature = T0;
-    
+    SearchState candidate = current;
+    double temperature = config.temperature;
+    const double minimum_temperature = config.temperature * 1e-4;
     std::size_t iterations = 0;
-    std::size_t restart_count = 0;
-    if (trace) {
-        const double elapsed0 = std::chrono::duration<double>(Clock::now() - start).count();
-        trace << "0," << elapsed0 << ",0," << temperature << ','
-              << current.benefit() << ',' << best.benefit() << '\n';
-    }
+    if (trace) trace << "0,0," << temperature << ',' << current.benefit() << ','
+                     << best.benefit() << '\n';
 
-    // ── Main SA loop ─────────────────────────────────────────────────────────
-    while (Clock::now() < deadline) {
+    while (temperature > minimum_temperature) {
+        const auto iteration_start = Clock::now();
+        if (iteration_start >= deadline) break;
         const auto selection = balance.select(rng, current.served_count());
         const auto couple = couples[selection.couple];
-        SearchState candidate = current;
-        const auto removed = destroys[couple.destroy]->apply(candidate, selection.removal_count, rng);
+        candidate.copy_from(current);
+        const auto removed = destroys[couple.destroy]->apply(
+            candidate, selection.removal_count, rng);
         repairs[couple.repair]->apply(candidate, removed, rng);
-        
-        if (config.local_search && iterations % config.ls_interval == 0) {
-            const double denominator = std::max(1.0, std::abs(best.benefit()));
-            const double gap = (best.benefit() - candidate.benefit()) / denominator;
-            if (gap <= config.ls_threshold) {
-                if (local_search.search_tier1(candidate)) {
-                    // re-evaluate gap after tier 1
-                    const double new_gap = (best.benefit() - candidate.benefit()) / denominator;
-                    if (new_gap <= config.ls_tier2_threshold) {
-                        local_search.search_tier2(candidate);
-                    }
-                } else if (gap <= config.ls_tier2_threshold) {
-                    local_search.search_tier2(candidate);
-                }
-            }
-        }
-
-        // Phase 0b: validator hook — only in debug builds with --check.
+        if (config.local_search && iterations % config.ls_interval == 0)
+            local_search.search(candidate);
         if (config.check) candidate.check();
-
         const double delta = candidate.benefit() - current.benefit();
         const double reward = std::max(0.0, delta / std::max(1.0, std::abs(current.benefit())));
         bool accept = delta >= 0;
         if (!accept) {
             std::uniform_real_distribution<double> uniform(0, 1);
-            accept = uniform(rng) < std::exp(delta / (temperature + 1e-9));
+            accept = uniform(rng) < std::exp(delta / temperature);
         }
         if (accept) {
-            current = std::move(candidate);
+            current.swap(candidate);
             if (current.benefit() > best.benefit() + 1e-9) {
-                best = current;
+                best.copy_from(current);
                 std::cerr << "ALNS best iteration=" << iterations + 1
                           << " benefit=" << best.benefit() << '\n';
             }
         }
-        
         balance.update(selection, reward);
         ++iterations;
-
-        temperature = std::max(Tmin, temperature * config.cooling);
-        if (temperature <= Tmin + 1e-9) {
-            temperature = T0;
-            current = best;
-            ++restart_count;
-            std::cerr << "ALNS restart " << restart_count << " at iteration=" << iterations << '\n';
-        }
-
-        // Phase 0c: profiling log every 1000 iterations.
+        temperature = std::max(minimum_temperature, temperature * config.cooling);
         if (iterations % 1000 == 0) {
-            const double elapsed = std::chrono::duration<double>(Clock::now() - start).count();
-            if (trace) trace << iterations << ',' << elapsed << ',' << restart_count << ','
-                             << temperature << ',' << current.benefit() << ','
-                             << best.benefit() << '\n';
-            std::cerr << "ALNS iteration=" << iterations
-                      << " restart=" << restart_count
-                      << " temp=" << temperature
-                      << " current=" << current.benefit()
-                      << " best=" << best.benefit() << '\n';
+            const double seconds = std::chrono::duration<double>(iteration_start - start).count();
+            if (trace) trace << iterations << ',' << seconds << ',' << temperature << ','
+                             << current.benefit() << ',' << best.benefit() << '\n';
+            std::cerr << "ALNS iteration=" << iterations << " temp=" << temperature
+                      << " current=" << current.benefit() << " best=" << best.benefit() << '\n';
         }
     }
-
     if (config.check) best.check();
-    if (trace) {
-        const double elapsed = std::chrono::duration<double>(Clock::now() - start).count();
-        const double progress = get_progress(iterations);
-        trace << iterations << ',' << elapsed << ',' << progress << ','
-              << temperature << ',' << current.benefit() << ','
-              << best.benefit() << '\n';
-    }
+    if (trace) trace << iterations << ','
+                     << std::chrono::duration<double>(Clock::now() - start).count() << ','
+                     << temperature << ',' << current.benefit() << ','
+                     << best.benefit() << '\n';
     for (std::size_t c = 0; c < couples.size() && operator_log; ++c)
         operator_log << destroys[couples[c].destroy]->name() << ','
                      << repairs[couples[c].repair]->name() << ','
@@ -215,7 +138,7 @@ Result solve(const Instance& instance, const Config& config) {
     result.benefit = best.benefit();
     result.iterations = iterations;
     result.seconds = std::chrono::duration<double>(Clock::now() - start).count();
-    result.annealing_complete = get_progress(iterations) >= 1.0;
+    result.annealing_complete = temperature <= minimum_temperature;
     return result;
 }
 } // namespace soict::alns

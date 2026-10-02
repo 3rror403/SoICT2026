@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(SoICT2026 LANGUAGES CXX)
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-O2)
+endif()
+
 add_library(soict_core
     src/model/Instance.cpp
     src/model/Solution.cpp
@@ -142,6 +146,8 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME soict_evaluator_test
             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/EvaluatorTest.py" "$<TARGET_FILE:SoICT2026>")
+        add_test(NAME soict_probation_io_test
+            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/ProbationIOTest.py" "$<TARGET_FILE:SoICT2026>")
     endif()
     if(TARGET soict_mip)
         add_executable(soict_mip_test tests/MIPTest.cpp)

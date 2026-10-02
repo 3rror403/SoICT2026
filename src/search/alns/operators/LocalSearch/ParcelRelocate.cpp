@@ -3,31 +3,10 @@
 #include "search/alns/MoveCost.hpp"
 
 #include <algorithm>
-#include <cassert>
 #include <limits>
-#include <optional>
 #include <stdexcept>
-#include <vector>
 
 namespace soict::alns {
-namespace {
-constexpr double kMinGain = 1e-9;
-constexpr double kTolerance = 1e-8;
-
-struct PairCandidate {
-    double objective;
-    std::size_t pickup;
-    std::size_t delivery;
-};
-
-// Phase 1b: thread_local scratch — tránh 4–5 lần malloc/free cho mỗi cặp
-// (request, taxi) bị cache-miss. Mỗi thread giữ một bản riêng.
-struct ParcelScratch {
-    std::vector<double> pickup_cost, delivery_cost, adjacent_cost, suffix_delivery;
-    std::vector<PairCandidate> pairs;
-};
-} // namespace
-
 ParcelRelocationContext::ParcelRelocationContext(const SearchState& state,
                                                  std::size_t request)
     : state_(state), request_(request), source_(0), pickup_at_(0), delivery_at_(0) {
@@ -85,7 +64,8 @@ std::optional<double> ParcelRelocationContext::gain(std::size_t taxi,
 
 std::optional<double> ParcelRelocationContext::calculate_delta_fast(std::size_t taxi,
     const RouteCache& route, std::size_t a, std::size_t b) const {
-    if (!valid() || taxi >= state_.taxi_count() || a > b || b > length(taxi) ||
+    if (!valid() || taxi >= state_.taxi_count() || a > b ||
+        b > route.nodes().size() - (taxi == source_ ? 2 : 0) ||
         (taxi != source_ && !removal_gain_)) return std::nullopt;
     const RouteView view{route.nodes(), pickup_at_, delivery_at_, taxi == source_};
     const auto delta = separated_insertion_cost(state_.instance(), taxi, view, a, b,
@@ -142,95 +122,55 @@ std::optional<double> ParcelRelocationContext::gain_from_prefix(
 
 std::optional<InsertionChoice> ParcelRelocate::best_on_taxi(
     const SearchState& state, const ParcelRelocationContext& context,
-    std::size_t r, std::size_t taxi, const RouteCache& route) const {
+    std::size_t r, std::size_t taxi, const RouteCache& route,
+    std::uint64_t source_version) const {
     const auto source = static_cast<std::size_t>(state.location(r).taxi);
     if (taxi != source && !context.removal_feasible()) return std::nullopt;
     return cache_.get(r, taxi, state.taxi_count(),
-        state.cache(source).version(), route.version(),
-        context.removal_savings(), taxi == source, [&]() -> std::optional<InsertionChoice> {
-                // Phase 1b: best-first search with thread_local scratch.
-                thread_local ParcelScratch scratch;
-                auto& pickup_cost    = scratch.pickup_cost;
-                auto& delivery_cost  = scratch.delivery_cost;
-                auto& adjacent_cost  = scratch.adjacent_cost;
-                auto& suffix_delivery = scratch.suffix_delivery;
-                auto& pairs          = scratch.pairs;
-
-                const auto length = context.length(taxi);
+        source_version, route.version(),
+        context.removal_savings(), taxi == source, [&] {
+                std::optional<InsertionChoice> route_best;
+                const auto length = route.nodes().size() - (taxi == source ? 2 : 0);
                 const auto& in = state.instance();
                 const auto loc = state.location(r);
                 const RouteView view{route.nodes(), loc.pickup, loc.dropoff,
                                      taxi == source};
-                const auto pickup_node    = state.pickup_node(r);
-                const auto delivery_node  = in.parcel_dropoff(r - state.passenger_count());
-                const auto savings = context.removal_savings();
-
-                // Step 1: pre-compute cost arrays O(L) once.
-                pickup_cost.resize(length + 1);
-                delivery_cost.resize(length + 1);
-                adjacent_cost.resize(length + 1);
-                suffix_delivery.assign(length + 2,
-                                       std::numeric_limits<double>::infinity());
+                const auto pickup_node = state.pickup_node(r);
+                const auto delivery_node = in.parcel_dropoff(r - state.passenger_count());
+                std::vector<double> pickup_cost(length + 1), delivery_cost(length + 1),
+                                    adjacent_cost(length + 1),
+                                    suffix_delivery(length + 2,
+                                        std::numeric_limits<double>::infinity());
                 for (std::size_t pos = 0; pos <= length; ++pos) {
-                    pickup_cost[pos]   = single_insertion_cost(in, taxi, view, pos, pickup_node);
-                    delivery_cost[pos] = single_insertion_cost(in, taxi, view, pos, delivery_node);
-                    adjacent_cost[pos] = adjacent_insertion_cost(in, taxi, view, pos,
-                                             pickup_node, delivery_node);
+                    pickup_cost[pos] = single_insertion_cost(in, taxi, view,
+                                                             pos, pickup_node);
+                    delivery_cost[pos] = single_insertion_cost(in, taxi, view,
+                                                               pos, delivery_node);
+                    adjacent_cost[pos] = adjacent_insertion_cost(in, taxi, view,
+                                             pos, pickup_node, delivery_node);
                 }
                 for (std::size_t pos = length + 1; pos-- > 0;)
                     suffix_delivery[pos] = std::min(delivery_cost[pos],
                                                     suffix_delivery[pos + 1]);
-
-                // Step 2: collect (a,b) pairs whose objective >= kMinGain.
-                // Outer-loop pruning via suffix_delivery avoids inner loop entirely
-                // when no (a,b>=a) can beat the threshold.
-                pairs.clear();
                 for (std::size_t a = 0; a <= length; ++a) {
                     const auto best_delta = std::min(adjacent_cost[a],
                         pickup_cost[a] + suffix_delivery[a + 1]);
-                    if (savings - best_delta + kTolerance < kMinGain) continue;
-                    for (std::size_t b = a; b <= length; ++b) {
-                        const auto delta = b == a ? adjacent_cost[a]
-                                                  : pickup_cost[a] + delivery_cost[b];
-                        const auto objective = savings - delta;
-                        if (objective + kTolerance < kMinGain) continue;
-                        pairs.push_back({objective, a, b});
-                    }
-                }
-                if (pairs.empty()) return std::nullopt;
-
-                // Step 3: sort best-first, call FastRouteCheck only when needed.
-                // Tie-break (a,b) ascending for deterministic results.
-                std::sort(pairs.begin(), pairs.end(),
-                          [](const PairCandidate& x, const PairCandidate& y) {
-                              if (x.objective != y.objective)
-                                  return x.objective > y.objective;
-                              if (x.pickup != y.pickup)
-                                  return x.pickup < y.pickup;
-                              return x.delivery < y.delivery;
-                          });
-
-                // Phase 1b: reuse pickup_prefix across pairs with the same pickup pos.
-                std::size_t prefix_a = std::numeric_limits<std::size_t>::max();
-                std::optional<FastRouteCheck> prefix;
-                for (const auto& pair : pairs) {
-                    if (pair.pickup != prefix_a) {
-                        prefix_a = pair.pickup;
-                        if (auto built = context.pickup_prefix(taxi, route, pair.pickup))
-                            prefix.emplace(*built);
-                        else
-                            prefix.reset();
-                    }
+                    if (context.removal_savings() - best_delta + 1e-8 <
+                        std::max(1e-9, route_best ? route_best->gain : 1e-9)) continue;
+                    const auto prefix = context.pickup_prefix(taxi, route, a);
                     if (!prefix) continue;
-                    if (const auto gain = context.gain_from_prefix(
-                            taxi, route, pair.pickup, pair.delivery, *prefix)) {
-                        // Phase 1c: assert pair.objective ≈ *gain (two independent code paths).
-                        assert(std::abs(*gain - pair.objective)
-                               < 1e-6 * std::max(1.0, std::abs(*gain)));
-                        return InsertionChoice{r, taxi, pair.pickup, pair.delivery, *gain};
+                    for (std::size_t b = a; b <= length; ++b) {
+                        const auto delta = b == a ? adjacent_cost[a] :
+                                           pickup_cost[a] + delivery_cost[b];
+                        const auto objective = context.removal_savings() - delta;
+                        if (objective + 1e-8 <
+                            std::max(1e-9, route_best ? route_best->gain : 1e-9)) continue;
+                        const auto gain = context.gain_from_prefix(taxi, route, a, b, *prefix);
+                        if (gain && (!route_best || *gain > route_best->gain))
+                            route_best = InsertionChoice{r, taxi, a, b, *gain};
                     }
                 }
-                return std::nullopt;
+                return route_best;
             });
 }
 
@@ -242,6 +182,8 @@ bool ParcelRelocate::improve(SearchState& state) const {
         ParcelRelocationContext context(state, r);
         const auto source = static_cast<std::size_t>(state.location(r).taxi);
         if (!context.valid()) return;
+        // The source stays unchanged throughout this request's destination scan.
+        const auto source_version = state.cache(source).version();
         const auto& index = state.empty_taxi_index();
         const bool indexed = index && index->ensure(r);
         if (indexed) {
@@ -254,13 +196,15 @@ bool ParcelRelocate::improve(SearchState& state) const {
                     break;
                 }
             }
-            for (const auto& [taxi, current] : state.active_routes())
+            for (const auto taxi : state.active_taxis())
                 if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, current), source);
+                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
+                                         source_version), source);
         } else {
             for (std::size_t taxi = 0; taxi < state.taxi_count(); ++taxi)
                 if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi)), source);
+                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
+                                         source_version), source);
         }
     };
     const auto scan_all = [&] {

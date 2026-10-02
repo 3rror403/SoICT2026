@@ -30,6 +30,11 @@ public:
     RouteCache() = default;
     RouteCache(const Instance& instance, std::size_t taxi,
                const std::vector<std::size_t>& route);
+    // Refill or copy logical contents while retaining allocated buffers.
+    void rebuild(const Instance& instance, std::size_t taxi,
+                 const std::vector<std::size_t>& route);
+    void clear();
+    void copy_from(const RouteCache& other);
 
     [[nodiscard]] Segment range(const Instance& instance, std::size_t first,
                                 std::size_t last) const; // inclusive
