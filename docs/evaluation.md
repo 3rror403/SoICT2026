@@ -1,6 +1,6 @@
 # Heuristic evaluation and best-known solutions
 
-The evaluator uses the synthetic instance manifest and selects cases with `N+M <= 100` (currently 20 instances). It runs each case with solver seeds `1` through `10`. Four runs execute concurrently by default; use `--jobs` to change that number. A full evaluation therefore has 200 trials. The default **60 seconds per run is a timeout, not a measured runtime**. CPLEX MIP is separate from this heuristic evaluator.
+The evaluator uses `data/probation/manifest.csv` and all eight supplied instances, including the 240-request case. It runs each case with solver seeds `1` through `10`, for 80 trials. Four runs execute concurrently by default; use `--jobs` to change that number. The default 60 seconds per run is a hard timeout. CPLEX MIP is separate from this heuristic evaluator.
 
 ## Solver interface
 
@@ -28,7 +28,7 @@ For standard input/output, use:
 ./cmake-build-debug/SoICT2026 solve-stdio --seed 1 --time-limit 60 < instance.txt > solution.txt
 ```
 
-Diagnostics go to standard error in this mode. The file interface also accepts `--instance -` and `--out -`.
+Diagnostics go to standard error in this mode. The file interface also accepts `--instance -` and `--out -`. Omitting `--out` prints the solution to standard output. ALNS reports the initial solution and every completed iteration on standard error, including elapsed seconds, temperature, current benefit, and best benefit; improvements also produce a new-best message.
 
 To evaluate the ALNS executable, run:
 
@@ -40,18 +40,18 @@ Optional `--manifest`, `--checker`, `--best-known`, and `--results` paths suppor
 
 ## Results
 
-Each invocation creates the next directory `results/<solver>/v0001/`, `v0002/`, and so on, preserving earlier run records. Derived CSV metrics may be backfilled from those runs' archived logs. `metadata.json` records the start/end time, solver path, Git commit and dirty flag, job count, and time limit. `runs.csv` has one row per instance and solver seed, including status, verified objective when feasible, elapsed wall time, completed iterations when reported by the solver, stop reason, and log path. It is updated every ten completions so partial runs remain visible. `summary.csv` has one row per instance: best objective, mean objective over feasible runs, mean wall time over all ten attempts, `speed (it/s)`, temperature and time-limit stop counts, and feasible/timeout counts. `speed (it/s) = sum(completed iterations) / sum(wall_seconds)` across feasible runs; it is blank when the solver does not report iteration counts. The wall time is measured from solver process launch to exit, including startup and solution writing but excluding the separate checker. The instance's generation seed remains distinct from the solver seed.
+Each invocation creates the next directory `results/<solver>/v0001/`, `v0002/`, and so on, preserving earlier run records. Derived CSV metrics may be backfilled from those runs' archived logs. `metadata.json` records the start/end time, solver path, Git commit and dirty flag, job count, and time limit. `runs.csv` has one row per instance and solver seed, including status, verified objective when feasible, elapsed wall time, completed iterations when reported by the solver, stop reason, and log path. It is updated every ten completions so partial runs remain visible. `summary.csv` has one row per instance: best objective, mean objective over feasible runs, mean wall time over all ten attempts, `speed (it/s)`, temperature and time-limit stop counts, and feasible/timeout counts. `speed (it/s) = sum(completed iterations) / sum(wall_seconds)` across feasible runs; it is blank when the solver does not report iteration counts. The wall time is measured from solver process launch to exit, including startup and solution writing but excluding the separate checker. For probation instances, `instance_seed` records the case index; it is distinct from the solver seed.
 
 ## Dataset identity and best-known records
 
-The active dataset is `probation-calibrated-v3`, described in [synthetic-data.md](synthetic-data.md). Instance names are unchanged from the earlier dataset, but their contents and taxi counts have changed. Previous generations and their best-known records are archived under `results/dataset-archive/`; the immediately preceding directed profile is `20261002-directed-probation-v2`. Their numerical comparisons remain valid only within that archived dataset.
+The active dataset is the eight supplied probation cases, listed in [the dataset README](../data/probation/README.md). Synthetic inputs and their archived results have been removed.
 
-The evaluator records manifest and instance SHA-256 hashes in each new run's metadata. Each best-known row includes `instance_sha256`; a mismatched or missing hash causes rejection before running experiments. When provided, manifest hashes are also verified. Changing instance files requires regenerating the manifest and resetting or archiving the matching best-known records.
+The evaluator records manifest and instance SHA-256 hashes in each run's metadata. Each best-known row includes `instance_sha256`; a mismatched or missing hash causes rejection before experiments. Manifest hashes are also verified.
 
-The active best-known directory is `data/synthetic/best-known/`. It starts with an empty index after replacement. Each future entry records the checked objective, route file, source solver/version/seed, instance hash, and `is_optimal`. A heuristic can improve an unproved record but cannot mark it optimal. Exact proofs can be recorded separately using:
+The active best-known directory is `data/probation/best-known/`. Records include the objective, route file, source solver/version/seed when known, instance hash, and `is_optimal`. The evaluator independently checks these routes before use. A heuristic can improve an unproved record but cannot mark it optimal. The original CMS submission provenance remains a historical snapshot.
+
+For the 10-request case, exact proofs can be recorded separately using:
 
 ```sh
 python3 src/eval/record_mip_optima.py
 ```
-
-No old optimum is transferred to the new dataset, and replacing the dataset does not itself run a full solver evaluation.

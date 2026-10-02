@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a heuristic over the synthetic instances with a hard process timeout."""
+"""Run a heuristic over the probation instances with a hard process timeout."""
 
 import argparse
 import csv
@@ -61,10 +61,9 @@ def read_cases(manifest):
         if row.get("sha256") and row["sha256"] != instance_digest(path):
             raise ValueError(f"instance hash differs from manifest: {name}")
         all_instances[name] = path.resolve()
-        if requests <= 100:
-            cases.append((row, path.resolve()))
+        cases.append((row, path.resolve()))
     if not cases:
-        raise ValueError("manifest has no instances with at most 100 requests")
+        raise ValueError("manifest has no instances")
     return cases, all_instances
 
 
@@ -205,10 +204,10 @@ def main():
     parser.add_argument("--solver-name", required=True)
     parser.add_argument("--solver-exe", type=Path, required=True)
     parser.add_argument("--checker", type=Path, default=ROOT / "cmake-build-debug" / ("SoICT2026.exe" if os.name == "nt" else "SoICT2026"))
-    parser.add_argument("--manifest", type=Path, default=ROOT / "data/synthetic/manifest.csv")
+    parser.add_argument("--manifest", type=Path, default=ROOT / "data/probation/manifest.csv")
     parser.add_argument("--instance", action="append", default=[],
                         help="select an instance filename from the manifest; repeat to select several")
-    parser.add_argument("--best-known", type=Path, default=ROOT / "data/synthetic/best-known")
+    parser.add_argument("--best-known", type=Path, default=ROOT / "data/probation/best-known")
     parser.add_argument("--results", type=Path, default=ROOT / "results")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--time-limit", type=float, default=60.0)
@@ -246,7 +245,7 @@ def main():
     run_dir = make_version(args.results.resolve(), args.solver_name)
     metadata = {"solver": args.solver_name, "solver_exe": str(solver),
                 "manifest": str(manifest), "jobs": args.jobs,
-                "solver_seeds": list(range(1, 11)), "max_requests": 100,
+                "solver_seeds": list(range(1, 11)), "max_requests": max(int(row["requests"]) for row, _ in cases),
                 "selected_instances": [row["file"] for row, _ in cases],
                 "instance_sha256": {name: instance_digest(path) for name, path in instances.items()},
                 "manifest_sha256": instance_digest(manifest),

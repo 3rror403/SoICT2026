@@ -11,7 +11,7 @@ The official input/output syntax is in [probation_state_problem.txt](probation_s
 
 Revise the scale and runtime targets when official limits become available.
 
-The concise [synthetic generation rules](../data/synthetic/README.md) describe calibration, fleet scaling, and noise. The official input/output format is documented in [synthetic-data.md](synthetic-data.md).
+The active [probation set](../data/probation/README.md) contains eight supplied instances. The official input/output format is documented in [input-output.md](input-output.md).
 The exact CPLEX solver for 10-request cases is documented in [mip.md](mip.md).
 Heuristic run records and best-known routes are documented in [evaluation.md](evaluation.md).
 

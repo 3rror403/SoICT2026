@@ -13,8 +13,8 @@ from evaluate import BEST_FIELDS, ROOT, command_for, instance_digest, read_best_
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--solver", type=Path, default=ROOT / "cmake-build-debug/SoICT2026")
-    parser.add_argument("--manifest", type=Path, default=ROOT / "data/synthetic/manifest.csv")
-    parser.add_argument("--best-known", type=Path, default=ROOT / "data/synthetic/best-known")
+    parser.add_argument("--manifest", type=Path, default=ROOT / "data/probation/manifest.csv")
+    parser.add_argument("--best-known", type=Path, default=ROOT / "data/probation/best-known")
     args = parser.parse_args()
     solver = args.solver.resolve()
     cases, instances = read_cases(args.manifest.resolve())

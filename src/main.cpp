@@ -47,9 +47,10 @@ void usage() {
               << "  SoICT2026 generate --passengers N --parcels M --taxis K --seed S [--profile empirical|directed-noise] --out FILE\n"
               << "  SoICT2026 inspect FILE\n";
     std::cerr << "  SoICT2026 check-solution INSTANCE SOLUTION\n";
-    std::cerr << "  SoICT2026 solve-alns --instance FILE --seed S --time-limit SEC --out SOLUTION\n"
+    std::cerr << "  SoICT2026 solve-alns --instance FILE --seed S --time-limit SEC [--out SOLUTION]\n"
               << "  SoICT2026 solve-stdio [--seed S] [--time-limit SEC] < INSTANCE > SOLUTION\n"
-              << "  SoICT2026 --instance FILE --seed S --time-limit SEC --out SOLUTION\n"
+              << "  SoICT2026 --instance FILE --seed S --time-limit SEC [--out SOLUTION]\n"
+              << "    Omit --out or use --out - to print the solution to stdout.\n"
               << "    Optional: --log DIR --temp T --cooling RATE --check --disable-ls --ls-interval N --balance-thompson\n";
 #ifdef SOICT_WITH_CPLEX
     std::cerr << "  SoICT2026 solve-mip FILE [--time-limit SECONDS] [--out SOLUTION]\n";
@@ -69,7 +70,7 @@ int main(int argc, char** argv) {
             const bool stdio = std::string(argv[1]) == "solve-stdio";
             const int start = std::string(argv[1]) == "--instance" ? 1 : 2;
             soict::alns::Config config;
-            std::string instance_path = stdio ? "-" : "", solution_path = stdio ? "-" : "";
+            std::string instance_path = stdio ? "-" : "", solution_path = "-";
             for (int i = start; i < argc; ++i) {
                 const std::string key(argv[i]);
                 if (key == "--check") { config.check = true; continue; }
@@ -97,8 +98,8 @@ int main(int argc, char** argv) {
                 } else if (key == "--log") config.log_directory = value;
                 else throw std::invalid_argument("unknown solve-alns option: " + key);
             }
-            if (instance_path.empty() || solution_path.empty())
-                throw std::invalid_argument("solve-alns requires --instance and --out");
+            if (instance_path.empty())
+                throw std::invalid_argument("solve-alns requires --instance");
             std::ifstream in;
             if (instance_path != "-") {
                 in.open(instance_path);

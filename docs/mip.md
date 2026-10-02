@@ -8,7 +8,7 @@ Build with the installed CPLEX Studio:
 cmake -S . -B cmake-build-debug -DCMAKE_BUILD_TYPE=Debug
 cmake --build cmake-build-debug
 ctest --test-dir cmake-build-debug --output-on-failure
-./cmake-build-debug/SoICT2026 solve-mip data/synthetic/r10_p5_m5_s3.txt --time-limit 300
+./cmake-build-debug/SoICT2026 solve-mip data/probation/r10_p5_m5_s2.txt --time-limit 300
 ```
 
 CMake checks headers and libraries before enabling the MIP target. It uses `CPLEX_STUDIO_DIR2211` when that environment variable is set; otherwise its default root is `/opt/ibm/ILOG/CPLEX_Studio2211` on Linux or `C:/Program Files/IBM/ILOG/CPLEX_Studio2211` on Windows. Override the `CPLEX_ROOT` CMake cache option for another location. Windows builds use the MSVC 64-bit libraries in `stat_mdd` for Debug and `stat_mda` for other configurations; CMake also copies the CPLEX DLL beside the executable and MIP test. If the required files are absent or the platform has no supported CPLEX library layout, the core executable still builds without `solve-mip` and without the MIP test.

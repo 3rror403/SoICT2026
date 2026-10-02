@@ -21,6 +21,8 @@
 #include <memory>
 #include <numeric>
 #include <random>
+#include <sstream>
+#include <iomanip>
 #include <stdexcept>
 
 namespace soict::alns {
@@ -83,6 +85,18 @@ Result solve(const Instance& instance, const Config& config) {
     double temperature = config.temperature;
     const double minimum_temperature = config.temperature * 1e-4;
     std::size_t iterations = 0;
+    const auto report_progress = [&] {
+        std::ostringstream line;
+        line << std::fixed << std::setprecision(3)
+             << '[' << std::chrono::duration<double>(Clock::now() - start).count()
+             << " s] Iteration " << iterations
+             << std::setprecision(6) << ", Temperature: " << temperature
+             << std::setprecision(0)
+             << ", Current obj: " << current.benefit()
+             << ", Best obj: " << best.benefit() << '\n';
+        std::cerr << line.str();
+    };
+    report_progress();
     if (trace) trace << "0,0," << temperature << ',' << current.benefit() << ','
                      << best.benefit() << '\n';
 
@@ -109,19 +123,23 @@ Result solve(const Instance& instance, const Config& config) {
             current.swap(candidate);
             if (current.benefit() > best.benefit() + 1e-9) {
                 best.copy_from(current);
-                std::cerr << "ALNS best iteration=" << iterations + 1
-                          << " benefit=" << best.benefit() << '\n';
+                std::ostringstream line;
+                line << std::fixed << std::setprecision(3)
+                     << '[' << std::chrono::duration<double>(Clock::now() - start).count()
+                     << " s] Iteration " << iterations + 1
+                     << std::setprecision(0)
+                     << ": New best objective = " << best.benefit() << '\n';
+                std::cerr << line.str();
             }
         }
         balance.update(selection, reward);
         ++iterations;
         temperature = std::max(minimum_temperature, temperature * config.cooling);
+        report_progress();
         if (iterations % 1000 == 0) {
-            const double seconds = std::chrono::duration<double>(iteration_start - start).count();
+            const double seconds = std::chrono::duration<double>(Clock::now() - start).count();
             if (trace) trace << iterations << ',' << seconds << ',' << temperature << ','
                              << current.benefit() << ',' << best.benefit() << '\n';
-            std::cerr << "ALNS iteration=" << iterations << " temp=" << temperature
-                      << " current=" << current.benefit() << " best=" << best.benefit() << '\n';
         }
     }
     if (config.check) best.check();

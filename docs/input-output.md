@@ -1,16 +1,6 @@
-# SOICT 2026 synthetic data
+# SOICT 2026 input and output
 
-The active profile is `probation-calibrated-v3`, calibrated from the four larger
-supplied probation cases. The concise [dataset README](../data/synthetic/README.md)
-describes every generation rule, fleet scaling, filenames, seeds, and regeneration.
-The [distribution analysis](probation-distribution.md) records the observations
-behind these choices. These cases are synthetic development data.
-
-The active 30 files retain six sizes and five mixes. Supplied cases remain
-separate in `data/probation`; their filenames use case indices rather than seeds.
-The four-request sample remains an I/O fixture and is excluded from request-field
-calibration. The main profile follows the observed symmetric, metric matrices;
-the optional `directed-noise` profile covers permitted asymmetric/nonmetric inputs.
+The active supplied dataset is documented in [the probation README](../data/probation/README.md). Synthetic data and its archived results have been removed.
 
 ## Input and output
 
@@ -29,15 +19,3 @@ Output is the recomputed benefit followed by exactly `K` lines, each containing 
 
 Arriving before an earliest time causes waiting before service. Service occurs at both endpoints. Passenger drop-off has no window. Taxis start at time zero and finish at their final stop without a return leg.
 
-## Replacement history
-
-Previous datasets are preserved under `results/dataset-archive/`:
-
-- `20261002-pre-probation`: original development instances and results.
-- `20261002-symmetric-probation-v1`: first sample-derived symmetric profile.
-- `20261002-directed-probation-v2`: directed sample-derived profile, metadata,
-  best-known records, generator source, documentation, and executable.
-
-Historical objectives apply only to their original input hashes. Best-known
-records for the active generation start empty; the evaluator checks hashes to
-prevent mixing generations.
