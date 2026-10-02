@@ -84,7 +84,8 @@ def kill_process(process):
     process.wait()
 
 
-def run_one(case, seed, solver, checker, run_dir, limit, solver_cooling=None):
+def run_one(case, seed, solver, checker, run_dir, limit, solver_cooling=None,
+            solver_temp=None, clean_cut_2opt_star=False):
     row, instance = case
     name = row["file"]
     stem = f"{instance.stem}_seed{seed}"
@@ -95,6 +96,10 @@ def run_one(case, seed, solver, checker, run_dir, limit, solver_cooling=None):
             "--time-limit", str(internal_limit), "--out", str(solution)]
     if solver_cooling is not None:
         args += ["--cooling", str(solver_cooling)]
+    if solver_temp is not None:
+        args += ["--temp", str(solver_temp)]
+    if clean_cut_2opt_star:
+        args += ["--clean-cut-2opt-star"]
     started = time.monotonic()
     elapsed = None
     status = "process_error"
@@ -213,6 +218,10 @@ def main():
     parser.add_argument("--time-limit", type=float, default=60.0)
     parser.add_argument("--solver-cooling", type=float,
                         help="pass a geometric cooling factor to the ALNS solver")
+    parser.add_argument("--solver-temp", type=float,
+                        help="pass an initial temperature to the ALNS solver")
+    parser.add_argument("--solver-clean-cut-2opt-star", action="store_true",
+                        help="enable the experimental clean-cut suffix exchange")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.solver_name):
         parser.error("solver name may contain only letters, digits, underscores, and hyphens")
@@ -223,6 +232,8 @@ def main():
     if args.solver_cooling is not None and (not math.isfinite(args.solver_cooling) or
                                             not 0 < args.solver_cooling < 1):
         parser.error("solver cooling must be between 0 and 1")
+    if args.solver_temp is not None and (not math.isfinite(args.solver_temp) or args.solver_temp <= 0):
+        parser.error("solver temperature must be positive and finite")
     solver = args.solver_exe.resolve()
     checker = args.checker.resolve()
     if not solver.is_file() or not checker.is_file():
@@ -251,13 +262,16 @@ def main():
                 "manifest_sha256": instance_digest(manifest),
                 "hard_timeout_seconds": args.time_limit,
                 "solver_cooling": args.solver_cooling,
+                "solver_temp": args.solver_temp,
+                "solver_clean_cut_2opt_star": args.solver_clean_cut_2opt_star,
                 "started_utc": dt.datetime.now(dt.timezone.utc).isoformat(), **source_state}
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     print(f"Running {len(cases)} instances x 10 seeds with {args.jobs} jobs; results: {run_dir}", flush=True)
     completed = []
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures = [pool.submit(run_one, case, seed, solver, checker, run_dir,
-                               args.time_limit, args.solver_cooling)
+                               args.time_limit, args.solver_cooling, args.solver_temp,
+                               args.solver_clean_cut_2opt_star)
                    for case in cases for seed in range(1, 11)]
         for count, future in enumerate(as_completed(futures), 1):
             completed.append(future.result())

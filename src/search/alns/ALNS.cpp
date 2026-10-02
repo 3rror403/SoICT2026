@@ -9,6 +9,7 @@
 #include "search/alns/operators/LocalSearch/PassengerRelocate.hpp"
 #include "search/alns/operators/LocalSearch/AddRequest.hpp"
 #include "search/alns/operators/LocalSearch/RemoveRequest.hpp"
+#include "search/alns/operators/LocalSearch/CleanCut2OptStar.hpp"
 #include "search/alns/operators/Repair/GreedyInsertion.hpp"
 #include "search/alns/operators/Repair/InsertionSearch.hpp"
 
@@ -50,6 +51,12 @@ Result solve(const Instance& instance, const Config& config) {
     local_search.add_move(std::make_unique<AddRequest>());
     local_search.add_move(std::make_unique<PassengerRelocate>());
     local_search.add_move(std::make_unique<ParcelRelocate>());
+    CleanCut2OptStar* clean_cut = nullptr;
+    if (config.clean_cut_2opt_star) {
+        auto move = std::make_unique<CleanCut2OptStar>();
+        clean_cut = move.get();
+        local_search.add_move(std::move(move));
+    }
 
     std::ofstream trace, operator_log;
     if (!config.log_directory.empty()) {
@@ -157,6 +164,10 @@ Result solve(const Instance& instance, const Config& config) {
     result.iterations = iterations;
     result.seconds = std::chrono::duration<double>(Clock::now() - start).count();
     result.annealing_complete = temperature <= minimum_temperature;
+    if (clean_cut)
+        std::cerr << "clean_cut_calls=" << clean_cut->calls()
+                  << " clean_cut_moves=" << clean_cut->applied_moves()
+                  << " clean_cut_gain=" << clean_cut->total_gain() << '\n';
     return result;
 }
 } // namespace soict::alns

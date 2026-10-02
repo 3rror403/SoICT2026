@@ -52,6 +52,7 @@ void usage() {
               << "  SoICT2026 --instance FILE --seed S --time-limit SEC [--out SOLUTION]\n"
               << "    Omit --out or use --out - to print the solution to stdout.\n"
               << "    Optional: --log DIR --temp T --cooling RATE --check --disable-ls --ls-interval N --balance-thompson\n";
+    std::cerr << "    Experimental: --clean-cut-2opt-star\n";
 #ifdef SOICT_WITH_CPLEX
     std::cerr << "  SoICT2026 solve-mip FILE [--time-limit SECONDS] [--out SOLUTION]\n";
 #endif
@@ -75,6 +76,7 @@ int main(int argc, char** argv) {
                 const std::string key(argv[i]);
                 if (key == "--check") { config.check = true; continue; }
                 if (key == "--disable-ls") { config.local_search = false; continue; }
+                if (key == "--clean-cut-2opt-star") { config.clean_cut_2opt_star = true; continue; }
                 if (key == "--balance-thompson") { config.thompson = true; continue; }
                 if (i + 1 >= argc) throw std::invalid_argument("option needs a value: " + key);
                 const char* value = argv[++i];

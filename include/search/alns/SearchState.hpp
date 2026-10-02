@@ -56,6 +56,9 @@ public:
                 std::size_t pickup_boundary, std::size_t delivery_boundary);
     bool relocate_within_route(std::size_t request, std::size_t pickup_boundary,
                                std::size_t delivery_boundary);
+    // Reject invalid/non-improving exchanges without modifying either route.
+    bool exchange_route_suffixes(std::size_t taxi_a, std::size_t cut_a,
+                                 std::size_t taxi_b, std::size_t cut_b);
     void check() const;
 
 private:

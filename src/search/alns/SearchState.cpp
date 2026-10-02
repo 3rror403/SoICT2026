@@ -218,6 +218,61 @@ bool SearchState::relocate_within_route(std::size_t request, std::size_t a,
     return true;
 }
 
+bool SearchState::exchange_route_suffixes(std::size_t taxi_a, std::size_t cut_a,
+                                         std::size_t taxi_b, std::size_t cut_b) {
+    if (taxi_a == taxi_b || taxi_a >= taxi_count() || taxi_b >= taxi_count()) return false;
+    const auto& old_a = cache(taxi_a);
+    const auto& old_b = cache(taxi_b);
+    if (cut_a > old_a.nodes().size() || cut_b > old_b.nodes().size()) return false;
+    for (const auto& loc : locations_) {
+        if ((loc.taxi == static_cast<int>(taxi_a) && loc.pickup < cut_a && loc.dropoff >= cut_a) ||
+            (loc.taxi == static_cast<int>(taxi_b) && loc.pickup < cut_b && loc.dropoff >= cut_b))
+            return false;
+    }
+    std::vector<std::size_t> nodes_a(old_a.nodes().begin(), old_a.nodes().begin() + cut_a);
+    nodes_a.insert(nodes_a.end(), old_b.nodes().begin() + cut_b, old_b.nodes().end());
+    std::vector<std::size_t> nodes_b(old_b.nodes().begin(), old_b.nodes().begin() + cut_b);
+    nodes_b.insert(nodes_b.end(), old_a.nodes().begin() + cut_a, old_a.nodes().end());
+    RouteCache new_a(*instance_, taxi_a, nodes_a), new_b(*instance_, taxi_b, nodes_b);
+    RouteCandidate checked_a(*instance_, taxi_a, new_a), checked_b(*instance_, taxi_b, new_b);
+    checked_a.add_range(0, nodes_a.size());
+    checked_b.add_range(0, nodes_b.size());
+    const auto cost_a = checked_a.cost_if_feasible(), cost_b = checked_b.cost_if_feasible();
+    if (!cost_a || !cost_b) return false;
+    const double gain = old_a.cost() + old_b.cost() - *cost_a - *cost_b;
+    if (gain <= 1e-9) return false;
+
+    // Clear both old assignments before assigning either new route: requests
+    // transferred from B to A must not be cleared again while rebuilding B.
+    for (auto& loc : locations_)
+        if (loc.taxi == static_cast<int>(taxi_a) || loc.taxi == static_cast<int>(taxi_b)) loc = {};
+    const auto assign = [&](std::size_t taxi, RouteCache updated) {
+        auto where = std::lower_bound(active_taxis_.begin(), active_taxis_.end(), taxi);
+        const bool active = where != active_taxis_.end() && *where == taxi;
+        if (updated.nodes().empty()) {
+            if (active) active_taxis_.erase(where);
+            routes_by_taxi_[taxi].clear();
+        } else {
+            if (!active) active_taxis_.insert(where, taxi);
+            routes_by_taxi_[taxi] = std::move(updated);
+        }
+        const auto k = instance_->taxis.size(), n = passenger_count(), m = instance_->parcels.size();
+        const auto& nodes = cache(taxi).nodes();
+        for (std::size_t p = 0; p < nodes.size(); ++p) {
+            const auto node = nodes[p];
+            const auto request = node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
+            auto& loc = locations_[request];
+            loc.taxi = static_cast<int>(taxi);
+            if (node == pickup_node(request)) loc.pickup = p;
+            else loc.dropoff = p;
+        }
+    };
+    assign(taxi_a, std::move(new_a));
+    assign(taxi_b, std::move(new_b));
+    benefit_ += gain;
+    return true;
+}
+
 void SearchState::check() const {
     const auto result = solution().evaluate(*instance_);
     if (!result.feasible || std::abs(result.benefit - benefit_) >

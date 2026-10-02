@@ -13,6 +13,7 @@ struct Config {
     double cooling = std::exp(std::log(1e-4) / 60000.0);
     bool check = false;
     bool local_search = true;
+    bool clean_cut_2opt_star = false;
     std::size_t ls_interval = 1;
     bool thompson = false;
     std::string log_directory;

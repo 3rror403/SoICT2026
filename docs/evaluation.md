@@ -38,6 +38,10 @@ python3 src/eval/evaluate.py --solver-name alns --solver-exe ./cmake-build-debug
 
 Optional `--manifest`, `--checker`, `--best-known`, and `--results` paths support other datasets or local trials. Repeat `--instance FILE` to select specific cases from the main manifest. `--time-limit` may lower the allowance for a trial but cannot exceed 60 seconds. The evaluator does not run the MIP.
 
+`--solver-temp T` passes an initial temperature to ALNS and records it in run
+metadata. `--solver-clean-cut-2opt-star` enables the optional
+[clean-cut suffix exchange](clean-cut-2opt-star.md); omit it for the baseline.
+
 ## Results
 
 Each invocation creates the next directory `results/<solver>/v0001/`, `v0002/`, and so on, preserving earlier run records. Derived CSV metrics may be backfilled from those runs' archived logs. `metadata.json` records the start/end time, solver path, Git commit and dirty flag, job count, and time limit. `runs.csv` has one row per instance and solver seed, including status, verified objective when feasible, elapsed wall time, completed iterations when reported by the solver, stop reason, and log path. It is updated every ten completions so partial runs remain visible. `summary.csv` has one row per instance: best objective, mean objective over feasible runs, mean wall time over all ten attempts, `speed (it/s)`, temperature and time-limit stop counts, and feasible/timeout counts. `speed (it/s) = sum(completed iterations) / sum(wall_seconds)` across feasible runs; it is blank when the solver does not report iteration counts. The wall time is measured from solver process launch to exit, including startup and solution writing but excluding the separate checker. For probation instances, `instance_seed` records the case index; it is distinct from the solver seed.

@@ -30,7 +30,8 @@ add_library(soict_alns
     src/search/alns/operators/LocalSearch/AddRequest.cpp
     src/search/alns/operators/LocalSearch/RemoveRequest.cpp
     src/search/alns/operators/LocalSearch/PassengerRelocate.cpp
-    src/search/alns/operators/LocalSearch/ParcelRelocate.cpp)
+    src/search/alns/operators/LocalSearch/ParcelRelocate.cpp
+    src/search/alns/operators/LocalSearch/CleanCut2OptStar.cpp)
 target_link_libraries(soict_alns PUBLIC soict_core)
 target_compile_features(soict_alns PUBLIC cxx_std_20)
 
@@ -126,6 +127,9 @@ if(BUILD_TESTING)
     add_executable(soict_alns_test tests/ALNSTest.cpp)
     target_link_libraries(soict_alns_test PRIVATE soict_alns)
     add_test(NAME soict_alns_test COMMAND soict_alns_test)
+    add_executable(soict_clean_cut_test tests/CleanCut2OptStarTest.cpp)
+    target_link_libraries(soict_clean_cut_test PRIVATE soict_alns)
+    add_test(NAME soict_clean_cut_test COMMAND soict_clean_cut_test)
     if(Python3_Interpreter_FOUND)
         add_test(NAME soict_evaluator_test
             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/EvaluatorTest.py" "$<TARGET_FILE:SoICT2026>")
