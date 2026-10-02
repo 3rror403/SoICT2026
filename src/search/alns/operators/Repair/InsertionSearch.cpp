@@ -121,8 +121,10 @@ InsertionOptions scan_route(const SearchState& state, std::size_t request,
     const auto& nodes = route.nodes();
     // The objective change involves only replaced arcs, even for directed
     // nonmetric costs. Use it to reject candidates before segment joins.
-    std::vector<double> pickup_delta(length + 1), delivery_delta(length + 1),
-                        adjacent_delta(length + 1);
+    thread_local std::vector<double> pickup_delta, delivery_delta, adjacent_delta, suffix_delivery;
+    pickup_delta.resize(length + 1);
+    delivery_delta.resize(length + 1);
+    adjacent_delta.resize(length + 1);
     for (std::size_t pos = 0; pos <= length; ++pos) {
         const auto previous = pos ? nodes[pos - 1] : taxi;
         const auto old_arc = pos < length ? in.cost(previous, nodes[pos]) : 0.0;
@@ -145,9 +147,8 @@ InsertionOptions scan_route(const SearchState& state, std::size_t request,
         }
     }
     if (data.revenue - minimum_delta + 1e-8 < initial_threshold) return result;
-    std::vector<double> suffix_delivery;
     if (!data.passenger) {
-        suffix_delivery.resize(length + 2, std::numeric_limits<double>::infinity());
+        suffix_delivery.assign(length + 2, std::numeric_limits<double>::infinity());
         for (std::size_t pos = length + 1; pos-- > 0;)
             suffix_delivery[pos] = std::min(delivery_delta[pos], suffix_delivery[pos + 1]);
     }
@@ -262,6 +263,27 @@ InsertionOptions insertion_options(const SearchState& state, std::size_t request
 std::optional<InsertionChoice> best_insertion(const SearchState& state,
                                               std::size_t request) {
     return insertion_options_impl(state, request, false).best();
+}
+
+InsertionOptions insertion_options_for_taxi(const SearchState& state, std::size_t request, std::size_t taxi) {
+    InsertionOptions result;
+    if (state.location(request).taxi >= 0) return result;
+    
+    // Check empty taxi if this taxi is empty
+    if (state.cache(taxi).nodes().empty()) {
+        EmptyTaxiIndex index(state.instance());
+        index.ensure(request);
+        for (const auto& c : index.choices(request)) {
+            if (c.taxi == taxi) {
+                consider(result, {request, taxi, 0, 0, c.gain});
+                break;
+            }
+        }
+    }
+    
+    const auto data = request_segments(state, request);
+    combine(result, scan_route(state, request, taxi, state.cache(taxi), data, -std::numeric_limits<double>::infinity()));
+    return result;
 }
 
 std::optional<InsertionChoice> BestInsertionCache::best(const SearchState& state,

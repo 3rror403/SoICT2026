@@ -20,12 +20,17 @@ void regret_apply(SearchState& state,
                   RegretFn regret_of) {
     std::vector<bool> pending(state.request_count(), false);
     for (const auto request : removed) pending.at(request) = true;
+    std::optional<RepairInsertionCache> cache;
+    if (RepairInsertionCache::enabled_for(state)) {
+        cache.emplace(state);
+    }
+
     while (true) {
         std::optional<InsertionChoice> choice;
         double best_regret = -1;
         for (const auto request : removed) {
             if (!pending[request]) continue;
-            const auto options = insertion_options(state, request);
+            const auto options = cache ? cache->options(request) : insertion_options(state, request);
             if (!options.best() || options.best()->gain <= 1e-9) continue;
             const double regret = regret_of(options);
             // Tie-break: prefer higher best->gain when regret is equal.
@@ -38,6 +43,7 @@ void regret_apply(SearchState& state,
         if (!choice || !state.insert(choice->request, choice->taxi,
                                       choice->pickup, choice->delivery)) return;
         pending[choice->request] = false;
+        if (cache) cache->refresh_taxi(choice->taxi);
     }
 }
 

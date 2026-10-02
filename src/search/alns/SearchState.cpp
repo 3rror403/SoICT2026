@@ -151,6 +151,23 @@ bool SearchState::insert(std::size_t request, std::size_t taxi,
     return true;
 }
 
+bool SearchState::insert_block(std::size_t taxi, std::size_t gap,
+                               const std::array<std::size_t, 4>& nodes,
+                               double expected_gain) {
+    auto route = cache(taxi).nodes();
+    route.insert(route.begin() + gap, nodes.begin(), nodes.end());
+    
+    RouteCache changed(*instance_, taxi, route);
+    RouteCandidate candidate(*instance_, taxi, changed);
+    candidate.add_range(0, route.size());
+    const auto cost = candidate.cost_if_feasible();
+    if (!cost) return false;
+    
+    benefit_ += expected_gain;
+    rebuild_route(taxi, std::move(route));
+    return true;
+}
+
 bool SearchState::relocate_within_route(std::size_t request, std::size_t a,
                                        std::size_t b) {
     if (request >= request_count() || location(request).taxi < 0) return false;

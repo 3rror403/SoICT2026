@@ -6,6 +6,7 @@
 #include <limits>
 #include <optional>
 #include <vector>
+#include "search/alns/Profiler.hpp"
 
 namespace soict::alns {
 

@@ -1,4 +1,5 @@
 #include "search/alns/operators/LocalSearch/LocalSearch.hpp"
+#include "search/alns/Profiler.hpp"
 
 namespace soict::alns {
 bool LocalSearch::search(SearchState& state, const std::vector<std::unique_ptr<Move>>& moves) const {

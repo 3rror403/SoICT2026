@@ -52,6 +52,9 @@ public:
     bool remove(std::size_t request);
     bool insert(std::size_t request, std::size_t taxi,
                 std::size_t pickup_boundary, std::size_t delivery_boundary);
+    bool insert_block(std::size_t taxi, std::size_t gap,
+                      const std::array<std::size_t, 4>& nodes,
+                      double expected_gain);
     bool relocate_within_route(std::size_t request, std::size_t pickup_boundary,
                                std::size_t delivery_boundary);
     bool apply_clean_cut(std::size_t taxiA, std::size_t cutA,

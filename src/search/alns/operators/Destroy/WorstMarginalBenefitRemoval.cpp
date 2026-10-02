@@ -15,14 +15,7 @@ std::vector<std::size_t> WorstMarginalBenefitRemoval::apply(SearchState& state, 
     candidates.reserve(state.request_count());
     for (std::size_t r = 0; r < state.request_count(); ++r) {
         if (const auto gain = state.removal_gain(r)) {
-            double revenue = 0;
-            if (r < state.instance().passengers.size()) {
-                revenue = state.instance().passengers[r].revenue;
-            } else {
-                revenue = state.instance().parcels[r - state.instance().passengers.size()].revenue;
-            }
-            double marginal_benefit_gain = *gain - revenue;
-            candidates.emplace_back(marginal_benefit_gain, r);
+            candidates.emplace_back(*gain, r);
         }
     }
 
@@ -50,15 +43,8 @@ std::vector<std::size_t> WorstMarginalBenefitRemoval::apply(SearchState& state, 
 
         for (auto& [gain, r] : candidates) {
             if (state.location(r).taxi == taxi) {
-                auto new_gain = state.removal_gain(r);
-                if (new_gain) {
-                    double revenue = 0;
-                    if (r < state.instance().passengers.size()) {
-                        revenue = state.instance().passengers[r].revenue;
-                    } else {
-                        revenue = state.instance().parcels[r - state.instance().passengers.size()].revenue;
-                    }
-                    gain = *new_gain - revenue;
+                if (const auto new_gain = state.removal_gain(r)) {
+                    gain = *new_gain;
                 } else {
                     gain = -1e18;
                 }

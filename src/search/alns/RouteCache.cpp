@@ -24,24 +24,43 @@ double load_delta(const Instance& in, std::size_t node) {
 } // namespace
 
 Segment single_node(const Instance& in, std::size_t node) {
-    Segment s;
-    s.first = s.last = node;
-    s.duration = service(in, node);
-    const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();
-    const Window* window = nullptr;
-    if (node < k + n) window = &in.passengers[node - k].pickup;
-    else if (node >= k + 2 * n && node < k + 2 * n + m)
-        window = &in.parcels[node - k - 2 * n].pickup;
-    else if (node >= k + 2 * n + m)
-        window = &in.parcels[node - k - 2 * n - m].delivery;
-    if (window) {
-        s.ready = window->earliest + s.duration;
-        s.latest_input = window->latest;
+    thread_local std::vector<Segment> cache;
+    thread_local const Instance* cached_instance = nullptr;
+    
+    if (cached_instance != &in) {
+        cached_instance = &in;
+        cache.clear();
+        cache.resize(in.node_count());
+        for (std::size_t i = 0; i < in.node_count(); ++i) {
+            Segment s;
+            s.first = s.last = i;
+            const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();
+            
+            if (i < k) {
+                s.duration = 0;
+                s.load_change = 0;
+                s.min_load = 0;
+                s.max_load = 0;
+            } else {
+                s.duration = service(in, i);
+                const Window* window = nullptr;
+                if (i < k + n) window = &in.passengers[i - k].pickup;
+                else if (i >= k + 2 * n && i < k + 2 * n + m)
+                    window = &in.parcels[i - k - 2 * n].pickup;
+                else if (i >= k + 2 * n + m)
+                    window = &in.parcels[i - k - 2 * n - m].delivery;
+                if (window) {
+                    s.ready = window->earliest + s.duration;
+                    s.latest_input = window->latest;
+                }
+                s.load_change = load_delta(in, i);
+                s.min_load = std::min(0.0, s.load_change);
+                s.max_load = std::max(0.0, s.load_change);
+            }
+            cache[i] = s;
+        }
     }
-    s.load_change = load_delta(in, node);
-    s.min_load = std::min(0.0, s.load_change);
-    s.max_load = std::max(0.0, s.load_change);
-    return s;
+    return cache[node];
 }
 
 Segment join(const Instance& in, const Segment& a, const Segment& b) {

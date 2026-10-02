@@ -105,10 +105,12 @@ int main(int argc, char** argv) {
             if (!in) throw std::runtime_error("cannot open instance file");
             const auto instance = soict::read_instance(in);
             const auto result = soict::alns::solve(instance, config);
+            const auto eval = result.solution.evaluate(instance);
+            if (!eval.feasible) throw std::runtime_error("final solution infeasible: " + eval.error);
             std::ofstream out(solution_path);
             if (!out) throw std::runtime_error("cannot create solution file");
             soict::write_solution(out, result.solution);
-            std::cout << std::setprecision(17) << "benefit=" << result.benefit
+            std::cout << std::setprecision(17) << "benefit=" << eval.benefit
                       << " iterations=" << result.iterations
                       << " seconds=" << result.seconds
                       << " stop=" << (result.annealing_complete ? "temperature" : "time_limit")

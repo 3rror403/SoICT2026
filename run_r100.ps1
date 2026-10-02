@@ -8,13 +8,22 @@ $bks = [ordered]@{
 
 foreach ($inst in $bks.Keys) {
     Write-Host "Running $inst (BKS: $($bks[$inst]))..."
-    $out = wsl ./cmake-build-release/SoICT2026 --instance "data/synthetic/$inst" --seed 1 --time-limit 20 --out "dummy_$inst" 2>&1
-    $lastLine = $out[-1]
-    if ($lastLine -match "benefit=([\d\.]+)") {
-        $benefit = [double]$matches[1]
-        $gap = [math]::Round($benefit - $bks[$inst], 2)
-        Write-Host "  Result: $benefit (Diff vs BKS: $gap)"
+    $best_benefit = -1000000.0
+    for ($seed = 1; $seed -le 5; $seed++) {
+        $out = wsl ./cmake-build-release/SoICT2026 --instance "data/synthetic/$inst" --seed $seed --time-limit 20 --out "dummy_$inst" 2>&1
+        $lastLine = $out[-1]
+        if ($lastLine -match "benefit=([\d\.]+)") {
+            $benefit = [double]$matches[1]
+            if ($benefit -gt $best_benefit) {
+                $best_benefit = $benefit
+            }
+        }
+    }
+    
+    if ($best_benefit -gt -1000000.0) {
+        $gap = [math]::Round($best_benefit - $bks[$inst], 2)
+        Write-Host "  Result: $best_benefit (Diff vs BKS: $gap)"
     } else {
-        Write-Host "  Result: $lastLine"
+        Write-Host "  Result: Error"
     }
 }

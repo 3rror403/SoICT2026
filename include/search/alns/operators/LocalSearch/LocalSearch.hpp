@@ -1,5 +1,6 @@
 #pragma once
 #include "search/alns/operators/LocalSearch/Move.hpp"
+#include "search/alns/Profiler.hpp"
 #include <memory>
 #include <vector>
 

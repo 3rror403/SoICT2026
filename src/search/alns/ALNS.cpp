@@ -118,16 +118,12 @@ Result solve(const Instance& instance, const Config& config) {
     if (config.check) current.check();
     SearchState best = current;
 
-    // T0 and Tmin are derived from config. Both scale together so T0/Tmin ratio is fixed.
     const double T0 = config.temperature;
     const double Tmin = T0 * 1e-4;
     double temperature = T0;
-
-    double anchor_temp = T0;
-    double anchor_progress = 0.0;
-    double last_improvement_progress = 0.0;
     
     std::size_t iterations = 0;
+    std::size_t restart_count = 0;
     if (trace) {
         const double elapsed0 = std::chrono::duration<double>(Clock::now() - start).count();
         trace << "0," << elapsed0 << ",0," << temperature << ','
@@ -135,18 +131,13 @@ Result solve(const Instance& instance, const Config& config) {
     }
 
     // ── Main SA loop ─────────────────────────────────────────────────────────
-    while (true) {
-        const double progress = get_progress(iterations);
-        if (progress >= 1.0) break;
-        if (Clock::now() >= deadline) break;
-
+    while (Clock::now() < deadline) {
         const auto selection = balance.select(rng, current.served_count());
         const auto couple = couples[selection.couple];
         SearchState candidate = current;
-        const auto removed = destroys[couple.destroy]->apply(
-            candidate, selection.removal_count, rng);
-
+        const auto removed = destroys[couple.destroy]->apply(candidate, selection.removal_count, rng);
         repairs[couple.repair]->apply(candidate, removed, rng);
+        
         if (config.local_search && iterations % config.ls_interval == 0) {
             const double denominator = std::max(1.0, std::abs(best.benefit()));
             const double gap = (best.benefit() - candidate.benefit()) / denominator;
@@ -171,7 +162,7 @@ Result solve(const Instance& instance, const Config& config) {
         bool accept = delta >= 0;
         if (!accept) {
             std::uniform_real_distribution<double> uniform(0, 1);
-            accept = uniform(rng) < std::exp(delta / temperature);
+            accept = uniform(rng) < std::exp(delta / (temperature + 1e-9));
         }
         if (accept) {
             current = std::move(candidate);
@@ -179,32 +170,28 @@ Result solve(const Instance& instance, const Config& config) {
                 best = current;
                 std::cerr << "ALNS best iteration=" << iterations + 1
                           << " benefit=" << best.benefit() << '\n';
-                last_improvement_progress = progress;
             }
-        }
-        
-        if (progress - last_improvement_progress > 0.15 && progress < 0.85) {
-            temperature = T0 * 0.3;
-            current = best;
-            last_improvement_progress = progress;
-            std::cerr << "ALNS reheat at iteration=" << iterations 
-                      << " progress=" << static_cast<int>(progress * 100) << "%\n";
         }
         
         balance.update(selection, reward);
         ++iterations;
 
         temperature = std::max(Tmin, temperature * config.cooling);
+        if (temperature <= Tmin + 1e-9) {
+            temperature = T0;
+            current = best;
+            ++restart_count;
+            std::cerr << "ALNS restart " << restart_count << " at iteration=" << iterations << '\n';
+        }
 
         // Phase 0c: profiling log every 1000 iterations.
         if (iterations % 1000 == 0) {
-            const double progress = get_progress(iterations);
             const double elapsed = std::chrono::duration<double>(Clock::now() - start).count();
-            if (trace) trace << iterations << ',' << elapsed << ',' << progress << ','
+            if (trace) trace << iterations << ',' << elapsed << ',' << restart_count << ','
                              << temperature << ',' << current.benefit() << ','
                              << best.benefit() << '\n';
             std::cerr << "ALNS iteration=" << iterations
-                      << " progress=" << static_cast<int>(progress * 100) << "%"
+                      << " restart=" << restart_count
                       << " temp=" << temperature
                       << " current=" << current.benefit()
                       << " best=" << best.benefit() << '\n';

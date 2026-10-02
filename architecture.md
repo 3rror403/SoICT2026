@@ -474,3 +474,18 @@ The `SoICT2026` project solves a complex vehicle routing and scheduling problem 
                 
             return best_state
         ```
+
+## 7. Performance Profiling and Next Optimization Phases
+
+Based on the latest static profiling of the ALNS solver on a complex `r100` instance, the runtime characteristics are:
+- `PairAwareGreedy` (`SharedGapPairRepair`) takes **~65%** of total runtime.
+- `Regret` variants take **~8%** each.
+- Local Search (`Swap`, `Relocate`, `2Opt`) are heavily optimized and take **<2%** each.
+- Low-level route checking (`FastRouteCheck`) evaluates **1.4 million** candidates in just **0.04s** (30ns/call).
+
+### Optimization Strategy
+Because route checking is nearly instantaneous, the solver bottleneck lies exclusively in combinatorial explosion and heap allocations within operators.
+1. **Remove Heap Allocations in PairAware**: Replace dynamic `std::vector` usage for pattern generation with `std::array<Pattern, 6>` or static scratch buffers.
+2. **PairAware Hybrid Bank**: Skip full insertion evaluation for pairs of requests that are trivially incompatible based on time windows.
+3. **Regret Insertion Caching**: Implement `RepairInsertionCache` so that Regret doesn't re-evaluate $O(U \times K)$ insertions after a single taxi route changes. Instead, invalidate and update only the modified taxi in $O(U)$.
+4. **Precompute Node Segments**: Since a single node's `Segment` properties never change, cache them as an array `std::vector<Segment> node_segments` and return them by reference, stripping branching and math out of the hottest loops.

@@ -12,6 +12,8 @@ add_library(soict_core
     src/search/alns/Operators.cpp
     src/search/alns/ALNSSolver.cpp)
 target_compile_features(soict_core PUBLIC cxx_std_20)
+target_compile_options(soict_core PUBLIC -march=native -O3)
+set_target_properties(soict_core PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 target_include_directories(soict_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
 add_library(soict_alns
@@ -40,9 +42,13 @@ add_library(soict_alns
     src/search/alns/operators/LocalSearch/CleanCut2OptStar.cpp)
 target_link_libraries(soict_alns PUBLIC soict_core)
 target_compile_features(soict_alns PUBLIC cxx_std_20)
+target_compile_options(soict_alns PUBLIC -march=native -O3)
+set_target_properties(soict_alns PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 
 add_executable(SoICT2026 src/main.cpp)
 target_link_libraries(SoICT2026 PRIVATE soict_core soict_alns)
+target_compile_options(SoICT2026 PUBLIC -march=native -O3)
+set_target_properties(SoICT2026 PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 
 if(DEFINED ENV{CPLEX_STUDIO_DIR2211})
     set(_cplex_default_root "$ENV{CPLEX_STUDIO_DIR2211}")

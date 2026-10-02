@@ -22,6 +22,8 @@ std::vector<std::size_t> DelayRemoval::apply(SearchState& state, std::size_t cou
         newR.range(state.location(r).pickup + 1, state.location(r).dropoff);
         newR.range(state.location(r).dropoff + 1, route.nodes().size());
         
+        if (!newR.feasible()) continue;
+        
         double new_time = newR.departure().value_or(0);
         double delay = old_time - new_time;
         candidates.push_back({delay, r});
@@ -42,10 +44,35 @@ std::vector<std::size_t> DelayRemoval::apply(SearchState& state, std::size_t cou
                          candidates.end(), std::greater<>());
                          
         const auto chosen = candidates[idx].second;
-        if (state.remove(chosen)) {
-            removed.push_back(chosen);
+        const auto taxi = static_cast<std::size_t>(state.location(chosen).taxi);
+        
+        if (!state.remove(chosen)) {
+            candidates.erase(candidates.begin() + idx);
+            continue;
         }
+        
+        removed.push_back(chosen);
         candidates.erase(candidates.begin() + idx);
+        
+        for (auto& [delay, r] : candidates) {
+            if (state.location(r).taxi == taxi) {
+                const auto& route = state.cache(taxi);
+                double old_time = route.departure().empty() ? 0 : route.departure().back();
+                
+                FastRouteCheck newR(in, taxi, route);
+                newR.range(0, state.location(r).pickup);
+                newR.range(state.location(r).pickup + 1, state.location(r).dropoff);
+                newR.range(state.location(r).dropoff + 1, route.nodes().size());
+                
+                if (!newR.feasible()) {
+                    delay = -1e18;
+                } else {
+                    double new_time = newR.departure().value_or(0);
+                    delay = old_time - new_time;
+                }
+            }
+        }
+        std::erase_if(candidates, [](const auto& c) { return c.first <= -1e17; });
     }
     return removed;
 }

@@ -82,8 +82,14 @@ void SwapRequest::evaluate_pair(const SearchState& state,
     const auto t2 = static_cast<std::size_t>(loc2.taxi);
     if (t1 == t2) return;
 
-    const double upper_bound = s1 + s2;
-    if (upper_bound + kTolerance < best_gain) return;
+    // We cannot use s1 + s2 < best_gain because lb_delta can be negative!
+    // Fast cache check
+    if (cache_[t2][r1].count == 0 || cache_[t1][r2].count == 0) return;
+
+    double lb_delta1 = cache_[t2][r1].entries[0].delta;
+    double lb_delta2 = cache_[t1][r2].entries[0].delta;
+    
+    if (s1 + s2 - lb_delta1 - lb_delta2 + kTolerance < best_gain) return;
 
     // Fast cache check
     if (cache_[t2][r1].count == 0 || cache_[t1][r2].count == 0) return;
@@ -94,13 +100,13 @@ void SwapRequest::evaluate_pair(const SearchState& state,
     const auto p_node1 = state.pickup_node(r1);
     const auto d_node1 = r1 < state.passenger_count() ? in.passenger_dropoff(r1) : in.parcel_dropoff(r1 - state.passenger_count());
 
-    double exact_delta1 = std::numeric_limits<double>::infinity();
-    std::size_t exact_p1 = 0, exact_d1 = 0;
+    struct Cand { std::size_t p, d; double delta; };
+    thread_local std::vector<Cand> cands1, cands2;
+    cands1.clear(); cands2.clear();
 
     if (r1 < state.passenger_count()) {
         for (std::size_t a = 0; a <= len2; ++a) {
-            const double d = adjacent_insertion_cost(in, t2, view2, a, p_node1, d_node1);
-            if (d < exact_delta1) { exact_delta1 = d; exact_p1 = a; exact_d1 = a; }
+            cands1.push_back({a, a, adjacent_insertion_cost(in, t2, view2, a, p_node1, d_node1)});
         }
     } else {
         for (std::size_t a = 0; a <= len2; ++a) {
@@ -108,12 +114,13 @@ void SwapRequest::evaluate_pair(const SearchState& state,
             for (std::size_t b = a; b <= len2; ++b) {
                 const double d = b == a ? adjacent_insertion_cost(in, t2, view2, a, p_node1, d_node1) :
                                  dp + single_insertion_cost(in, t2, view2, b, d_node1);
-                if (d < exact_delta1) { exact_delta1 = d; exact_p1 = a; exact_d1 = b; }
+                cands1.push_back({a, b, d});
             }
         }
     }
-
-    if (upper_bound - exact_delta1 + kTolerance < best_gain) return;
+    
+    std::sort(cands1.begin(), cands1.end(), [](const auto& a, const auto& b) { return a.delta < b.delta; });
+    if (cands1.empty() || s1 + s2 - cands1[0].delta - lb_delta2 + kTolerance < best_gain) return;
 
     // Exact insertion cost for r2 into t1 (with r1 removed)
     const auto& route1 = state.cache(t1);
@@ -122,13 +129,9 @@ void SwapRequest::evaluate_pair(const SearchState& state,
     const auto p_node2 = state.pickup_node(r2);
     const auto d_node2 = r2 < state.passenger_count() ? in.passenger_dropoff(r2) : in.parcel_dropoff(r2 - state.passenger_count());
 
-    double exact_delta2 = std::numeric_limits<double>::infinity();
-    std::size_t exact_p2 = 0, exact_d2 = 0;
-
     if (r2 < state.passenger_count()) {
         for (std::size_t a = 0; a <= len1; ++a) {
-            const double d = adjacent_insertion_cost(in, t1, view1, a, p_node2, d_node2);
-            if (d < exact_delta2) { exact_delta2 = d; exact_p2 = a; exact_d2 = a; }
+            cands2.push_back({a, a, adjacent_insertion_cost(in, t1, view1, a, p_node2, d_node2)});
         }
     } else {
         for (std::size_t a = 0; a <= len1; ++a) {
@@ -136,53 +139,64 @@ void SwapRequest::evaluate_pair(const SearchState& state,
             for (std::size_t b = a; b <= len1; ++b) {
                 const double d = b == a ? adjacent_insertion_cost(in, t1, view1, a, p_node2, d_node2) :
                                  dp + single_insertion_cost(in, t1, view1, b, d_node2);
-                if (d < exact_delta2) { exact_delta2 = d; exact_p2 = a; exact_d2 = b; }
+                cands2.push_back({a, b, d});
             }
         }
     }
+    
+    std::sort(cands2.begin(), cands2.end(), [](const auto& a, const auto& b) { return a.delta < b.delta; });
+    if (cands2.empty() || s1 + s2 - cands1[0].delta - cands2[0].delta + kTolerance < best_gain) return;
 
-    const double exact_gain = upper_bound - exact_delta1 - exact_delta2;
-    if (exact_gain <= kMinGain) return;
-
-    // FastRouteCheck both directions
+    // FastRouteCheck both directions (best-first)
     auto map_pos1 = [&](std::size_t p) { return p < loc1.pickup ? p : p + 2; };
     auto map_pos2 = [&](std::size_t p) { return p < loc2.pickup ? p : p + 2; };
 
-    RouteCandidate cand1(in, t1, route1);
-    auto add_range1 = [&](std::size_t first, std::size_t end) {
-        const auto left_end = std::min(end, loc1.pickup);
-        if (first < left_end) cand1.add_range(first, left_end);
-        const auto right_start = std::max(first, loc1.pickup);
-        if (right_start < end) cand1.add_range(right_start + 2, end + 2);
-    };
-    add_range1(0, exact_p2); cand1.add_node(p_node2);
-    if (exact_p2 == exact_d2) cand1.add_node(d_node2);
-    add_range1(exact_p2, exact_d2);
-    if (exact_p2 != exact_d2) cand1.add_node(d_node2);
-    add_range1(exact_d2, len1);
+    for (const auto& c1 : cands1) {
+        for (const auto& c2 : cands2) {
+            const double exact_gain = s1 + s2 - c1.delta - c2.delta;
+            if (exact_gain <= best_gain) break; // since c2 is sorted, subsequent c2 won't beat best_gain
 
-    if (exact_p2 && !route1.boundary_allowed(in, map_pos1(exact_p2 - 1) + 1)) return;
-    if (exact_d2 != exact_p2 && !route1.boundary_allowed(in, map_pos1(exact_d2 - 1) + 1)) return;
-    if (!cand1.cost_if_feasible()) return;
+            std::size_t exact_p1 = c1.p, exact_d1 = c1.d;
+            std::size_t exact_p2 = c2.p, exact_d2 = c2.d;
 
-    RouteCandidate cand2(in, t2, state.cache(t2));
-    auto add_range2 = [&](std::size_t first, std::size_t end) {
-        const auto left_end = std::min(end, loc2.pickup);
-        if (first < left_end) cand2.add_range(first, left_end);
-        const auto right_start = std::max(first, loc2.pickup);
-        if (right_start < end) cand2.add_range(right_start + 2, end + 2);
-    };
-    add_range2(0, exact_p1); cand2.add_node(p_node1);
-    if (exact_p1 == exact_d1) cand2.add_node(d_node1);
-    add_range2(exact_p1, exact_d1);
-    if (exact_p1 != exact_d1) cand2.add_node(d_node1);
-    add_range2(exact_d1, len2);
+            RouteCandidate cand1(in, t1, route1);
+            auto add_range1 = [&](std::size_t first, std::size_t end) {
+                const auto left_end = std::min(end, loc1.pickup);
+                if (first < left_end) cand1.add_range(first, left_end);
+                const auto right_start = std::max(first, loc1.pickup);
+                if (right_start < end) cand1.add_range(right_start + 2, end + 2);
+            };
+            add_range1(0, exact_p2); cand1.add_node(p_node2);
+            if (exact_p2 == exact_d2) cand1.add_node(d_node2);
+            add_range1(exact_p2, exact_d2);
+            if (exact_p2 != exact_d2) cand1.add_node(d_node2);
+            add_range1(exact_d2, len1);
 
-    if (exact_p1 && !state.cache(t2).boundary_allowed(in, map_pos2(exact_p1 - 1) + 1)) return;
-    if (exact_d1 != exact_p1 && !state.cache(t2).boundary_allowed(in, map_pos2(exact_d1 - 1) + 1)) return;
-    if (!cand2.cost_if_feasible()) return;
+            if (exact_p2 && !route1.boundary_allowed(in, map_pos1(exact_p2 - 1) + 1)) continue;
+            if (exact_d2 != exact_p2 && !route1.boundary_allowed(in, map_pos1(exact_d2 - 1) + 1)) continue;
+            if (!cand1.cost_if_feasible()) continue;
 
-    pool.add({r1, r2, t1, t2, exact_p1, exact_d1, exact_p2, exact_d2, exact_gain});
+            RouteCandidate cand2(in, t2, state.cache(t2));
+            auto add_range2 = [&](std::size_t first, std::size_t end) {
+                const auto left_end = std::min(end, loc2.pickup);
+                if (first < left_end) cand2.add_range(first, left_end);
+                const auto right_start = std::max(first, loc2.pickup);
+                if (right_start < end) cand2.add_range(right_start + 2, end + 2);
+            };
+            add_range2(0, exact_p1); cand2.add_node(p_node1);
+            if (exact_p1 == exact_d1) cand2.add_node(d_node1);
+            add_range2(exact_p1, exact_d1);
+            if (exact_p1 != exact_d1) cand2.add_node(d_node1);
+            add_range2(exact_d1, len2);
+
+            if (exact_p1 && !state.cache(t2).boundary_allowed(in, map_pos2(exact_p1 - 1) + 1)) continue;
+            if (exact_d1 != exact_p1 && !state.cache(t2).boundary_allowed(in, map_pos2(exact_d1 - 1) + 1)) continue;
+            if (!cand2.cost_if_feasible()) continue;
+
+            pool.add({r1, r2, t1, t2, exact_p1, exact_d1, exact_p2, exact_d2, exact_gain});
+            return; // We found the best feasible insertion for this pair!
+        }
+    }
 }
 
 bool SwapRequest::improve(SearchState& state) const {
@@ -199,7 +213,7 @@ bool SwapRequest::improve(SearchState& state) const {
     for (std::size_t r = 0; r < state.request_count(); ++r) {
         if (state.location(r).taxi < 0) continue;
         const auto g = state.removal_gain(r);
-        if (g) served.emplace_back(*g, r);
+        if (g) served.emplace_back(*g + state.revenue(r), r);
     }
     std::sort(served.begin(), served.end(),
               [](const auto& a, const auto& b) { return a.first > b.first; });
@@ -247,7 +261,7 @@ bool SwapRequest::improve(SearchState& state) const {
         for (std::size_t r = 0; r < state.request_count(); ++r) {
             if (state.location(r).taxi < 0) continue;
             const auto g = state.removal_gain(r);
-            if (g) served.emplace_back(*g, r);
+            if (g) served.emplace_back(*g + state.revenue(r), r);
         }
         std::sort(served.begin(), served.end(),
                   [](const auto& a, const auto& b) { return a.first > b.first; });
