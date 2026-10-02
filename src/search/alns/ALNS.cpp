@@ -44,10 +44,10 @@ Result solve(const Instance& instance, const Config& config) {
     Balance balance(couples.size(), instance.passengers.size() + instance.parcels.size(),
                     config.thompson);
     LocalSearch local_search;
-    local_search.add_move(std::make_unique<RemoveRequest>());
-    local_search.add_move(std::make_unique<AddRequest>());
-    local_search.add_move(std::make_unique<PassengerRelocate>());
-    local_search.add_move(std::make_unique<ParcelRelocate>());
+    local_search.add_tier1(std::make_unique<RemoveRequest>());
+    local_search.add_tier1(std::make_unique<AddRequest>());
+    local_search.add_tier1(std::make_unique<PassengerRelocate>());
+    local_search.add_tier1(std::make_unique<ParcelRelocate>());
 
     std::ofstream trace, operator_log;
     if (!config.log_directory.empty()) {
@@ -96,7 +96,7 @@ Result solve(const Instance& instance, const Config& config) {
             candidate, selection.removal_count, rng);
         repairs[couple.repair]->apply(candidate, removed, rng);
         if (config.local_search && iterations % config.ls_interval == 0)
-            local_search.search(candidate);
+            local_search.search_tier1(candidate);
         if (config.check) candidate.check();
         const double delta = candidate.benefit() - current.benefit();
         const double reward = std::max(0.0, delta / std::max(1.0, std::abs(current.benefit())));

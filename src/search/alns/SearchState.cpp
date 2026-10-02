@@ -267,8 +267,15 @@ bool SearchState::apply_clean_cut(std::size_t taxiA, std::size_t cutA,
     benefit_ += delta_benefit;
     
     auto assign_route = [&](std::size_t taxi, std::vector<std::size_t> route) {
-        if (route.empty()) active_routes_.erase(taxi);
-        else active_routes_.insert_or_assign(taxi, RouteCache(in, taxi, route));
+        if (route.empty()) {
+            std::erase(active_taxis_, taxi);
+            routes_by_taxi_[taxi] = RouteCache();
+        } else {
+            if (!is_active(taxi)) {
+                active_taxis_.push_back(taxi);
+            }
+            routes_by_taxi_[taxi] = RouteCache(*instance_, taxi, route);
+        }
         for (std::size_t p = 0; p < route.size(); ++p) {
             const auto node = route[p];
             const bool passenger = node < k_count + 2 * n;

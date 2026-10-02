@@ -23,7 +23,8 @@ bool CleanCut2OptStar::improve(SearchState& state) const {
     // Outer loop to keep applying moves as long as we find improvements
     while (true) {
         std::vector<RouteCuts> active_cuts;
-        for (const auto& [taxi, route] : state.active_routes()) {
+        for (std::size_t taxi : state.active_taxis()) {
+            const auto& route = state.cache(taxi);
             const auto length = route.nodes().size();
             RouteCuts rc;
             rc.taxi = taxi;
