@@ -1,0 +1,49 @@
+{
+  "source": "User-provided first CMS submission outputs, mapped in increasing request-count order",
+  "checked_utc": "2026-10-02T11:00:57.371531+00:00",
+  "checker_sha256": "a8f0c94fd913b4c19344e23916e5281c7021ddb5c297d6c2c9907af14aac78b4",
+  "seed": "Not supplied",
+  "is_optimal": false,
+  "records": [
+    {
+      "instance": "r4_p2_m2_s1.txt",
+      "objective": 217.0,
+      "updated": true,
+      "instance_sha256": "0aafea6e504ad61748b19f0861346e274c069d78353dfa09ef8019df48377453",
+      "solution_sha256": "307439dd144b4251c5cd74036548a43eb7ede6c366afdd1a7364f12a2a6c2b8c",
+      "checker_output": "benefit=217"
+    },
+    {
+      "instance": "r10_p5_m5_s2.txt",
+      "objective": 208.0,
+      "updated": true,
+      "instance_sha256": "8f361e840b400122073d803ea2bcc4014846acc6e2be97988137ad33cdb9780b",
+      "solution_sha256": "278ced11b4a5d1dee3a6d53e4b4ff9ba25e87ce624626083490f1ba48ba5c43e",
+      "checker_output": "benefit=208"
+    },
+    {
+      "instance": "r30_p15_m15_s3.txt",
+      "objective": 1144.0,
+      "updated": true,
+      "instance_sha256": "43a51df111f47623bf90e2615129c009eb275ccae13cd8c2d39e3fd08a344e32",
+      "solution_sha256": "a3ba9c900210bbad721294732eea21b280e238354212054b3adaf659537079a9",
+      "checker_output": "benefit=1144"
+    },
+    {
+      "instance": "r100_p50_m50_s4.txt",
+      "objective": 4070.0,
+      "updated": true,
+      "instance_sha256": "8536961497a725a8840a556a639ea43b2f906709144cad125be34207fe7731fb",
+      "solution_sha256": "2eb7958c0cc6eae1d363ce13b571cee28e393e82c9b56aee9cb41f0c69d0b19e",
+      "checker_output": "benefit=4070"
+    },
+    {
+      "instance": "r240_p120_m120_s5.txt",
+      "objective": 11856.0,
+      "updated": true,
+      "instance_sha256": "93baf239e2d2ccb44cfb2b2a14bb15c42804acfc6f8f186cc9f05896e62b86e4",
+      "solution_sha256": "363b9027f04358af4c684f62975e6f9a2adb949e3e1ce3b2f1742df92fbba97e",
+      "checker_output": "benefit=11856"
+    }
+  ]
+}

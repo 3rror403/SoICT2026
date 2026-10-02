@@ -35,11 +35,16 @@ struct Instance {
     std::vector<Taxi> taxis;
     std::vector<Passenger> passengers;
     std::vector<Parcel> parcels;
+    // Internal node -> official one-based vertex. Empty means node + 1.
+    std::vector<std::size_t> vertex_ids;
     std::vector<double> travel_time;
     std::vector<double> travel_cost;
 
     [[nodiscard]] std::size_t node_count() const {
         return taxis.size() + 2 * (passengers.size() + parcels.size());
+    }
+    [[nodiscard]] std::size_t vertex_id(std::size_t node) const {
+        return vertex_ids.empty() ? node + 1 : vertex_ids.at(node);
     }
     [[nodiscard]] std::size_t passenger_pickup(std::size_t i) const {
         return taxis.size() + i;

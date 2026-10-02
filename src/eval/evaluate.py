@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+import hashlib
 import datetime as dt
 import json
 import math
@@ -20,7 +21,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ROOT = Path(__file__).resolve().parents[2]
 RUN_FIELDS = ["instance", "instance_seed", "solver_seed", "status", "objective", "wall_seconds", "iterations", "stop_reason", "log"]
-BEST_FIELDS = ["instance", "objective", "is_optimal", "solution", "solver", "version", "seed"]
+BEST_FIELDS = ["instance", "objective", "is_optimal", "solution", "solver", "version", "seed", "instance_sha256"]
+
+
+def instance_digest(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def write_csv(path, fields, rows):
@@ -49,6 +58,8 @@ def read_cases(manifest):
         path = manifest.parent / name
         if not path.is_file():
             raise FileNotFoundError(path)
+        if row.get("sha256") and row["sha256"] != instance_digest(path):
+            raise ValueError(f"instance hash differs from manifest: {name}")
         all_instances[name] = path.resolve()
         if requests <= 100:
             cases.append((row, path.resolve()))
@@ -148,6 +159,8 @@ def read_best_index(path, checker, instances):
         name = row["instance"]
         if name in best or name not in instances or Path(row["solution"]).name != row["solution"]:
             raise ValueError(f"invalid best-known entry: {name}")
+        if row.get("instance_sha256") != instance_digest(instances[name]):
+            raise ValueError(f"best-known belongs to a different dataset: {name}")
         solution = path.parent / row["solution"]
         checked = subprocess.run(command_for(checker, ["check-solution", str(instances[name]), str(solution)]),
                                  capture_output=True, text=True, timeout=30)
@@ -235,6 +248,8 @@ def main():
                 "manifest": str(manifest), "jobs": args.jobs,
                 "solver_seeds": list(range(1, 11)), "max_requests": 100,
                 "selected_instances": [row["file"] for row, _ in cases],
+                "instance_sha256": {name: instance_digest(path) for name, path in instances.items()},
+                "manifest_sha256": instance_digest(manifest),
                 "hard_timeout_seconds": args.time_limit,
                 "solver_cooling": args.solver_cooling,
                 "started_utc": dt.datetime.now(dt.timezone.utc).isoformat(), **source_state}
@@ -291,7 +306,8 @@ def main():
         temporary.replace(destination)
         best[name] = {"instance": name, "objective": f"{value:.17g}", "is_optimal": "0",
                       "solution": destination.name, "solver": args.solver_name,
-                      "version": run_dir.name, "seed": run["solver_seed"]}
+                      "version": run_dir.name, "seed": run["solver_seed"],
+                      "instance_sha256": instance_digest(instances[name])}
         write_csv(index, BEST_FIELDS, [best[key] for key in sorted(best)])
     if not index.exists():
         write_csv(index, BEST_FIELDS, [])

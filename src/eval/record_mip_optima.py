@@ -7,7 +7,7 @@ import re
 import subprocess
 import tempfile
 
-from evaluate import BEST_FIELDS, ROOT, command_for, read_best_index, read_cases, write_csv
+from evaluate import BEST_FIELDS, ROOT, command_for, instance_digest, read_best_index, read_cases, write_csv
 
 
 def main():
@@ -51,7 +51,8 @@ def main():
             temporary_path.replace(destination)
             best[row["file"]] = {"instance": row["file"], "objective": f"{objective:.17g}",
                                  "is_optimal": "1", "solution": destination.name,
-                                 "solver": "mip", "version": "cplex-exact", "seed": ""}
+                                 "solver": "mip", "version": "cplex-exact", "seed": "",
+                                 "instance_sha256": instance_digest(instance)}
             write_csv(index, BEST_FIELDS, [best[key] for key in sorted(best)])
             print(f"{row['file']}: optimal {objective:.10f}")
 

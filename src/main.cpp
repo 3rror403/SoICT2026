@@ -44,10 +44,11 @@ double alns_positive_arg(const char* value) {
 }
 void usage() {
     std::cerr << "Usage:\n"
-              << "  SoICT2026 generate --passengers N --parcels M --taxis K --seed S --out FILE\n"
+              << "  SoICT2026 generate --passengers N --parcels M --taxis K --seed S [--profile empirical|directed-noise] --out FILE\n"
               << "  SoICT2026 inspect FILE\n";
     std::cerr << "  SoICT2026 check-solution INSTANCE SOLUTION\n";
     std::cerr << "  SoICT2026 solve-alns --instance FILE --seed S --time-limit SEC --out SOLUTION\n"
+              << "  SoICT2026 solve-stdio [--seed S] [--time-limit SEC] < INSTANCE > SOLUTION\n"
               << "  SoICT2026 --instance FILE --seed S --time-limit SEC --out SOLUTION\n"
               << "    Optional: --log DIR --temp T --cooling RATE --check --disable-ls --ls-interval N --balance-thompson\n";
 #ifdef SOICT_WITH_CPLEX
@@ -63,10 +64,12 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc >= 2 && (std::string(argv[1]) == "solve-alns" ||
+                          std::string(argv[1]) == "solve-stdio" ||
                           std::string(argv[1]) == "--instance")) {
-            const int start = std::string(argv[1]) == "solve-alns" ? 2 : 1;
+            const bool stdio = std::string(argv[1]) == "solve-stdio";
+            const int start = std::string(argv[1]) == "--instance" ? 1 : 2;
             soict::alns::Config config;
-            std::string instance_path, solution_path;
+            std::string instance_path = stdio ? "-" : "", solution_path = stdio ? "-" : "";
             for (int i = start; i < argc; ++i) {
                 const std::string key(argv[i]);
                 if (key == "--check") { config.check = true; continue; }
@@ -96,14 +99,20 @@ int main(int argc, char** argv) {
             }
             if (instance_path.empty() || solution_path.empty())
                 throw std::invalid_argument("solve-alns requires --instance and --out");
-            std::ifstream in(instance_path);
-            if (!in) throw std::runtime_error("cannot open instance file");
-            const auto instance = soict::read_instance(in);
+            std::ifstream in;
+            if (instance_path != "-") {
+                in.open(instance_path);
+                if (!in) throw std::runtime_error("cannot open instance file");
+            }
+            const auto instance = soict::read_instance(instance_path == "-" ? std::cin : in);
             const auto result = soict::alns::solve(instance, config);
-            std::ofstream out(solution_path);
-            if (!out) throw std::runtime_error("cannot create solution file");
-            soict::write_solution(out, result.solution);
-            std::cout << std::setprecision(17) << "benefit=" << result.benefit
+            std::ofstream out;
+            if (solution_path != "-") {
+                out.open(solution_path);
+                if (!out) throw std::runtime_error("cannot create solution file");
+            }
+            soict::write_solution(solution_path == "-" ? std::cout : out, result.solution, instance);
+            (solution_path == "-" ? std::cerr : std::cout) << std::setprecision(17) << "benefit=" << result.benefit
                       << " iterations=" << result.iterations
                       << " seconds=" << result.seconds
                       << " stop=" << (result.annealing_complete ? "temperature" : "time_limit")
@@ -128,7 +137,7 @@ int main(int argc, char** argv) {
             if (result.has_solution && !solution_path.empty()) {
                 std::ofstream out(solution_path);
                 if (!out) throw std::runtime_error("cannot create solution file");
-                soict::write_solution(out, result.solution);
+                soict::write_solution(out, result.solution, instance);
             }
             std::cout << std::setprecision(17);
             std::cout << "status=" << (result.optimal ? "optimal" :
@@ -152,7 +161,7 @@ int main(int argc, char** argv) {
             std::ifstream input(argv[2]), output(argv[3]);
             if (!input || !output) throw std::runtime_error("cannot open instance or solution file");
             const auto instance = soict::read_instance(input);
-            const auto solution = soict::read_solution(output);
+            const auto solution = soict::read_solution(output, instance);
             std::cout << std::setprecision(17)
                       << "benefit=" << soict::validate_solution(instance, solution) << '\n';
             return 0;
@@ -183,6 +192,12 @@ int main(int argc, char** argv) {
                 else if (key == "--taxis") options.taxis = count_arg(argv[i + 1]);
                 else if (key == "--seed") options.seed = count_arg(argv[i + 1]);
                 else if (key == "--out") output = argv[i + 1];
+                else if (key == "--profile") {
+                    const std::string profile(argv[i + 1]);
+                    if (profile != "empirical" && profile != "directed-noise")
+                        throw std::invalid_argument("unknown generation profile: " + profile);
+                    options.directed_noise = profile == "directed-noise";
+                }
                 else throw std::invalid_argument("unknown option: " + key);
             }
             if (output.empty()) throw std::invalid_argument("--out is required");

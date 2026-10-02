@@ -17,9 +17,16 @@ void valid_window(Window w) {
 
 void Instance::validate() const {
     if (taxis.empty()) throw std::invalid_argument("instance needs at least one taxi");
-    if (passengers.empty() && parcels.empty())
-        throw std::invalid_argument("instance needs at least one request");
     const auto v = node_count();
+    if (!vertex_ids.empty()) {
+        if (vertex_ids.size() != v) throw std::invalid_argument("invalid vertex mapping size");
+        std::vector<bool> seen(v, false);
+        for (const auto id : vertex_ids) {
+            if (id == 0 || id > v || seen[id - 1])
+                throw std::invalid_argument("vertex IDs must be a permutation of 1..V");
+            seen[id - 1] = true;
+        }
+    }
     if (v > std::numeric_limits<std::size_t>::max() / v ||
         travel_time.size() != v * v || travel_cost.size() != v * v)
         throw std::invalid_argument("matrix dimensions do not match node count");
