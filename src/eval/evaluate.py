@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ROOT = Path(__file__).resolve().parents[2]
 RUN_FIELDS = ["instance", "instance_seed", "solver_seed", "status", "objective", "wall_seconds", "iterations", "stop_reason", "log"]
-BEST_FIELDS = ["instance", "objective", "is_optimal", "solution", "solver", "version", "seed", "instance_sha256"]
+BEST_FIELDS = ["r", "instance", "objective", "is_optimal", "solution", "solver", "version", "seed", "instance_sha256"]
 
 
 def instance_digest(path):
@@ -85,21 +85,23 @@ def kill_process(process):
 
 
 def run_one(case, seed, solver, checker, run_dir, limit, solver_cooling=None,
-            solver_temp=None, clean_cut_2opt_star=False):
+            solver_temp=None, clean_cut_2opt_star=None):
     row, instance = case
     name = row["file"]
     stem = f"{instance.stem}_seed{seed}"
     solution = run_dir / "work" / f"{stem}.sol"
     log = run_dir / "logs" / f"{stem}.log"
-    internal_limit = min(59.0, max(0.01, limit - 1.0))
+    internal_limit = min(299.0, max(0.01, limit - 1.0))
     args = ["--instance", str(instance), "--seed", str(seed),
             "--time-limit", str(internal_limit), "--out", str(solution)]
     if solver_cooling is not None:
         args += ["--cooling", str(solver_cooling)]
     if solver_temp is not None:
         args += ["--temp", str(solver_temp)]
-    if clean_cut_2opt_star:
+    if clean_cut_2opt_star is True:
         args += ["--clean-cut-2opt-star"]
+    elif clean_cut_2opt_star is False:
+        args += ["--disable-clean-cut-2opt-star"]
     started = time.monotonic()
     elapsed = None
     status = "process_error"
@@ -161,6 +163,13 @@ def read_best_index(path, checker, instances):
     best = {}
     for row in rows:
         name = row["instance"]
+        try:
+            request_count = int(row["r"])
+            filename_request_count = int(name.split("_", 1)[0][1:])
+        except (KeyError, ValueError, IndexError):
+            raise ValueError(f"invalid request count in best-known entry: {name}") from None
+        if request_count != filename_request_count:
+            raise ValueError(f"best-known request count disagrees with instance name: {name}")
         if name in best or name not in instances or Path(row["solution"]).name != row["solution"]:
             raise ValueError(f"invalid best-known entry: {name}")
         if row.get("instance_sha256") != instance_digest(instances[name]):
@@ -220,15 +229,19 @@ def main():
                         help="pass a geometric cooling factor to the ALNS solver")
     parser.add_argument("--solver-temp", type=float,
                         help="pass an initial temperature to the ALNS solver")
-    parser.add_argument("--solver-clean-cut-2opt-star", action="store_true",
-                        help="enable the experimental clean-cut suffix exchange")
+    clean_cut = parser.add_mutually_exclusive_group()
+    clean_cut.add_argument("--solver-clean-cut-2opt-star", action="store_true",
+                           default=None, help="explicitly enable clean-cut suffix exchange")
+    clean_cut.add_argument("--solver-disable-clean-cut-2opt-star", action="store_false",
+                           dest="solver_clean_cut_2opt_star",
+                           help="disable clean-cut suffix exchange (enabled by default in ALNS)")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.solver_name):
         parser.error("solver name may contain only letters, digits, underscores, and hyphens")
     if args.jobs < 1 or args.jobs > 64:
         parser.error("jobs must be between 1 and 64")
-    if not math.isfinite(args.time_limit) or not 0 < args.time_limit <= 60:
-        parser.error("time limit must be positive and at most 60 seconds")
+    if not math.isfinite(args.time_limit) or not 0 < args.time_limit <= 300:
+        parser.error("time limit must be positive and at most 300 seconds")
     if args.solver_cooling is not None and (not math.isfinite(args.solver_cooling) or
                                             not 0 < args.solver_cooling < 1):
         parser.error("solver cooling must be between 0 and 1")
@@ -302,6 +315,15 @@ def main():
                         "timeout_runs": sum(item["status"] == "timeout" for item in subset),
                         "total_runs": len(subset)})
     write_csv(run_dir / "summary.csv", list(summary[0]), summary)
+    score_complete = all(row["feasible_runs"] == row["total_runs"] for row in summary)
+    expected_score = math.fsum(row["mean_obj"] for row in summary) if score_complete else None
+    aggregate = {"expected_score": expected_score if expected_score is not None else "",
+                 "score_complete": int(score_complete), "instances": len(summary),
+                 "feasible_runs": sum(row["feasible_runs"] for row in summary),
+                 "total_runs": len(run_rows)}
+    write_csv(run_dir / "aggregate.csv", list(aggregate), [aggregate])
+    metadata["expected_score"] = expected_score
+    metadata["score_complete"] = score_complete
 
     for run, solution in completed:
         if solution is None or float(run["objective"]) < 0:
@@ -317,17 +339,22 @@ def main():
         temporary = destination.with_name(destination.name + ".tmp")
         temporary.write_bytes(solution.read_bytes())
         temporary.replace(destination)
-        best[name] = {"instance": name, "objective": f"{value:.17g}", "is_optimal": "0",
+        best[name] = {"r": int(name.split("_", 1)[0][1:]), "instance": name,
+                      "objective": f"{value:.17g}", "is_optimal": "0",
                       "solution": destination.name, "solver": args.solver_name,
                       "version": run_dir.name, "seed": run["solver_seed"],
                       "instance_sha256": instance_digest(instances[name])}
-        write_csv(index, BEST_FIELDS, [best[key] for key in sorted(best)])
+        write_csv(index, BEST_FIELDS, sorted(best.values(), key=lambda item: (int(item["r"]), item["instance"])))
     if not index.exists():
         write_csv(index, BEST_FIELDS, [])
     shutil.rmtree(run_dir / "work")
     metadata["finished_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     print(f"Completed {len(run_rows)} runs; {sum(row['status'] == 'feasible' for row in run_rows)} feasible", flush=True)
+    if expected_score is not None:
+        print(f"Expected score (sum of instance mean objectives): {expected_score:.6f}", flush=True)
+    else:
+        print("Expected score unavailable: not all runs produced feasible solutions", flush=True)
 
 
 if __name__ == "__main__":

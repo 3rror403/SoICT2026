@@ -49,11 +49,12 @@ def main():
             temporary_path = destination.with_name(destination.name + ".tmp")
             temporary_path.write_bytes(output.read_bytes())
             temporary_path.replace(destination)
-            best[row["file"]] = {"instance": row["file"], "objective": f"{objective:.17g}",
+            best[row["file"]] = {"r": int(row["requests"]), "instance": row["file"],
+                                 "objective": f"{objective:.17g}",
                                  "is_optimal": "1", "solution": destination.name,
                                  "solver": "mip", "version": "cplex-exact", "seed": "",
                                  "instance_sha256": instance_digest(instance)}
-            write_csv(index, BEST_FIELDS, [best[key] for key in sorted(best)])
+            write_csv(index, BEST_FIELDS, sorted(best.values(), key=lambda item: (int(item["r"]), item["instance"])))
             print(f"{row['file']}: optimal {objective:.10f}")
 
 

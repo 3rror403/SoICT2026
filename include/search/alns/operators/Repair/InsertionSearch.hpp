@@ -44,6 +44,11 @@ std::shared_ptr<const EmptyTaxiIndex> build_empty_taxi_index(
 InsertionOptions insertion_options(const SearchState& state, std::size_t request);
 std::optional<InsertionChoice> best_insertion(const SearchState& state,
                                               std::size_t request);
+// The supplied route may be a temporary route with another request removed.
+// A non-positive insertion can still participate in an improving replacement.
+std::optional<InsertionChoice> best_insertion_on_route(const SearchState& state,
+    std::size_t request, std::size_t taxi, const RouteCache& route,
+    double minimum_gain = -std::numeric_limits<double>::infinity());
 
 // Reuse an unserved request's route choice while that route is unchanged.
 // A scan made above a gain threshold is reused only when the current best

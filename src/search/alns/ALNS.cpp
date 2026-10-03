@@ -10,6 +10,7 @@
 #include "search/alns/operators/LocalSearch/AddRequest.hpp"
 #include "search/alns/operators/LocalSearch/RemoveRequest.hpp"
 #include "search/alns/operators/LocalSearch/CleanCut2OptStar.hpp"
+#include "search/alns/operators/LocalSearch/ReplaceRequest.hpp"
 #include "search/alns/operators/Repair/GreedyInsertion.hpp"
 #include "search/alns/operators/Repair/InsertionSearch.hpp"
 
@@ -57,6 +58,7 @@ Result solve(const Instance& instance, const Config& config) {
         clean_cut = move.get();
         local_search.add_move(std::move(move));
     }
+    local_search.add_move(std::make_unique<ReplaceRequest>());
 
     std::ofstream trace, operator_log;
     if (!config.log_directory.empty()) {

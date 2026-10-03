@@ -56,6 +56,10 @@ public:
                 std::size_t pickup_boundary, std::size_t delivery_boundary);
     bool relocate_within_route(std::size_t request, std::size_t pickup_boundary,
                                std::size_t delivery_boundary);
+    // Positions refer to the route after removing outgoing's two endpoints.
+    // Only the completed replacement must be feasible and improve benefit.
+    bool replace_request(std::size_t outgoing, std::size_t incoming,
+                         std::size_t pickup_boundary, std::size_t delivery_boundary);
     // Reject invalid/non-improving exchanges without modifying either route.
     bool exchange_route_suffixes(std::size_t taxi_a, std::size_t cut_a,
                                  std::size_t taxi_b, std::size_t cut_b);

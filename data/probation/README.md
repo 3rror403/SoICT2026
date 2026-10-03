@@ -19,7 +19,7 @@ The eight supplied cases use `rR_pN_mM_sI.txt`: `R=N+M`, and `I` is the case ind
 
 ## Best-known solutions
 
-[best-known/best-known.csv](best-known/best-known.csv) indexes the supplied routes. Matching solution files use the normalized instance stems. Additional routes and updated user routes have unknown solver seeds and no optimality claim. Their objectives are taken from the supplied files; the evaluator independently checks every indexed route before running.
+[best-known/best-known.csv](best-known/best-known.csv) indexes the supplied routes. Its first column, `r`, is the total request count; rows are sorted by this value. Matching solution files use the normalized instance stems. Additional routes and updated user routes have unknown solver seeds and no optimality claim. Their objectives are taken from the supplied files; the evaluator independently checks every indexed route before running.
 
 [best-known/first-submission.json](best-known/first-submission.json) preserves the historical first CMS submission provenance for the original five cases. It is a historical snapshot, so later updated routes may differ.
 

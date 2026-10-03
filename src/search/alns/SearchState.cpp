@@ -218,6 +218,37 @@ bool SearchState::relocate_within_route(std::size_t request, std::size_t a,
     return true;
 }
 
+bool SearchState::replace_request(std::size_t outgoing, std::size_t incoming,
+                                  std::size_t a, std::size_t b) {
+    if (outgoing >= request_count() || incoming >= request_count() ||
+        location(outgoing).taxi < 0 || location(incoming).taxi >= 0) return false;
+    const auto loc = location(outgoing);
+    const auto taxi = static_cast<std::size_t>(loc.taxi);
+    const auto old_cost = cache(taxi).cost();
+    auto& route = route_scratch_;
+    route = cache(taxi).nodes();
+    route.erase(route.begin() + loc.dropoff);
+    route.erase(route.begin() + loc.pickup);
+    const bool passenger = incoming < passenger_count();
+    if (a > b || b > route.size() || (passenger && a != b)) return false;
+    const auto boundary_allowed = [&](std::size_t position) {
+        return !position || route[position - 1] >= taxi_count() + passenger_count();
+    };
+    if (!boundary_allowed(a) || !boundary_allowed(b)) return false;
+    route.insert(route.begin() + b, dropoff_node(incoming));
+    route.insert(route.begin() + a, pickup_node(incoming));
+    relocation_check_.rebuild(*instance_, taxi, route);
+    RouteCandidate candidate(*instance_, taxi, relocation_check_);
+    candidate.add_range(0, route.size());
+    const auto cost = candidate.cost_if_feasible();
+    if (!cost) return false;
+    const double gain = revenue(incoming) - revenue(outgoing) + old_cost - *cost;
+    if (gain <= 1e-9) return false;
+    rebuild_route(taxi, route);
+    benefit_ += gain;
+    return true;
+}
+
 bool SearchState::exchange_route_suffixes(std::size_t taxi_a, std::size_t cut_a,
                                          std::size_t taxi_b, std::size_t cut_b) {
     if (taxi_a == taxi_b || taxi_a >= taxi_count() || taxi_b >= taxi_count()) return false;

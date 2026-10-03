@@ -171,6 +171,14 @@ InsertionOptions scan_route(const SearchState& state, std::size_t request,
 }
 } // namespace
 
+std::optional<InsertionChoice> best_insertion_on_route(const SearchState& state,
+    std::size_t request, std::size_t taxi, const RouteCache& route, double minimum_gain) {
+    if (request >= state.request_count() || taxi >= state.taxi_count() ||
+        state.location(request).taxi >= 0) return std::nullopt;
+    return scan_route(state, request, taxi, route, request_segments(state, request),
+                      minimum_gain).best;
+}
+
 namespace {
 InsertionOptions insertion_options_impl(const SearchState& state, std::size_t request,
                                          bool need_second) {

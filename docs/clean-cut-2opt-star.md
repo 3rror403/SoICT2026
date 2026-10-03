@@ -1,8 +1,14 @@
 # Clean-cut suffix exchange
 
-`--clean-cut-2opt-star` adds an optional fifth local search move after remove,
-add, passenger relocation, and parcel relocation. It adapts the mechanism from
-`origin/nguyen_test_02` at `c16b2b6`; it is disabled by default.
+Clean-cut suffix exchange is enabled by default as the fifth local search move
+after remove, add, passenger relocation, and parcel relocation. It adapts the
+mechanism from `origin/nguyen_test_02` at `c16b2b6`.
+`--disable-clean-cut-2opt-star` disables it; `--clean-cut-2opt-star` remains
+available to enable it explicitly.
+
+Each local search call runs at most two full cycles, with
+[request replacement](request-replacement.md) following clean-cut exchange.
+If the first cycle finds no improvement across all moves, the second is skipped.
 
 The move exchanges two active taxis' suffixes. A cut must leave no request
 crossing the boundary: it cannot split a passenger pair or an open parcel.
@@ -24,8 +30,8 @@ full-solution check.
 ./cmake-build-debug/SoICT2026 --instance data/probation/r95_p47_m48_s7.txt --seed 1 --temp 200 --time-limit 60 --clean-cut-2opt-star --out solution.sol
 ```
 
-The evaluator accepts `--solver-temp 200` and
-`--solver-clean-cut-2opt-star`. End-of-run `clean_cut_calls`, `clean_cut_moves`,
+The evaluator accepts `--solver-temp 200`, `--solver-clean-cut-2opt-star`, and
+`--solver-disable-clean-cut-2opt-star`. End-of-run `clean_cut_calls`, `clean_cut_moves`,
 and `clean_cut_gain` diagnostics describe local search activity in proposed
 candidates, including candidates that ALNS later rejects. They do not measure
 incumbent improvements.
@@ -51,8 +57,8 @@ before the 60-second hard timeout. The reference solution was checked at benefit
 
 This is evidence on one selected instance. The paired bootstrap 95% percentile
 interval for mean benefit change is [-2.5, 87.1], so the ten seeds do not firmly
-establish a positive expected gain. Keep the mechanism opt-in until a broader
-comparison supports a default change.
+establish a positive expected gain. This historical comparison used one local
+search cycle; it does not measure the current default with up to two cycles.
 
 The [experiment report](../results/clean-cut-r95-t200-20261003/report.md) records
 all seed pairs, source and binary hashes, settings, logs, isolated best routes,

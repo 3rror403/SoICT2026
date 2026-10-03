@@ -10,7 +10,7 @@ The designated heuristic must be an executable accepting:
 SOLVER --instance INSTANCE --seed SEED --time-limit SECONDS --out SOLUTION
 ```
 
-It should finish before the internal deadline (59 seconds by default), write a complete solution file, and exit with code zero. The evaluator launches each run in a separate process and kills it at 60 seconds if it has not returned. A killed run is recorded as `timeout`; any partial file is discarded. A completed run is accepted only after `SoICT2026 check-solution` verifies all routes and recomputes the objective. The evaluator accepts a `.py` solver by launching it with the current Python interpreter; a compiled solver can be passed directly. The built `SoICT2026` executable implements ALNS through this direct option interface; `solve-alns` is also available as a subcommand for manual runs. ALNS stops when its geometrically cooled temperature reaches `0.0001` times its initial temperature, or when the time budget expires, whichever comes first. The default cooling factor is `exp(log(0.0001)/60000)`, which puts the temperature floor at about 60,000 completed iterations. The default initial temperature `10` has floor `0.001`. Local search runs every iteration by default. Add-request scans all unserved requests, while each relocation move scans served requests until it applies one improving move or exhausts its requests; remove-request scans all served requests. `--ls-interval N` can set a longer interval. The solver prints `stop=temperature` or `stop=time_limit` with its measured runtime. With the evaluator's 60-second limit, its one-second margin and the solver's one-second margin leave about 58 seconds for search.
+It should finish before the internal deadline (59 seconds by default), write a complete solution file, and exit with code zero. The evaluator launches each run in a separate process and kills it at the selected hard timeout (60 seconds by default, at most 300 seconds) if it has not returned. It gives the solver a one-second shorter time budget. A killed run is recorded as `timeout`; any partial file is discarded. A completed run is accepted only after `SoICT2026 check-solution` verifies all routes and recomputes the objective. The evaluator accepts a `.py` solver by launching it with the current Python interpreter; a compiled solver can be passed directly. The built `SoICT2026` executable implements ALNS through this direct option interface; `solve-alns` is also available as a subcommand for manual runs. ALNS stops when its geometrically cooled temperature reaches `0.0001` times its initial temperature, or when the time budget expires, whichever comes first. The default cooling factor is `exp(log(0.0001)/60000)`, which puts the temperature floor at about 60,000 completed iterations. The default initial temperature `200` has floor `0.02`. Local search runs every iteration by default, with at most two full cycles of remove-request, add-request, passenger relocation, parcel relocation, clean-cut suffix exchange, and [request replacement](request-replacement.md). Each move applies improvements until its neighborhood is exhausted. If the first cycle finds no improvement across all moves, local search stops after that cycle. `--ls-interval N` can set a longer interval. The solver prints `stop=temperature` or `stop=time_limit` with its measured runtime.
 
 Solutions use the official probation output format:
 
@@ -36,15 +36,25 @@ To evaluate the ALNS executable, run:
 python3 src/eval/evaluate.py --solver-name alns --solver-exe ./cmake-build-debug/SoICT2026
 ```
 
-Optional `--manifest`, `--checker`, `--best-known`, and `--results` paths support other datasets or local trials. Repeat `--instance FILE` to select specific cases from the main manifest. `--time-limit` may lower the allowance for a trial but cannot exceed 60 seconds. The evaluator does not run the MIP.
+Optional `--manifest`, `--checker`, `--best-known`, and `--results` paths support other datasets or local trials. Repeat `--instance FILE` to select specific cases from the probation manifest. `--time-limit` sets the hard allowance for a trial and can be at most 300 seconds. The evaluator does not run the MIP.
 
 `--solver-temp T` passes an initial temperature to ALNS and records it in run
-metadata. `--solver-clean-cut-2opt-star` enables the optional
-[clean-cut suffix exchange](clean-cut-2opt-star.md); omit it for the baseline.
+metadata. ALNS enables [clean-cut suffix exchange](clean-cut-2opt-star.md) by
+default. `--solver-disable-clean-cut-2opt-star` disables it, while
+`--solver-clean-cut-2opt-star` explicitly enables it. When neither option is
+supplied, the evaluator uses the solver's default and records the override as
+`null` in metadata.
 
 ## Results
 
 Each invocation creates the next directory `results/<solver>/v0001/`, `v0002/`, and so on, preserving earlier run records. Derived CSV metrics may be backfilled from those runs' archived logs. `metadata.json` records the start/end time, solver path, Git commit and dirty flag, job count, and time limit. `runs.csv` has one row per instance and solver seed, including status, verified objective when feasible, elapsed wall time, completed iterations when reported by the solver, stop reason, and log path. It is updated every ten completions so partial runs remain visible. `summary.csv` has one row per instance: best objective, mean objective over feasible runs, mean wall time over all ten attempts, `speed (it/s)`, temperature and time-limit stop counts, and feasible/timeout counts. `speed (it/s) = sum(completed iterations) / sum(wall_seconds)` across feasible runs; it is blank when the solver does not report iteration counts. The wall time is measured from solver process launch to exit, including startup and solution writing but excluding the separate checker. For probation instances, `instance_seed` records the case index; it is distinct from the solver seed.
+
+The evaluator prints an **expected score**, equal to the sum of each selected
+instance's mean objective over the ten seeds. It saves the score in
+`aggregate.csv` and `metadata.json`. A full probation evaluation sums all eight
+instance means; selecting fewer instances gives the score for that subset.
+The score is reported only when every run is feasible. Otherwise it is blank
+in the CSV and `null` in metadata, with `score_complete` set to false.
 
 ## Dataset identity and best-known records
 
@@ -52,7 +62,7 @@ The active dataset is the eight supplied probation cases, listed in [the dataset
 
 The evaluator records manifest and instance SHA-256 hashes in each run's metadata. Each best-known row includes `instance_sha256`; a mismatched or missing hash causes rejection before experiments. Manifest hashes are also verified.
 
-The active best-known directory is `data/probation/best-known/`. Records include the objective, route file, source solver/version/seed when known, instance hash, and `is_optimal`. The evaluator independently checks these routes before use. A heuristic can improve an unproved record but cannot mark it optimal. The original CMS submission provenance remains a historical snapshot.
+The active best-known directory is `data/probation/best-known/`. The CSV starts with `r`, the total request count, and rows are sorted by it. Records include the objective, route file, source solver/version/seed when known, instance hash, and `is_optimal`. The evaluator independently checks these routes before use. A heuristic can improve an unproved record but cannot mark it optimal. The original CMS submission provenance remains a historical snapshot.
 
 For the 10-request case, exact proofs can be recorded separately using:
 
