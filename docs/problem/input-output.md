@@ -1,6 +1,6 @@
 # SOICT 2026 input and output
 
-The active supplied dataset is documented in [the probation README](../data/probation/README.md). Synthetic data and its archived results have been removed.
+The active supplied dataset is documented in [the probation README](../../data/probation/README.md). Synthetic data and its archived results have been removed.
 
 ## Input and output
 

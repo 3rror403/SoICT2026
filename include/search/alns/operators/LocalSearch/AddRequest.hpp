@@ -8,6 +8,8 @@ public:
     std::string_view name() const override { return "add-request"; }
     bool improve(SearchState& state) const override;
 private:
-    mutable BestInsertionCache cache_;
+    mutable PositiveInsertionCache cache_;
+    mutable BestInsertionCache fallback_cache_;
+    mutable std::vector<std::size_t> requests_;
 };
 } // namespace soict::alns

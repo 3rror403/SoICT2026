@@ -6,12 +6,18 @@ import hashlib
 import math
 import json
 
-from cpp_compact import compact
+from cpp_compact import compact, macro_compact
 from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"\s*$')
+OPTIMIZATION_PRAGMAS = {
+    'O2': '',
+    'O3': '#pragma GCC optimize("O3")\n',
+    'O3-unroll': '#pragma GCC optimize("O3","unroll-loops")\n',
+}
+DEFAULT_OPTIMIZATION = 'O3-unroll'
 
 
 def library_sources(name):
@@ -25,7 +31,7 @@ def library_sources(name):
     return [ROOT / path for path in paths]
 
 
-def pack(output, time_limit, seed, limit, readable):
+def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZATION):
     headers = set()
     inputs = {}
 
@@ -54,19 +60,29 @@ def pack(output, time_limit, seed, limit, readable):
             start = source.index('    std::ofstream trace, operator_log;')
             end = source.index('    Solution empty;', start)
             source = source[:start] + source[end:]
-            start = source.index('    if (trace) trace << "0,0,"')
+            start = source.index('    const auto report_progress =')
             end = source.index('    while (temperature', start)
             source = source[:start] + source[end:]
-            start = source.index('                std::cerr << "ALNS best iteration="')
-            end = source.index(" << '\\n';", start) + len(" << '\\n';")
+            start = source.index('                std::ostringstream line;')
+            end = source.index('                std::cerr << line.str();', start) + len('                std::cerr << line.str();')
             source = source[:start] + source[end:]
+            source = source.replace('        report_progress();\n', '')
             start = source.index('        if (iterations % 1000 == 0) {')
-            end = source.index('    if (config.check) best.check();', start)
+            end = source.index('    if (route_pool) {', start)
             source = source[:start] + '    }\n' + source[end:]
+            start = source.index('        const auto before = best.benefit();')
+            end = source.index('    if (config.check) best.check();', start)
+            source = source[:start] + '        route_pool->improve(best, deadline);\n    }\n' + source[end:]
             start = source.index('    if (trace) trace << iterations')
             end = source.index('    Result result;', start)
             source = source[:start] + source[end:]
+            start = source.index('    if (clean_cut)\n')
+            end = source.index('    return result;', start)
+            source = source[:start] + source[end:]
         source = re.sub(r'^#include <(?:span|bit|filesystem)>\n', '', source, flags=re.M)
+        source = source.replace(
+            'const std::span<const std::size_t> subset(requests.data(), remaining);',
+            'const std::vector<std::size_t> subset(requests.begin(), requests.begin() + remaining);')
         source = source.replace('std::span<const std::size_t>', 'const std::vector<std::size_t>&')
         source = source.replace('std::bit_width(', 'soict_bit_width(')
         source = source.replace('std::erase_if(', 'soict_erase_if(')
@@ -121,6 +137,9 @@ int main() {{
         }} else {{
             const auto result = soict::alns::solve(instance, config);
             soict::write_solution(std::cout, result.solution, instance);
+            std::cerr << std::setprecision(17) << "iterations=" << result.iterations
+                      << " seconds=" << result.seconds
+                      << " stop=" << (result.annealing_complete ? "temperature" : "time_limit") << '\\n';
         }}
         return 0;
     }} catch (const std::exception& error) {{
@@ -130,7 +149,17 @@ int main() {{
 }}
 ''')
     source = ''.join(pieces)
+    pragma = OPTIMIZATION_PRAGMAS[optimization]
+    # Reserve the directive before compression, then prepend it verbatim.
+    # The compactor only handles includes; a global pragma has no body position
+    # to preserve and must never participate in identifier or macro rewriting.
+    body_limit = limit - len(pragma)
+    if body_limit <= 0:
+        raise ValueError('character limit is smaller than the optimization pragma')
     packed, renames = compact(source)
+    if len(packed) > body_limit:
+        packed = macro_compact(packed, body_limit)
+    packed = pragma + packed
     if len(packed) > limit:
         raise ValueError(f'packed source is {len(packed)} characters, exceeds CMS limit {limit}')
     if output.resolve() in [ROOT / name for name in inputs]:
@@ -139,10 +168,11 @@ int main() {{
     output.write_text(packed, encoding='utf-8')
     if readable:
         readable.parent.mkdir(parents=True, exist_ok=True)
-        readable.write_text(source, encoding='utf-8')
+        readable.write_text(pragma + source, encoding='utf-8')
     metadata = {
         'characters': len(packed), 'limit': limit, 'standard': 'c++17',
         'time_limit_seconds': time_limit, 'seed': seed,
+        'optimization': optimization,
         'sha256': hashlib.sha256(packed.encode()).hexdigest(),
         'source_sha256': inputs, 'identifier_renames': renames,
     }
@@ -158,6 +188,10 @@ def main():
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--max-characters', type=int, default=50000)
     parser.add_argument('--readable-out', type=Path, help='optional readable judge package for review')
+    parser.add_argument('--optimization', choices=OPTIMIZATION_PRAGMAS,
+                        default=DEFAULT_OPTIMIZATION,
+                        help='GCC optimization pragma; O2 uses the compiler command options '
+                             f'(default: {DEFAULT_OPTIMIZATION})')
     args = parser.parse_args()
     if not math.isfinite(args.time_limit) or args.time_limit <= 0:
         parser.error('time limit must be finite and positive')
@@ -165,7 +199,8 @@ def main():
         parser.error('seed must fit an unsigned 64-bit integer')
     if args.max_characters <= 0:
         parser.error("character limit must be positive")
-    pack(args.out.resolve(), args.time_limit, args.seed, args.max_characters, args.readable_out)
+    pack(args.out.resolve(), args.time_limit, args.seed, args.max_characters, args.readable_out,
+         args.optimization)
 
 
 if __name__ == '__main__':

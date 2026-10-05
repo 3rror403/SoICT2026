@@ -1,4 +1,4 @@
-# CPLEX MIP for 10-request instances
+# CPLEX MIP for small instances
 
 The solver implementation lives in `src/search/mip`, with its public interface in `include/search/mip`. This keeps exact and heuristic solver methods under the same `search` area.
 
@@ -13,7 +13,14 @@ ctest --test-dir cmake-build-debug --output-on-failure
 
 CMake checks headers and libraries before enabling the MIP target. It uses `CPLEX_STUDIO_DIR2211` when that environment variable is set; otherwise its default root is `/opt/ibm/ILOG/CPLEX_Studio2211` on Linux or `C:/Program Files/IBM/ILOG/CPLEX_Studio2211` on Windows. Override the `CPLEX_ROOT` CMake cache option for another location. Windows builds use the MSVC 64-bit libraries in `stat_mdd` for Debug and `stat_mda` for other configurations; CMake also copies the CPLEX DLL beside the executable and MIP test. If the required files are absent or the platform has no supported CPLEX library layout, the core executable still builds without `solve-mip` and without the MIP test.
 
-The command accepts at most 10 total requests. It reports `optimal` only when CPLEX proves optimality; `feasible` means an incumbent exists without a proof. It prints the objective, best bound, and each nonempty route as zero-based node IDs. Use `--out FILE` to save the route in the [solution format](evaluation.md). Its default time limit is 300 seconds and it uses one CPLEX thread. A nonoptimal solve returns exit code 3.
+The command accepts at most 10 total requests. It reports `optimal` only when CPLEX proves optimality; `feasible` means an incumbent exists without a proof. It prints the objective, best bound, and each nonempty route as zero-based node IDs. Use `--out FILE` to save the route in the [solution format](../evaluation/evaluation.md). Its default time limit is 300 seconds and it uses one CPLEX thread. A nonoptimal solve returns exit code 3.
+
+A separate exhaustive-route certificate proves `r240_p120_m120_s5.txt` optimal
+at benefit **13,279**. Two complete enumerators agree on all 21,461 retained
+route columns, and CPLEX solves the resulting fleet master with matching
+incumbent and upper bound. The ordinary `solve-mip` command still has its
+ten-request limit. See [the r240 study](../alns-operators/alns-enhancement.md#exact-certificate)
+for the model, provenance and independent checks.
 
 ## Formulation
 
@@ -25,4 +32,4 @@ Arrival and service-start variables propagate travel and service time. At a wind
 
 Parcel load and taxi capacity are propagated from the selected taxi origin along selected arcs. Load is increased at parcel pickup, decreased at delivery, and bounded by the carried taxi capacity at every stop. Passenger service does not change parcel load. The objective maximizes selected-request revenue minus selected travel-link costs; there is no return-to-origin link.
 
-The implementation uses finite upper bounds derived from the largest window endpoint, travel time, service duration, and number of service nodes for its conditional constraints. The exhaustive small-case test compares its optimum with enumerated feasible routes, including a taxi with zero parcel capacity. All five previous 10-request mixes solved to proven optimality in the initial check; those proofs belong to the archived pre-probation dataset and do not apply to the replacement instances.
+The implementation uses finite upper bounds derived from the largest window endpoint, travel time, service duration, and number of service nodes for its conditional constraints. The exhaustive small-case test compares its optimum with enumerated feasible routes, including a taxi with zero parcel capacity. `src/eval/record_mip_optima.py` solves every manifest case with at most 10 requests and records routes only after an exact proof and independent route validation.

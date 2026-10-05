@@ -53,6 +53,10 @@ void usage() {
               << "    Omit --out or use --out - to print the solution to stdout.\n"
               << "    Optional: --log DIR --temp T --cooling RATE --check --disable-ls --ls-interval N --balance-thompson\n";
     std::cerr << "    Clean-cut suffix exchange is enabled by default; --disable-clean-cut-2opt-star disables it.\n";
+    std::cerr << "    Default repair: all unserved requests, greedy/profit insertion, and final route-pool repair.\n"
+              << "    Route and opportunity removal are enabled; --legacy-operators restores the original three destroys and greedy repair.\n"
+              << "    Ablations: --removed-only-repair --disable-profit-repair --disable-route-removal\n"
+              << "               --disable-opportunity-removal --disable-route-pool-repair\n";
 #ifdef SOICT_WITH_CPLEX
     std::cerr << "  SoICT2026 solve-mip FILE [--time-limit SECONDS] [--out SOLUTION]\n";
 #endif
@@ -79,6 +83,21 @@ int main(int argc, char** argv) {
                 if (key == "--clean-cut-2opt-star") { config.clean_cut_2opt_star = true; continue; }
                 if (key == "--disable-clean-cut-2opt-star") { config.clean_cut_2opt_star = false; continue; }
                 if (key == "--balance-thompson") { config.thompson = true; continue; }
+                if (key == "--all-unserved-repair") { config.all_unserved_repair = true; continue; }
+                if (key == "--profit-repair") { config.profit_repair = true; continue; }
+                if (key == "--route-removal") { config.route_removal = true; continue; }
+                if (key == "--opportunity-removal") { config.opportunity_removal = true; continue; }
+                if (key == "--route-pool-repair") { config.route_pool_repair = true; continue; }
+                if (key == "--removed-only-repair") { config.all_unserved_repair = false; continue; }
+                if (key == "--disable-profit-repair") { config.profit_repair = false; continue; }
+                if (key == "--disable-route-removal") { config.route_removal = false; continue; }
+                if (key == "--disable-opportunity-removal") { config.opportunity_removal = false; continue; }
+                if (key == "--disable-route-pool-repair") { config.route_pool_repair = false; continue; }
+                if (key == "--legacy-operators") {
+                    config.all_unserved_repair = config.profit_repair = config.route_removal =
+                        config.opportunity_removal = config.route_pool_repair = false;
+                    continue;
+                }
                 if (i + 1 >= argc) throw std::invalid_argument("option needs a value: " + key);
                 const char* value = argv[++i];
                 if (key == "--instance" || key == "--input" || key == "-i")

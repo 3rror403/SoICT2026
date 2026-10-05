@@ -4,6 +4,8 @@
 #include "search/alns/operators/Destroy/RandomRemoval.hpp"
 #include "search/alns/operators/Destroy/RelatedRemoval.hpp"
 #include "search/alns/operators/Destroy/WorstRemoval.hpp"
+#include "search/alns/operators/Destroy/RouteRemoval.hpp"
+#include "search/alns/operators/Destroy/OpportunityRemoval.hpp"
 #include "search/alns/operators/LocalSearch/LocalSearch.hpp"
 #include "search/alns/operators/LocalSearch/ParcelRelocate.hpp"
 #include "search/alns/operators/LocalSearch/PassengerRelocate.hpp"
@@ -11,7 +13,10 @@
 #include "search/alns/operators/LocalSearch/RemoveRequest.hpp"
 #include "search/alns/operators/LocalSearch/CleanCut2OptStar.hpp"
 #include "search/alns/operators/LocalSearch/ReplaceRequest.hpp"
+#include "search/alns/operators/LocalSearch/SwapRequest.hpp"
 #include "search/alns/operators/Repair/GreedyInsertion.hpp"
+#include "search/alns/operators/Repair/ProfitInsertion.hpp"
+#include "search/alns/operators/Repair/RoutePoolRepair.hpp"
 #include "search/alns/operators/Repair/InsertionSearch.hpp"
 
 #include <algorithm>
@@ -35,12 +40,18 @@ Result solve(const Instance& instance, const Config& config) {
     const auto deadline = start + std::chrono::duration_cast<Clock::duration>(
                                   std::chrono::duration<double>(config.time_limit));
     std::mt19937_64 rng(config.seed);
+    const double polish_reserve = config.route_pool_repair ? 1.0 : 0.0;
+    const auto search_deadline = deadline - std::chrono::duration_cast<Clock::duration>(
+        std::chrono::duration<double>(std::min(polish_reserve, config.time_limit * 0.05)));
     std::vector<std::unique_ptr<DestroyOperator>> destroys;
     destroys.push_back(std::make_unique<RandomRemoval>());
     destroys.push_back(std::make_unique<WorstRemoval>());
     destroys.push_back(std::make_unique<RelatedRemoval>());
+    if (config.route_removal) destroys.push_back(std::make_unique<RouteRemoval>());
+    if (config.opportunity_removal) destroys.push_back(std::make_unique<OpportunityRemoval>());
     std::vector<std::unique_ptr<RepairOperator>> repairs;
     repairs.push_back(std::make_unique<GreedyInsertion>());
+    if (config.profit_repair) repairs.push_back(std::make_unique<ProfitInsertion>());
     struct Couple { std::size_t destroy, repair; };
     std::vector<Couple> couples;
     for (std::size_t d = 0; d < destroys.size(); ++d)
@@ -58,6 +69,7 @@ Result solve(const Instance& instance, const Config& config) {
         clean_cut = move.get();
         local_search.add_move(std::move(move));
     }
+    local_search.add_move(std::make_unique<SwapRequest>());
     local_search.add_move(std::make_unique<ReplaceRequest>());
 
     std::ofstream trace, operator_log;
@@ -91,6 +103,11 @@ Result solve(const Instance& instance, const Config& config) {
     if (config.check) current.check();
     SearchState best = current;
     SearchState candidate = current;
+    std::unique_ptr<RoutePoolRepair> route_pool;
+    if (config.route_pool_repair) {
+        route_pool = std::make_unique<RoutePoolRepair>(instance);
+        route_pool->remember(current);
+    }
     double temperature = config.temperature;
     const double minimum_temperature = config.temperature * 1e-4;
     std::size_t iterations = 0;
@@ -111,16 +128,23 @@ Result solve(const Instance& instance, const Config& config) {
 
     while (temperature > minimum_temperature) {
         const auto iteration_start = Clock::now();
-        if (iteration_start >= deadline) break;
+        if (iteration_start >= search_deadline) break;
         const auto selection = balance.select(rng, current.served_count());
         const auto couple = couples[selection.couple];
         candidate.copy_from(current);
         const auto removed = destroys[couple.destroy]->apply(
             candidate, selection.removal_count, rng);
-        repairs[couple.repair]->apply(candidate, removed, rng);
+        if (config.all_unserved_repair) {
+            std::vector<std::size_t> pool;
+            for (std::size_t r = 0; r < candidate.request_count(); ++r)
+                if (candidate.location(r).taxi < 0) pool.push_back(r);
+            std::shuffle(pool.begin(), pool.end(), rng);
+            repairs[couple.repair]->apply(candidate, pool, rng);
+        } else repairs[couple.repair]->apply(candidate, removed, rng);
         if (config.local_search && iterations % config.ls_interval == 0)
             local_search.search(candidate);
         if (config.check) candidate.check();
+        if (route_pool) route_pool->remember(candidate);
         const double delta = candidate.benefit() - current.benefit();
         const double reward = std::max(0.0, delta / std::max(1.0, std::abs(current.benefit())));
         bool accept = delta >= 0;
@@ -149,6 +173,19 @@ Result solve(const Instance& instance, const Config& config) {
             const double seconds = std::chrono::duration<double>(Clock::now() - start).count();
             if (trace) trace << iterations << ',' << seconds << ',' << temperature << ','
                              << current.benefit() << ',' << best.benefit() << '\n';
+        }
+    }
+    if (route_pool) {
+        const auto before = best.benefit();
+        route_pool->improve(best, deadline);
+        std::cerr << "route_pool_columns=" << route_pool->columns()
+                  << " route_pool_nodes=" << route_pool->nodes()
+                  << " route_pool_timeout=" << route_pool->timed_out()
+                  << " route_pool_gain=" << best.benefit() - before << '\n';
+        if (!config.log_directory.empty()) {
+            std::ofstream bank(std::filesystem::path(config.log_directory) / "route-pool.csv");
+            if (!bank) throw std::runtime_error("cannot create route pool log");
+            route_pool->write(bank);
         }
     }
     if (config.check) best.check();

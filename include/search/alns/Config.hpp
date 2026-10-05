@@ -14,6 +14,11 @@ struct Config {
     bool check = false;
     bool local_search = true;
     bool clean_cut_2opt_star = true;
+    bool all_unserved_repair = true;
+    bool profit_repair = true;
+    bool route_removal = true;
+    bool opportunity_removal = true;
+    bool route_pool_repair = true;
     std::size_t ls_interval = 1;
     bool thompson = false;
     std::string log_directory;

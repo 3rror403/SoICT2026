@@ -23,4 +23,9 @@ The eight supplied cases use `rR_pN_mM_sI.txt`: `R=N+M`, and `I` is the case ind
 
 [best-known/first-submission.json](best-known/first-submission.json) preserves the historical first CMS submission provenance for the original five cases. It is a historical snapshot, so later updated routes may differ.
 
+The r240 record is now **13,279**, produced by the enhanced ALNS defaults on
+seeds 1–3 in matched 300-second trials. Its `is_optimal=1` flag is supported
+by a separate complete-route CPLEX certificate and independent enumeration
+and route checking. See [the study and certificate](../../docs/alns-operators/alns-enhancement.md).
+
 `calibration.json` preserves the earlier distribution calibration of the four larger original cases. Synthetic datasets and their result archives have been removed; generator code remains available for development.

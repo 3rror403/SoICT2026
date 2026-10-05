@@ -23,16 +23,21 @@ add_library(soict_alns
     src/search/alns/operators/Destroy/RandomRemoval.cpp
     src/search/alns/operators/Destroy/WorstRemoval.cpp
     src/search/alns/operators/Destroy/RelatedRemoval.cpp
+    src/search/alns/operators/Destroy/RouteRemoval.cpp
+    src/search/alns/operators/Destroy/OpportunityRemoval.cpp
     src/search/alns/operators/Repair/InsertionSearch.cpp
     src/search/alns/operators/Repair/GreedyInsertion.cpp
     src/search/alns/operators/Repair/RegretInsertion.cpp
+    src/search/alns/operators/Repair/ProfitInsertion.cpp
+    src/search/alns/operators/Repair/RoutePoolRepair.cpp
     src/search/alns/operators/LocalSearch/LocalSearch.cpp
     src/search/alns/operators/LocalSearch/AddRequest.cpp
     src/search/alns/operators/LocalSearch/RemoveRequest.cpp
     src/search/alns/operators/LocalSearch/PassengerRelocate.cpp
     src/search/alns/operators/LocalSearch/ParcelRelocate.cpp
     src/search/alns/operators/LocalSearch/CleanCut2OptStar.cpp
-    src/search/alns/operators/LocalSearch/ReplaceRequest.cpp)
+    src/search/alns/operators/LocalSearch/ReplaceRequest.cpp
+    src/search/alns/operators/LocalSearch/SwapRequest.cpp)
 target_link_libraries(soict_alns PUBLIC soict_core)
 target_compile_features(soict_alns PUBLIC cxx_std_20)
 
@@ -120,7 +125,7 @@ else()
 endif()
 
 include(CTest)
-if(BUILD_TESTING)
+if(BUILD_TESTING AND EXISTS "${PROJECT_SOURCE_DIR}/tests/CoreTest.cpp")
     find_package(Python3 COMPONENTS Interpreter QUIET)
     add_executable(soict_core_test tests/CoreTest.cpp)
     target_link_libraries(soict_core_test PRIVATE soict_core)
@@ -128,12 +133,30 @@ if(BUILD_TESTING)
     add_executable(soict_alns_test tests/ALNSTest.cpp)
     target_link_libraries(soict_alns_test PRIVATE soict_alns)
     add_test(NAME soict_alns_test COMMAND soict_alns_test)
+    add_executable(soict_insertion_scratch_test tests/InsertionScratchTest.cpp)
+    target_link_libraries(soict_insertion_scratch_test PRIVATE soict_alns)
+    add_test(NAME soict_insertion_scratch_test COMMAND soict_insertion_scratch_test)
+    add_executable(soict_insertion_neighborhood_test tests/InsertionNeighborhoodTest.cpp)
+    target_link_libraries(soict_insertion_neighborhood_test PRIVATE soict_alns)
+    add_test(NAME soict_insertion_neighborhood_test COMMAND soict_insertion_neighborhood_test)
+    add_executable(soict_repair_operators_test tests/RepairOperatorsTest.cpp)
+    target_link_libraries(soict_repair_operators_test PRIVATE soict_alns)
+    add_test(NAME soict_repair_operators_test COMMAND soict_repair_operators_test)
+    add_executable(soict_route_removal_test tests/RouteRemovalTest.cpp)
+    target_link_libraries(soict_route_removal_test PRIVATE soict_alns)
+    add_test(NAME soict_route_removal_test COMMAND soict_route_removal_test)
+    add_executable(soict_route_pool_repair_test tests/RoutePoolRepairTest.cpp)
+    target_link_libraries(soict_route_pool_repair_test PRIVATE soict_alns)
+    add_test(NAME soict_route_pool_repair_test COMMAND soict_route_pool_repair_test)
     add_executable(soict_clean_cut_test tests/CleanCut2OptStarTest.cpp)
     target_link_libraries(soict_clean_cut_test PRIVATE soict_alns)
     add_test(NAME soict_clean_cut_test COMMAND soict_clean_cut_test)
     add_executable(soict_replace_request_test tests/ReplaceRequestTest.cpp)
     target_link_libraries(soict_replace_request_test PRIVATE soict_alns)
     add_test(NAME soict_replace_request_test COMMAND soict_replace_request_test)
+    add_executable(soict_swap_request_test tests/SwapRequestTest.cpp)
+    target_link_libraries(soict_swap_request_test PRIVATE soict_alns)
+    add_test(NAME soict_swap_request_test COMMAND soict_swap_request_test)
     if(Python3_Interpreter_FOUND)
         add_test(NAME soict_evaluator_test
             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/EvaluatorTest.py" "$<TARGET_FILE:SoICT2026>")
@@ -150,4 +173,6 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME soict_mip_test COMMAND soict_mip_test)
     endif()
+elseif(BUILD_TESTING)
+    message(STATUS "Private tests/ sources are absent; skipping local regression targets")
 endif()

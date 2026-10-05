@@ -10,7 +10,7 @@ The designated heuristic must be an executable accepting:
 SOLVER --instance INSTANCE --seed SEED --time-limit SECONDS --out SOLUTION
 ```
 
-It should finish before the internal deadline (59 seconds by default), write a complete solution file, and exit with code zero. The evaluator launches each run in a separate process and kills it at the selected hard timeout (60 seconds by default, at most 300 seconds) if it has not returned. It gives the solver a one-second shorter time budget. A killed run is recorded as `timeout`; any partial file is discarded. A completed run is accepted only after `SoICT2026 check-solution` verifies all routes and recomputes the objective. The evaluator accepts a `.py` solver by launching it with the current Python interpreter; a compiled solver can be passed directly. The built `SoICT2026` executable implements ALNS through this direct option interface; `solve-alns` is also available as a subcommand for manual runs. ALNS stops when its geometrically cooled temperature reaches `0.0001` times its initial temperature, or when the time budget expires, whichever comes first. The default cooling factor is `exp(log(0.0001)/60000)`, which puts the temperature floor at about 60,000 completed iterations. The default initial temperature `200` has floor `0.02`. Local search runs every iteration by default, with at most two full cycles of remove-request, add-request, passenger relocation, parcel relocation, clean-cut suffix exchange, and [request replacement](request-replacement.md). Each move applies improvements until its neighborhood is exhausted. If the first cycle finds no improvement across all moves, local search stops after that cycle. `--ls-interval N` can set a longer interval. The solver prints `stop=temperature` or `stop=time_limit` with its measured runtime.
+It should finish before the internal deadline (59 seconds by default), write a complete solution file, and exit with code zero. The evaluator launches each run in a separate process and kills it at the selected hard timeout (60 seconds by default, at most 300 seconds) if it has not returned. It gives the solver a one-second shorter time budget. A killed run is recorded as `timeout`; any partial file is discarded. A completed run is accepted only after `SoICT2026 check-solution` verifies all routes and recomputes the objective. The evaluator accepts a `.py` solver by launching it with the current Python interpreter; a compiled solver can be passed directly. The built `SoICT2026` executable implements ALNS through this direct option interface; `solve-alns` is also available as a subcommand for manual runs. ALNS stops when its geometrically cooled temperature reaches `0.0001` times its initial temperature, or when the time budget expires, whichever comes first. The default cooling factor is `exp(log(0.0001)/60000)`, which puts the temperature floor at about 60,000 completed iterations. The default initial temperature `200` has floor `0.02`. Local search runs every iteration by default, with at most two full cycles of remove-request, add-request, passenger relocation, parcel relocation, clean-cut suffix exchange, [two-taxi request swap](../alns-operators/request-swap.md), and [request replacement](../alns-operators/request-replacement.md). Each move applies improvements until its neighborhood is exhausted. If the first cycle finds no improvement across all moves, local search stops after that cycle. `--ls-interval N` can set a longer interval. The solver prints `stop=temperature` or `stop=time_limit` with its measured runtime.
 
 Solutions use the official probation output format:
 
@@ -30,6 +30,15 @@ For standard input/output, use:
 
 Diagnostics go to standard error in this mode. The file interface also accepts `--instance -` and `--out -`. Omitting `--out` prints the solution to standard output. ALNS reports the initial solution and every completed iteration on standard error, including elapsed seconds, temperature, current benefit, and best benefit; improvements also produce a new-best message.
 
+The default destroy and repair configuration now includes route removal,
+opportunity removal, repair over all unserved requests, profit insertion and
+final route-pool fleet repair. The latter reserves at most one second inside
+the solver's existing budget. `--legacy-operators` restores the earlier
+three-destroy, removed-only greedy configuration. Individual ablation flags
+and the three-seed r240 evidence are described in
+[the destroy/repair study](../alns-operators/alns-enhancement.md). Local search and annealing
+defaults retain the sequence and schedule described above.
+
 To evaluate the ALNS executable, run:
 
 ```sh
@@ -39,7 +48,7 @@ python3 src/eval/evaluate.py --solver-name alns --solver-exe ./cmake-build-debug
 Optional `--manifest`, `--checker`, `--best-known`, and `--results` paths support other datasets or local trials. Repeat `--instance FILE` to select specific cases from the probation manifest. `--time-limit` sets the hard allowance for a trial and can be at most 300 seconds. The evaluator does not run the MIP.
 
 `--solver-temp T` passes an initial temperature to ALNS and records it in run
-metadata. ALNS enables [clean-cut suffix exchange](clean-cut-2opt-star.md) by
+metadata. ALNS enables [clean-cut suffix exchange](../alns-operators/clean-cut-2opt-star.md) by
 default. `--solver-disable-clean-cut-2opt-star` disables it, while
 `--solver-clean-cut-2opt-star` explicitly enables it. When neither option is
 supplied, the evaluator uses the solver's default and records the override as
@@ -58,11 +67,16 @@ in the CSV and `null` in metadata, with `score_complete` set to false.
 
 ## Dataset identity and best-known records
 
-The active dataset is the eight supplied probation cases, listed in [the dataset README](../data/probation/README.md). Synthetic inputs and their archived results have been removed.
+The active dataset is the eight supplied probation cases, listed in [the dataset README](../../data/probation/README.md). Synthetic inputs and their archived results have been removed.
 
 The evaluator records manifest and instance SHA-256 hashes in each run's metadata. Each best-known row includes `instance_sha256`; a mismatched or missing hash causes rejection before experiments. Manifest hashes are also verified.
 
 The active best-known directory is `data/probation/best-known/`. The CSV starts with `r`, the total request count, and rows are sorted by it. Records include the objective, route file, source solver/version/seed when known, instance hash, and `is_optimal`. The evaluator independently checks these routes before use. A heuristic can improve an unproved record but cannot mark it optimal. The original CMS submission provenance remains a historical snapshot.
+
+For `r240_p120_m120_s5.txt`, the 2026-10-04 complete route master independently
+certifies benefit 13,279. Its optimality flag derives from exhaustive route
+enumeration plus the CPLEX proof and independent route checks, even though
+ALNS also produced the same fleet. See [the certificate](../alns-operators/alns-enhancement.md#exact-certificate).
 
 For the 10-request case, exact proofs can be recorded separately using:
 

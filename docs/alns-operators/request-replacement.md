@@ -1,7 +1,7 @@
 # Request replacement
 
 Request replacement is enabled by default as the last local-search move, after
-clean-cut suffix exchange. It exchanges one served request for one unserved
+[two-taxi request swap](request-swap.md). It exchanges one served request for one unserved
 request on the outgoing request's taxi. Passenger and parcel requests can
 replace either type of request.
 

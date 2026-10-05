@@ -97,6 +97,8 @@ std::optional<FastRouteCheck> ParcelRelocationContext::pickup_prefix(
     if (same) add_source_range(candidate, 0, a);
     else candidate.range(0, a);
     candidate.segment(pickup_);
+    // Later delivery positions cannot repair a violation in this fixed prefix.
+    if (!candidate.feasible()) return std::nullopt;
     return candidate;
 }
 

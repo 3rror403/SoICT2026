@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record proven 10-request MIP solutions separately from heuristic evaluation."""
+"""Record proven small-instance MIP solutions separately from heuristic evaluation."""
 
 import argparse
 from pathlib import Path
@@ -23,7 +23,7 @@ def main():
     index = best_dir / "best-known.csv"
     best = read_best_index(index, solver, instances)
     for row, instance in cases:
-        if int(row["requests"]) != 10:
+        if int(row["requests"]) > 10:
             continue
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "mip.sol"

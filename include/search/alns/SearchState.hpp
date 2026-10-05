@@ -5,10 +5,12 @@
 #include <memory>
 #include <optional>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace soict::alns {
 class EmptyTaxiIndex;
+class InsertionScratch;
 
 // Request ids 0..N-1 are passengers; N..N+M-1 are parcels.
 struct RequestLocation {
@@ -18,7 +20,8 @@ struct RequestLocation {
 
 class SearchState {
 public:
-    SearchState(const Instance& instance, Solution solution);
+    SearchState(const Instance& instance, Solution solution,
+                std::shared_ptr<InsertionScratch> insertion_scratch = {});
     void copy_from(const SearchState& other);
     void swap(SearchState& other) noexcept;
     [[nodiscard]] Solution solution() const;
@@ -37,6 +40,14 @@ public:
     [[nodiscard]] std::size_t passenger_count() const { return instance_->passengers.size(); }
     [[nodiscard]] std::size_t served_count() const;
     [[nodiscard]] double benefit() const { return benefit_; }
+    // State copies share this workspace; insertion scans within a solve are
+    // sequential. Scratch contents are not part of the solution or its caches.
+    [[nodiscard]] InsertionScratch& insertion_scratch() const {
+        return *insertion_scratch_;
+    }
+    [[nodiscard]] const std::shared_ptr<InsertionScratch>& insertion_scratch_handle() const {
+        return insertion_scratch_;
+    }
     [[nodiscard]] double revenue(std::size_t request) const;
     [[nodiscard]] const Instance& instance() const { return *instance_; }
     [[nodiscard]] std::size_t pickup_node(std::size_t request) const;
@@ -52,6 +63,9 @@ public:
         std::size_t delivery_boundary) const;
 
     bool remove(std::size_t request);
+    // Remove complete requests from one taxi atomically. Intermediate shortcut
+    // routes need not be feasible on directed/nonmetric travel times.
+    bool remove_requests(std::size_t taxi, std::span<const std::size_t> requests);
     bool insert(std::size_t request, std::size_t taxi,
                 std::size_t pickup_boundary, std::size_t delivery_boundary);
     bool relocate_within_route(std::size_t request, std::size_t pickup_boundary,
@@ -60,6 +74,8 @@ public:
     // Only the completed replacement must be feasible and improve benefit.
     bool replace_request(std::size_t outgoing, std::size_t incoming,
                          std::size_t pickup_boundary, std::size_t delivery_boundary);
+    // Exchange served requests across taxis, keeping passenger endpoints adjacent.
+    bool swap_requests(std::size_t first, std::size_t second);
     // Reject invalid/non-improving exchanges without modifying either route.
     bool exchange_route_suffixes(std::size_t taxi_a, std::size_t cut_a,
                                  std::size_t taxi_b, std::size_t cut_b);
@@ -67,6 +83,7 @@ public:
 
 private:
     const Instance* instance_;
+    std::shared_ptr<InsertionScratch> insertion_scratch_;
     // Empty routes retain their buffers for subsequent activation.
     std::vector<RouteCache> routes_by_taxi_;
     // Ordered iteration preserves move tie order and repair-cache sorting.
@@ -82,6 +99,9 @@ private:
     std::vector<std::size_t> route_scratch_;
     RouteCache relocation_check_;
     void rebuild_route(std::size_t taxi, const std::vector<std::size_t>& route);
+    void commit_validated_route(std::size_t taxi, RouteCache& updated, double gain);
+    void commit_route_pair(std::size_t taxi_a, RouteCache new_a,
+                           std::size_t taxi_b, RouteCache new_b, double gain);
     [[nodiscard]] std::size_t dropoff_node(std::size_t request) const;
 };
 } // namespace soict::alns

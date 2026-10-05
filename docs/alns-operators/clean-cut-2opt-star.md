@@ -7,6 +7,7 @@ mechanism from `origin/nguyen_test_02` at `c16b2b6`.
 available to enable it explicitly.
 
 Each local search call runs at most two full cycles, with
+[two-taxi request swap](request-swap.md) and then
 [request replacement](request-replacement.md) following clean-cut exchange.
 If the first cycle finds no improvement across all moves, the second is skipped.
 
@@ -60,7 +61,7 @@ interval for mean benefit change is [-2.5, 87.1], so the ten seeds do not firmly
 establish a positive expected gain. This historical comparison used one local
 search cycle; it does not measure the current default with up to two cycles.
 
-The [experiment report](../results/clean-cut-r95-t200-20261003/report.md) records
+The experiment report (`results/clean-cut-r95-t200-20261003/report.md`) records
 all seed pairs, source and binary hashes, settings, logs, isolated best routes,
 and the analysis script. Correctness validation covered 11,400 exchanges over
 120 directed/nonmetric fixtures against independent full solution evaluation,

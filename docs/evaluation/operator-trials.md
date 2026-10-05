@@ -44,7 +44,7 @@ A dedicated regression confirmed that two individually unprofitable requests
 can form a profitable pair. Existing ALNS, clean-cut, and probation I/O tests
 passed, as did a short r95 run with per-iteration full checking and both additions.
 
-The [archived report](../results/pair-delay-r95-t200-20261003/report.md) contains
+The archived report (`results/pair-delay-r95-t200-20261003/report.md`) contains
 all seed pairs, confidence intervals, operator counters, exact commands, source
 and binary hashes, the repaired source and tests, and isolated best routes.
 The supplied reference files were preserved. The clean-cut option remains

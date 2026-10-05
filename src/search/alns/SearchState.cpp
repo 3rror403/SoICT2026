@@ -1,4 +1,5 @@
 #include "search/alns/SearchState.hpp"
+#include "search/alns/InsertionScratch.hpp"
 #include "search/alns/FastRouteCheck.hpp"
 #include "search/alns/MoveCost.hpp"
 
@@ -8,10 +9,15 @@
 #include <utility>
 
 namespace soict::alns {
-SearchState::SearchState(const Instance& in, Solution solution)
-    : instance_(&in), routes_by_taxi_(in.taxis.size()),
+SearchState::SearchState(const Instance& in, Solution solution,
+                         std::shared_ptr<InsertionScratch> insertion_scratch)
+    : instance_(&in), insertion_scratch_(insertion_scratch ? std::move(insertion_scratch) :
+          std::make_shared<InsertionScratch>(in.passengers.size() + in.parcels.size())),
+      routes_by_taxi_(in.taxis.size()),
       locations_(in.passengers.size() + in.parcels.size()),
       removal_cache_(locations_.size()) {
+    if (insertion_scratch_->request_count() != locations_.size())
+        throw std::logic_error("insertion scratch request count mismatch");
     active_taxis_.reserve(in.taxis.size());
     const auto evaluation = solution.evaluate(in);
     if (!evaluation.feasible) throw std::logic_error("invalid search state: " + evaluation.error);
@@ -23,8 +29,11 @@ SearchState::SearchState(const Instance& in, Solution solution)
 void SearchState::copy_from(const SearchState& other) {
     if (this == &other) return;
     if (instance_ != other.instance_) throw std::logic_error("cannot copy states of different instances");
+    // Rebuild versions are globally unique; version 0 denotes a cleared route.
+    // Equal versions on the same instance/taxi already contain identical data.
     for (std::size_t taxi = 0; taxi < routes_by_taxi_.size(); ++taxi)
-        routes_by_taxi_[taxi].copy_from(other.routes_by_taxi_[taxi]);
+        if (routes_by_taxi_[taxi].version() != other.routes_by_taxi_[taxi].version())
+            routes_by_taxi_[taxi].copy_from(other.routes_by_taxi_[taxi]);
     active_taxis_.reserve(taxi_count());
     active_taxis_ = other.active_taxis_;
     locations_ = other.locations_;
@@ -36,6 +45,7 @@ void SearchState::copy_from(const SearchState& other) {
 void SearchState::swap(SearchState& other) noexcept {
     using std::swap;
     swap(instance_, other.instance_);
+    insertion_scratch_.swap(other.insertion_scratch_);
     routes_by_taxi_.swap(other.routes_by_taxi_);
     active_taxis_.swap(other.active_taxis_);
     locations_.swap(other.locations_);
@@ -173,6 +183,36 @@ bool SearchState::remove(std::size_t request) {
     return true;
 }
 
+bool SearchState::remove_requests(std::size_t taxi, std::span<const std::size_t> requests) {
+    if (taxi >= taxi_count() || requests.empty()) return false;
+    const auto& old = cache(taxi);
+    std::vector<bool> excluded(old.nodes().size(), false);
+    double lost_revenue = 0;
+    for (const auto request : requests) {
+        if (request >= request_count()) return false;
+        const auto loc = location(request);
+        if (loc.taxi != static_cast<int>(taxi) || excluded[loc.pickup]) return false;
+        excluded[loc.pickup] = excluded[loc.dropoff] = true;
+        lost_revenue += revenue(request);
+    }
+    RouteCandidate candidate(*instance_, taxi, old);
+    auto& route = route_scratch_;
+    route.clear();
+    for (std::size_t first = 0; first < old.nodes().size();) {
+        if (excluded[first]) { ++first; continue; }
+        auto end = first + 1;
+        while (end < old.nodes().size() && !excluded[end]) ++end;
+        candidate.add_range(first, end);
+        route.insert(route.end(), old.nodes().begin() + first, old.nodes().begin() + end);
+        first = end;
+    }
+    const auto new_cost = candidate.cost_if_feasible();
+    if (!new_cost) return false;
+    benefit_ += old.cost() - *new_cost - lost_revenue;
+    rebuild_route(taxi, route);
+    return true;
+}
+
 bool SearchState::insert(std::size_t request, std::size_t taxi,
                          std::size_t a, std::size_t b) {
     const auto gain = insertion_gain(request, taxi, a, b);
@@ -213,8 +253,7 @@ bool SearchState::relocate_within_route(std::size_t request, std::size_t a,
     candidate.add_range(0, route.size());
     const auto cost = candidate.cost_if_feasible();
     if (!cost) return false;
-    benefit_ += old_cost - *cost;
-    rebuild_route(taxi, route);
+    commit_validated_route(taxi, relocation_check_, old_cost - *cost);
     return true;
 }
 
@@ -244,8 +283,63 @@ bool SearchState::replace_request(std::size_t outgoing, std::size_t incoming,
     if (!cost) return false;
     const double gain = revenue(incoming) - revenue(outgoing) + old_cost - *cost;
     if (gain <= 1e-9) return false;
-    rebuild_route(taxi, route);
+    commit_validated_route(taxi, relocation_check_, gain);
+    return true;
+}
+
+void SearchState::commit_validated_route(std::size_t taxi, RouteCache& updated,
+                                        double gain) {
+    const auto k = taxi_count(), n = passenger_count(), m = instance_->parcels.size();
+    const auto request_id = [&](std::size_t node) {
+        return node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
+    };
+    auto& slot = routes_by_taxi_.at(taxi);
+    for (const auto node : slot.nodes()) locations_[request_id(node)] = {};
+    const bool was_active = !slot.nodes().empty();
+    const bool active = !updated.nodes().empty();
+    if (was_active != active) {
+        const auto where = std::lower_bound(active_taxis_.begin(), active_taxis_.end(), taxi);
+        if (active) active_taxis_.insert(where, taxi);
+        else active_taxis_.erase(where);
+    }
+    // Keep the validated version and reuse the old route's buffers next time.
+    std::swap(slot, updated);
+    if (!active) slot.clear();
+    for (std::size_t p = 0; p < slot.nodes().size(); ++p) {
+        const auto node = slot.nodes()[p], request = request_id(node);
+        auto& loc = locations_[request];
+        loc.taxi = static_cast<int>(taxi);
+        if (node == pickup_node(request)) loc.pickup = p;
+        else loc.dropoff = p;
+    }
     benefit_ += gain;
+}
+
+bool SearchState::swap_requests(std::size_t first, std::size_t second) {
+    if (first >= request_count() || second >= request_count()) return false;
+    if (second < first) std::swap(first, second);
+    const auto a = location(first), b = location(second);
+    if (a.taxi < 0 || b.taxi < 0 || a.taxi == b.taxi) return false;
+    const auto make_route = [&](std::size_t outgoing, std::size_t incoming) {
+        const auto loc = location(outgoing);
+        auto nodes = cache(loc.taxi).nodes();
+        nodes.erase(nodes.begin() + loc.dropoff);
+        nodes.erase(nodes.begin() + loc.pickup);
+        const auto delivery_boundary = incoming < passenger_count() ? loc.pickup : loc.dropoff - 1;
+        nodes.insert(nodes.begin() + delivery_boundary, dropoff_node(incoming));
+        nodes.insert(nodes.begin() + loc.pickup, pickup_node(incoming));
+        return nodes;
+    };
+    const auto nodes_a = make_route(first, second), nodes_b = make_route(second, first);
+    RouteCache new_a(*instance_, a.taxi, nodes_a), new_b(*instance_, b.taxi, nodes_b);
+    RouteCandidate checked_a(*instance_, a.taxi, new_a), checked_b(*instance_, b.taxi, new_b);
+    checked_a.add_range(0, nodes_a.size());
+    checked_b.add_range(0, nodes_b.size());
+    const auto cost_a = checked_a.cost_if_feasible(), cost_b = checked_b.cost_if_feasible();
+    if (!cost_a || !cost_b) return false;
+    const double gain = cache(a.taxi).cost() + cache(b.taxi).cost() - *cost_a - *cost_b;
+    if (gain <= 1e-9) return false;
+    commit_route_pair(a.taxi, std::move(new_a), b.taxi, std::move(new_b), gain);
     return true;
 }
 
@@ -273,6 +367,12 @@ bool SearchState::exchange_route_suffixes(std::size_t taxi_a, std::size_t cut_a,
     const double gain = old_a.cost() + old_b.cost() - *cost_a - *cost_b;
     if (gain <= 1e-9) return false;
 
+    commit_route_pair(taxi_a, std::move(new_a), taxi_b, std::move(new_b), gain);
+    return true;
+}
+
+void SearchState::commit_route_pair(std::size_t taxi_a, RouteCache new_a,
+                                   std::size_t taxi_b, RouteCache new_b, double gain) {
     // Clear both old assignments before assigning either new route: requests
     // transferred from B to A must not be cleared again while rebuilding B.
     for (auto& loc : locations_)
@@ -301,7 +401,6 @@ bool SearchState::exchange_route_suffixes(std::size_t taxi_a, std::size_t cut_a,
     assign(taxi_a, std::move(new_a));
     assign(taxi_b, std::move(new_b));
     benefit_ += gain;
-    return true;
 }
 
 void SearchState::check() const {
