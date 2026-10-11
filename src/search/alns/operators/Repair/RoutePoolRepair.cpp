@@ -1,8 +1,10 @@
 #include "search/alns/operators/Repair/RoutePoolRepair.hpp"
+#include "search/alns/operators/Repair/RoutePoolMaster.hpp"
 #include <algorithm>
 #include <cmath>
 #include <functional>
 #include <iomanip>
+#include <iostream>
 #include <ostream>
 #include <numeric>
 #include <stdexcept>
@@ -293,6 +295,7 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
         best_profit += group_profit - old_profit;
         return true;
     };
+    const auto pair_start = std::chrono::steady_clock::now();
     bool changed = true;
     while (changed && !timed_out_) {
         changed = false;
@@ -300,10 +303,36 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
             for (std::size_t b = a + 1; b < order.size() && !timed_out_; ++b)
                 changed = optimize_group({order[a],order[b]}) || changed;
     }
+    const auto triple_start = std::chrono::steady_clock::now();
+    std::cerr << "route_pool_pair_seconds=" << std::chrono::duration<double>(triple_start-pair_start).count()
+              << " route_pool_pair_nodes=" << nodes_ << " route_pool_pair_benefit=" << best_profit << '\n';
+    const auto pair_nodes = nodes_;
     for (std::size_t a = 0; a < order.size() && !timed_out_; ++a)
         for (std::size_t b = a + 1; b < order.size() && !timed_out_; ++b)
             for (std::size_t c = b + 1; c < order.size() && !timed_out_; ++c)
                 optimize_group({order[a],order[b],order[c]});
+    const auto dual_start = std::chrono::steady_clock::now();
+    std::cerr << "route_pool_triple_seconds=" << std::chrono::duration<double>(dual_start-triple_start).count()
+              << " route_pool_triple_nodes=" << nodes_-pair_nodes << " route_pool_triple_benefit=" << best_profit << '\n';
+    if (column_count_ > 2000) {
+        std::vector<MasterColumn> master;
+        std::vector<std::pair<std::size_t,std::size_t>> locations;
+        std::vector<int> initial(incumbent.size(),-1);
+        for (std::size_t taxi = 0; taxi < columns.size(); ++taxi)
+            for (std::size_t i = 0; i < columns[taxi].size(); ++i) {
+                if (incumbent[taxi] == static_cast<int>(i)) initial[taxi] = static_cast<int>(master.size());
+                const auto& c = columns[taxi][i];
+                master.push_back({taxi,c.requests,c.profit}); locations.emplace_back(taxi,i);
+            }
+        const auto solved = solve_route_master(master,columns.size(),state.request_count(),initial,deadline);
+        best_profit = solved.profit; timed_out_ = solved.timed_out; nodes_ += solved.nodes;
+        std::fill(incumbent.begin(),incumbent.end(),-1);
+        for (auto id : solved.selected) if (id >= 0) {
+            const auto [taxi,index] = locations[id]; incumbent[taxi] = static_cast<int>(index);
+        }
+        std::cerr << "route_pool_lp_nodes=" << solved.nodes << " route_pool_lp_pivots=" << solved.pivots
+                  << " route_pool_lp_upper=" << solved.root_upper << '\n';
+    } else {
     // Nonnegative request prices give a valid Lagrangian upper bound:
     // sum(price) + sum_t max(0, profit(route) - sum_request price).
     // Use projected subgradients to tighten it; every iterate is valid, so
@@ -339,6 +368,9 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
         for (std::size_t r = 0; r < prices.size(); ++r)
             prices[r] = std::max(0.0, prices[r] + step * (static_cast<double>(uses[r]) - 1));
     }
+    const auto tree_start = std::chrono::steady_clock::now();
+    std::cerr << "route_pool_dual_seconds=" << std::chrono::duration<double>(tree_start-dual_start).count()
+              << " route_pool_upper=" << best_dual << " route_pool_lower=" << best_profit << '\n';
     prices = std::move(best_prices);
     const double price_total = std::accumulate(prices.begin(), prices.end(), 0.0);
     for (auto taxi : order) {
@@ -396,6 +428,7 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
     };
     if (std::chrono::steady_clock::now() < deadline) search(0,0,0);
     else timed_out_ = true;
+    }
     if (best_profit <= state.benefit() + 1e-9) return false;
     Solution candidate;
     candidate.routes.resize(state.taxi_count());

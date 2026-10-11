@@ -1,12 +1,14 @@
 # Direct route generation and fleet recombination
 
-The default solver first generates feasible taxi routes independently. When every taxi's prefix search completes within its budget, it skips ALNS, keeps up to 48 routes per taxi, and runs the existing conflict-free fleet master. If generation is incomplete, it keeps the original 200-route bank limit and falls back to the 6,000-step ALNS.
+The default solver first generates feasible taxi routes independently. When every taxi's prefix search completes within its budget, it skips ALNS, keeps up to 200 routes per taxi, and runs the conflict-free fleet master. If generation is incomplete, it falls back to the 6,000-step ALNS. Banks above 2,000 columns use a native LP-based branch-and-bound with basis reuse; smaller banks retain the request-price search. See [the n500 follow-up](n500-route-master.md) for the current defaults and measurements.
 
 Each prefix tracks departure time, accumulated travel cost and revenue, parcel load, picked requests, and open parcels. Passengers are appended as adjacent pickup/drop-off pairs. Open parcels can be delivered or carried across other requests. Only positive-profit complete routes enter the bank; for identical served sets on one taxi, the best sequence dominates.
 
-Pickup candidates are sorted by their latest feasible departure from the current node. A conservative floating-point guard supports this index, and every actual arrival is checked. No triangle inequality or removal-only feasibility assumption is used. Prefix enumeration is capped at 50,000 per taxi and shares a generation deadline of at most two seconds across the taxis.
+Pickup candidates are sorted by their latest feasible departure from the current node. A conservative floating-point guard supports this index, and every actual arrival is checked. No triangle inequality or removal-only feasibility assumption is used. Prefix enumeration is capped at 1,000,000 per taxi and shares a generation deadline of at most two seconds across the taxis.
 
-## Matched r240 results
+## Historical matched r240 results, 2026-10-11
+
+These measurements used the preceding 50,000-prefix/48-route default. The n500 follow-up increases both limits and replaces the master for larger banks; the table below is not a measurement of that newer implementation.
 
 | Seed | Previous solve | New solve | Solve speedup | Previous process | New process | Process speedup |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -30,7 +32,7 @@ Independent endpoint-permutation tests check the generator against full evaluati
 
 Forcing a one-prefix budget makes generation incomplete and reproduces the baseline's 6,025 progress records and final fleet. Disabling route-pool repair respects the existing ALNS ablation.
 
-The route bank is capped even when prefix enumeration completes. Therefore the completed master proves optimality only within that bank. The separately verified integer certificate establishes 13,279 as the global optimum for the unchanged r240 input. Quality on other instances remains unmeasured.
+The route bank is capped even when prefix enumeration completes. Therefore the completed master proves optimality only within that bank. The separately verified integer certificate establishes 13,279 as the global optimum for the unchanged r240 input. The n500 follow-up provides additional measurements; quality beyond those two instances remains unmeasured.
 
 ## Rejected reductions
 

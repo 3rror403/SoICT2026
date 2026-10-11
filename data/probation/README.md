@@ -28,4 +28,4 @@ seeds 1–3 in matched 300-second trials. Its `is_optimal=1` flag is supported
 by a separate complete-route CPLEX certificate and independent enumeration
 and route checking. See [the study and certificate](../../docs/alns-operators/alns-enhancement.md).
 
-`calibration.json` preserves the earlier distribution calibration of the four larger original cases. Synthetic datasets and their result archives have been removed; generator code remains available for development.
+`calibration.json` preserves the distribution calibration of the four larger original cases. [Additional simulated cases](../synthetic/README.md) contain three instances each with 500, 1,000, and 2,000 requests, generated using this calibration. Earlier synthetic datasets and result archives were removed.

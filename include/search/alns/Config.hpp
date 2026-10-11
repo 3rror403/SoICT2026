@@ -25,9 +25,9 @@ struct Config {
     bool route_pool_repair = true;
     bool path_generation = true;
     bool paths_only = false;
-    std::size_t path_prefix_limit = 50000;
+    std::size_t path_prefix_limit = 1000000;
     std::size_t route_pool_limit = 200;
-    std::size_t path_pool_limit = 48;
+    std::size_t path_pool_limit = 200;
     std::size_t ls_interval = 1;
     bool thompson = false;
     std::string log_directory;

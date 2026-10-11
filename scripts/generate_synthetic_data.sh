@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Usage: generate_synthetic_data.sh [GENERATOR [OUTPUT_DIR [PROFILE [SUITE]]]]
+# large: three balanced passenger/parcel instances per size, seeds 1..3.
+
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 generator="${1:-$repo_dir/cmake-build-debug/SoICT2026}"
 output_dir="${2:-$repo_dir/data/synthetic}"
 profile="${3:-empirical}"
+suite="${4:-standard}"
+case "$suite" in
+    standard) sizes=(10 20 50 100 250 500) ;;
+    large) sizes=(500 1000 2000) ;;
+    *) echo "Unknown suite: $suite (expected standard or large)" >&2; exit 1 ;;
+esac
 case "$profile" in
     empirical) generation=probation-calibrated-v3 ;;
     directed-noise) generation=probation-calibrated-v3-directed-noise ;;
@@ -19,7 +28,7 @@ manifest="$output_dir/manifest.csv"
 printf 'file,requests,passengers,parcels,taxis,seed,generation,sha256\n' > "$manifest"
 
 # Linear interpolation through observed (requests,taxis), extrapolating the last segment.
-for requests in 10 20 50 100 250 500; do
+for requests in "${sizes[@]}"; do
     taxis=$(python3 - "$requests" <<'PY'
 import math, sys
 r = int(sys.argv[1])
@@ -34,7 +43,11 @@ PY
 )
     quarter=$((requests / 4))
     half=$((requests / 2))
-    passengers=(0 "$quarter" "$half" "$((requests - quarter))" "$requests")
+    if [[ "$suite" == large ]]; then
+        passengers=("$half" "$half" "$half")
+    else
+        passengers=(0 "$quarter" "$half" "$((requests - quarter))" "$requests")
+    fi
     for index in "${!passengers[@]}"; do
         seed=$((index + 1))
         n=${passengers[$index]}
@@ -48,25 +61,39 @@ PY
     done
 done
 
-python3 - "$repo_dir" "$generator" "$output_dir" "$profile" "$generation" <<'PYPROFILE'
+python3 - "$repo_dir" "$generator" "$output_dir" "$profile" "$generation" "$suite" <<'PYPROFILE'
+import csv
 import datetime as dt
 import hashlib
 import json
 from pathlib import Path
 import sys
 repo, executable, output = map(Path, sys.argv[1:4])
-profile_name, generation = sys.argv[4:]
+profile_name, generation, suite = sys.argv[4:]
 def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    hasher = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            hasher.update(block)
+    return hasher.hexdigest()
 calibration = json.loads((repo/'data/probation/calibration.json').read_text())
+for source in calibration['sources']:
+    if digest(repo/'data/probation'/source['file']) != source['sha256']:
+        raise ValueError(f"Calibration source hash mismatch: {source['file']}")
+with (output/'manifest.csv').open() as stream:
+    rows = list(csv.DictReader(stream))
+sizes = sorted({int(row['requests']) for row in rows})
 profile = {
     'generation': generation,
     'profile': profile_name,
+    'suite': suite,
     'calibration': calibration,
     'taxi_rule': 'Nearest integer linear interpolation through (4,2),(10,3),(30,5),(100,10),(240,20); extrapolate final segment',
-    'requests': [10,20,50,100,250,500],
-    'taxi_counts': [3,4,6,10,21,39],
-    'seeds': [1,2,3,4,5],
+    'requests': sizes,
+    'taxi_counts': [next(int(row['taxis']) for row in rows if int(row['requests']) == size) for size in sizes],
+    'seeds': sorted({int(row['seed']) for row in rows}),
+    'instances_per_size': {str(size): sum(int(row['requests']) == size for row in rows) for size in sizes},
+    'passenger_mix': '50% passengers, 50% parcels' if suite == 'large' else '0%, 25%, 50%, 75%, 100% passengers',
     'coordinates': 'Independent U(0,100) in two dimensions; rejection-condition pickups on solo feasibility',
     'travel_time': 'max(1,ceil(Euclidean distance)) off diagonal',
     'travel_cost': 'max(1,ceil(2.48*Euclidean distance)) off diagonal',

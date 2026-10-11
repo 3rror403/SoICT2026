@@ -56,6 +56,7 @@ void usage() {
     std::cerr << "    Default: bounded route generation and conflict-free fleet selection.\n"
               << "    Incomplete generation falls back to about 6,000 ALNS iterations and final route-pool repair.\n"
               << "    Route generation: --disable-path-generation --paths-only --path-prefix-limit N --path-pool-limit N\n"
+              << "    Generation defaults: 1,000,000 prefixes and 200 routes per taxi; generation shares at most two seconds.\n"
               << "    ALNS route bank: --route-pool-limit N\n"
               << "    Route and opportunity removal are enabled; --legacy-operators restores the original three destroys and greedy repair.\n"
               << "    Ablations: --removed-only-repair --disable-profit-repair --disable-route-removal\n"

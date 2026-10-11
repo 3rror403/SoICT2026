@@ -30,6 +30,7 @@ add_library(soict_alns
     src/search/alns/operators/Repair/RegretInsertion.cpp
     src/search/alns/operators/Repair/ProfitInsertion.cpp
     src/search/alns/operators/Repair/RoutePoolRepair.cpp
+    src/search/alns/operators/Repair/RoutePoolMaster.cpp
     src/search/alns/operators/LocalSearch/LocalSearch.cpp
     src/search/alns/operators/LocalSearch/AddRequest.cpp
     src/search/alns/operators/LocalSearch/RemoveRequest.cpp
