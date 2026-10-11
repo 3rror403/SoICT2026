@@ -61,7 +61,7 @@ def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZ
             end = source.index('    Solution empty;', start)
             source = source[:start] + source[end:]
             start = source.index('    const auto report_progress =')
-            end = source.index('    while (temperature', start)
+            end = source.index('    while (', start)
             source = source[:start] + source[end:]
             start = source.index('                std::ostringstream line;')
             end = source.index('                std::cerr << line.str();', start) + len('                std::cerr << line.str();')
@@ -86,6 +86,10 @@ def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZ
         source = source.replace('std::span<const std::size_t>', 'const std::vector<std::size_t>&')
         source = source.replace('std::bit_width(', 'soict_bit_width(')
         source = source.replace('std::erase_if(', 'soict_erase_if(')
+        # Keep every validation check, but abbreviate judge-only exception text.
+        source = re.sub(
+            r'(throw std::(?:logic_error|invalid_argument|runtime_error)\()"(?:\\.|[^"\\])*"',
+            r'\1"error"', source)
         result = [f'\n// BEGIN {relative}\n']
         for line in source.splitlines(keepends=True):
             if re.fullmatch(r'\s*#\s*pragma\s+once\s*', line):

@@ -53,7 +53,10 @@ void usage() {
               << "    Omit --out or use --out - to print the solution to stdout.\n"
               << "    Optional: --log DIR --temp T --cooling RATE --check --disable-ls --ls-interval N --balance-thompson\n";
     std::cerr << "    Clean-cut suffix exchange is enabled by default; --disable-clean-cut-2opt-star disables it.\n";
-    std::cerr << "    Default repair: all unserved requests, greedy/profit insertion, and final route-pool repair.\n"
+    std::cerr << "    Default: bounded route generation and conflict-free fleet selection.\n"
+              << "    Incomplete generation falls back to about 6,000 ALNS iterations and final route-pool repair.\n"
+              << "    Route generation: --disable-path-generation --paths-only --path-prefix-limit N --path-pool-limit N\n"
+              << "    ALNS route bank: --route-pool-limit N\n"
               << "    Route and opportunity removal are enabled; --legacy-operators restores the original three destroys and greedy repair.\n"
               << "    Ablations: --removed-only-repair --disable-profit-repair --disable-route-removal\n"
               << "               --disable-opportunity-removal --disable-route-pool-repair\n";
@@ -88,6 +91,9 @@ int main(int argc, char** argv) {
                 if (key == "--route-removal") { config.route_removal = true; continue; }
                 if (key == "--opportunity-removal") { config.opportunity_removal = true; continue; }
                 if (key == "--route-pool-repair") { config.route_pool_repair = true; continue; }
+                if (key == "--generate-paths") { config.path_generation = true; continue; }
+                if (key == "--disable-path-generation") { config.path_generation = false; continue; }
+                if (key == "--paths-only") { config.paths_only = true; continue; }
                 if (key == "--removed-only-repair") { config.all_unserved_repair = false; continue; }
                 if (key == "--disable-profit-repair") { config.profit_repair = false; continue; }
                 if (key == "--disable-route-removal") { config.route_removal = false; continue; }
@@ -105,6 +111,18 @@ int main(int argc, char** argv) {
                 else if (key == "--out" || key == "--output" || key == "-o")
                     solution_path = value;
                 else if (key == "--seed") config.seed = count_arg(value);
+                else if (key == "--path-prefix-limit") {
+                    config.path_prefix_limit = count_arg(value);
+                    if (!config.path_prefix_limit) throw std::invalid_argument("path prefix limit must be positive");
+                }
+                else if (key == "--route-pool-limit") {
+                    config.route_pool_limit = count_arg(value);
+                    if (!config.route_pool_limit) throw std::invalid_argument("route pool limit must be positive");
+                }
+                else if (key == "--path-pool-limit") {
+                    config.path_pool_limit = count_arg(value);
+                    if (!config.path_pool_limit) throw std::invalid_argument("path pool limit must be positive");
+                }
                 else if (key == "--ls-interval") {
                     config.ls_interval = count_arg(value);
                     if (!config.ls_interval) throw std::invalid_argument("ls interval must be positive");
@@ -138,7 +156,8 @@ int main(int argc, char** argv) {
             (solution_path == "-" ? std::cerr : std::cout) << std::setprecision(17) << "benefit=" << result.benefit
                       << " iterations=" << result.iterations
                       << " seconds=" << result.seconds
-                      << " stop=" << (result.annealing_complete ? "temperature" : "time_limit")
+                      << " stop=" << (result.paths_only ? "route_pool" :
+                          result.annealing_complete ? "temperature" : "time_limit")
                       << '\n';
             return 0;
         }

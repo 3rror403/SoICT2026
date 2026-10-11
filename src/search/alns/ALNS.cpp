@@ -36,6 +36,8 @@ namespace soict::alns {
 Result solve(const Instance& instance, const Config& config) {
     using Clock = std::chrono::steady_clock;
     if (!config.ls_interval) throw std::invalid_argument("ls interval must be positive");
+    if (config.paths_only && !config.route_pool_repair)
+        throw std::invalid_argument("path generation requires route-pool repair");
     const auto start = Clock::now();
     const auto deadline = start + std::chrono::duration_cast<Clock::duration>(
                                   std::chrono::duration<double>(config.time_limit));
@@ -91,23 +93,41 @@ Result solve(const Instance& instance, const Config& config) {
         std::chrono::duration_cast<Clock::duration>(
             std::chrono::duration<double>(std::min(1.0, config.time_limit * 0.05))));
     current.set_empty_taxi_index(build_empty_taxi_index(current, index_deadline));
-    std::vector<std::size_t> initial_order(current.request_count());
-    std::iota(initial_order.begin(), initial_order.end(), 0);
-    std::shuffle(initial_order.begin(), initial_order.end(), rng);
-    for (const auto request : initial_order) {
-        if (Clock::now() >= deadline) break;
-        const auto choice = best_insertion(current, request);
-        if (choice && choice->gain > 1e-9)
-            current.insert(request, choice->taxi, choice->pickup, choice->delivery);
+    std::unique_ptr<RoutePoolRepair> route_pool;
+    bool paths_only = config.paths_only;
+    if (config.route_pool_repair) {
+        route_pool = std::make_unique<RoutePoolRepair>(instance, config.route_pool_limit);
+        if (config.path_generation || config.paths_only) {
+            const auto generation_start = Clock::now();
+            const auto generation_deadline = std::min(search_deadline, generation_start +
+                std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
+                    std::min(2.0, config.time_limit * 0.2))));
+            route_pool->generate(generation_deadline, config.path_prefix_limit);
+            if (route_pool->enumeration_complete()) {
+                paths_only = true;
+                route_pool->set_limit(std::min(config.route_pool_limit, config.path_pool_limit));
+            }
+            std::cerr << "path_prefixes=" << route_pool->generated_prefixes()
+                      << " path_completed_taxis=" << route_pool->completed_taxis()
+                      << " path_seconds=" << std::chrono::duration<double>(Clock::now()-generation_start).count()
+                      << '\n';
+        }
+    }
+    if (!paths_only) {
+        std::vector<std::size_t> initial_order(current.request_count());
+        std::iota(initial_order.begin(), initial_order.end(), 0);
+        std::shuffle(initial_order.begin(), initial_order.end(), rng);
+        for (const auto request : initial_order) {
+            if (Clock::now() >= deadline) break;
+            const auto choice = best_insertion(current, request);
+            if (choice && choice->gain > 1e-9)
+                current.insert(request, choice->taxi, choice->pickup, choice->delivery);
+        }
     }
     if (config.check) current.check();
     SearchState best = current;
     SearchState candidate = current;
-    std::unique_ptr<RoutePoolRepair> route_pool;
-    if (config.route_pool_repair) {
-        route_pool = std::make_unique<RoutePoolRepair>(instance);
-        route_pool->remember(current);
-    }
+    if (route_pool) route_pool->remember(current);
     double temperature = config.temperature;
     const double minimum_temperature = config.temperature * 1e-4;
     std::size_t iterations = 0;
@@ -126,7 +146,7 @@ Result solve(const Instance& instance, const Config& config) {
     if (trace) trace << "0,0," << temperature << ',' << current.benefit() << ','
                      << best.benefit() << '\n';
 
-    while (temperature > minimum_temperature) {
+    while (!paths_only && temperature > minimum_temperature) {
         const auto iteration_start = Clock::now();
         if (iteration_start >= search_deadline) break;
         const auto selection = balance.select(rng, current.served_count());
@@ -177,10 +197,12 @@ Result solve(const Instance& instance, const Config& config) {
     }
     if (route_pool) {
         const auto before = best.benefit();
+        const auto pool_start = Clock::now();
         route_pool->improve(best, deadline);
         std::cerr << "route_pool_columns=" << route_pool->columns()
                   << " route_pool_nodes=" << route_pool->nodes()
                   << " route_pool_timeout=" << route_pool->timed_out()
+                  << " route_pool_seconds=" << std::chrono::duration<double>(Clock::now()-pool_start).count()
                   << " route_pool_gain=" << best.benefit() - before << '\n';
         if (!config.log_directory.empty()) {
             std::ofstream bank(std::filesystem::path(config.log_directory) / "route-pool.csv");
@@ -203,6 +225,7 @@ Result solve(const Instance& instance, const Config& config) {
     result.iterations = iterations;
     result.seconds = std::chrono::duration<double>(Clock::now() - start).count();
     result.annealing_complete = temperature <= minimum_temperature;
+    result.paths_only = paths_only && !route_pool->timed_out();
     if (clean_cut)
         std::cerr << "clean_cut_calls=" << clean_cut->calls()
                   << " clean_cut_moves=" << clean_cut->applied_moves()

@@ -10,6 +10,7 @@ struct Result {
     std::size_t iterations = 0;
     double seconds = 0;
     bool annealing_complete = false;
+    bool paths_only = false;
 };
 Result solve(const Instance& instance, const Config& config);
 } // namespace soict::alns

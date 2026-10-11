@@ -1,5 +1,6 @@
 #include "search/alns/operators/Repair/RoutePoolRepair.hpp"
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <iomanip>
 #include <ostream>
@@ -29,7 +30,12 @@ void RoutePoolRepair::add(const SearchState& state, std::size_t taxi, bool enfor
     }
     std::sort(requests.begin(), requests.end());
     const auto profit = revenue - state.cache(taxi).cost();
-    if (profit <= 1e-9) return;
+    add_column(taxi, requests, nodes, profit, enforce_limit);
+}
+
+void RoutePoolRepair::add_column(std::size_t taxi, const std::vector<std::size_t>& requests,
+        const std::vector<std::size_t>& nodes, double profit, bool enforce_limit) {
+    if (!std::isfinite(profit) || profit <= 1e-9) return;
     auto& bank = pool_[taxi];
     const auto found = bank.find(requests);
     if (found != bank.end() && found->second.profit >= profit) return;
@@ -42,12 +48,140 @@ void RoutePoolRepair::add(const SearchState& state, std::size_t taxi, bool enfor
     }
 }
 
+void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit) {
+    if (!prefix_limit) throw std::invalid_argument("path prefix limit must be positive");
+    generated_prefixes_ = completed_taxis_ = 0;
+    if (std::chrono::steady_clock::now() >= deadline) return;
+    const auto& in = instance_;
+    const auto n = in.passengers.size(), nr = n + in.parcels.size(), nv = in.node_count();
+    struct Request {
+        std::size_t pickup, delivery;
+        double ready, latest, drop_ready, drop_latest, service, revenue, weight;
+    };
+    std::vector<Request> requests;
+    for (std::size_t r = 0; r < nr; ++r) {
+        if (r < n) {
+            const auto& p = in.passengers[r];
+            requests.push_back({in.passenger_pickup(r), in.passenger_dropoff(r),
+                p.pickup.earliest, p.pickup.latest, 0, std::numeric_limits<double>::infinity(),
+                p.service, p.revenue, 0});
+        } else {
+            const auto& p = in.parcels[r-n];
+            requests.push_back({in.parcel_pickup(r-n), in.parcel_dropoff(r-n),
+                p.pickup.earliest, p.pickup.latest, p.delivery.earliest, p.delivery.latest,
+                p.service, p.revenue, p.weight});
+        }
+    }
+    struct Arc { std::size_t request; double latest_departure; };
+    std::vector<std::vector<Arc>> next(nv);
+    for (std::size_t node = 0; node < nv; ++node) {
+        if (std::chrono::steady_clock::now() >= deadline) return;
+        auto& arcs = next[node];
+        for (std::size_t r = 0; r < nr; ++r) {
+            const auto travel = in.travel_time[node*nv+requests[r].pickup];
+            const auto guard = 8*std::numeric_limits<double>::epsilon()*
+                std::max({1.0,std::abs(requests[r].latest),std::abs(travel)});
+            const auto latest = requests[r].latest - travel + 1e-8 + guard;
+            if (latest >= -1e-8) arcs.push_back({r, latest});
+        }
+        std::sort(arcs.begin(), arcs.end(), [](const auto& a, const auto& b) {
+            return a.latest_departure > b.latest_departure ||
+                (a.latest_departure == b.latest_departure && a.request < b.request);
+        });
+    }
+    generated_prefixes_ = completed_taxis_ = 0;
+    std::vector<unsigned char> picked(nr, 0), opened(nr, 0);
+    std::vector<std::size_t> route, served;
+    route.reserve(2*nr); served.reserve(nr);
+    for (std::size_t taxi = 0; taxi < pool_.size(); ++taxi) {
+        if (std::chrono::steady_clock::now() >= deadline) break;
+        // Fairly divide a finite generation budget across the remaining taxis.
+        const auto now = std::chrono::steady_clock::now();
+        const auto taxi_deadline = deadline == Deadline::max() ? deadline :
+            now + (deadline-now)/static_cast<Deadline::duration::rep>(pool_.size()-taxi);
+        std::size_t prefixes = 0;
+        bool exhausted = false;
+        const auto visit = [&](auto&& self, std::size_t last, double time, double cost,
+                               double revenue, double load, std::size_t open_count) -> void {
+            if (exhausted) return;
+            if (prefixes >= prefix_limit || ((prefixes & 63) == 0 &&
+                std::chrono::steady_clock::now() >= taxi_deadline)) {
+                exhausted = true; return;
+            }
+            ++prefixes;
+            if (!open_count && revenue-cost > 1e-9) {
+                auto key = served;
+                std::sort(key.begin(), key.end());
+                add_column(taxi, key, route, revenue-cost, true);
+            }
+            // An overflowing departure can still end a complete route: the
+            // full evaluator checks arrivals, with no return leg. It cannot
+            // be extended to another finite arrival.
+            if (!std::isfinite(time)) return;
+            for (std::size_t i = 0; i < served.size(); ++i) {
+                const auto r = served[i];
+                if (!opened[r]) continue;
+                const auto& q = requests[r];
+                const double arrival = time + in.travel_time[last*nv+q.delivery];
+                if (!std::isfinite(arrival) || arrival > q.drop_latest + 1e-8) continue;
+                opened[r] = 0; route.push_back(q.delivery);
+                self(self, q.delivery, std::max(arrival,q.drop_ready)+q.service,
+                     cost+in.travel_cost[last*nv+q.delivery], revenue, load-q.weight, open_count-1);
+                route.pop_back(); opened[r] = 1;
+                if (exhausted) return;
+            }
+            for (const auto& arc : next[last]) {
+                if (time > arc.latest_departure) break;
+                const auto r = arc.request;
+                if (picked[r]) continue;
+                const auto& q = requests[r];
+                if (load+q.weight > in.taxis[taxi].parcel_capacity+1e-8) continue;
+                const double arrival = time+in.travel_time[last*nv+q.pickup];
+                // Test the actual arrival as well: cancellation in the sorted
+                // departure threshold is not a substitute for feasibility.
+                if (arrival > q.latest+1e-8) continue;
+                const double departure = std::max(arrival,q.ready)+q.service;
+                const double expense = cost+in.travel_cost[last*nv+q.pickup];
+                picked[r] = 1; served.push_back(r); route.push_back(q.pickup);
+                if (r < n) {
+                    route.push_back(q.delivery);
+                    const auto drop_arrival = departure+in.travel_time[q.pickup*nv+q.delivery];
+                    if (std::isfinite(drop_arrival))
+                        self(self,q.delivery,drop_arrival+q.service,
+                             expense+in.travel_cost[q.pickup*nv+q.delivery], revenue+q.revenue,load,open_count);
+                    route.pop_back();
+                } else {
+                    opened[r] = 1;
+                    self(self,q.pickup,departure,expense,revenue+q.revenue,load+q.weight,open_count+1);
+                    opened[r] = 0;
+                }
+                route.pop_back(); served.pop_back(); picked[r] = 0;
+                if (exhausted) return;
+            }
+        };
+        visit(visit,taxi,0,0,0,0,0);
+        generated_prefixes_ += prefixes;
+        completed_taxis_ += !exhausted;
+    }
+}
+
 void RoutePoolRepair::remember(const SearchState& state) {
     if (&state.instance() != &instance_) throw std::logic_error("route pool instance mismatch");
     for (const auto taxi : state.active_taxis()) {
         if (versions_[taxi] == state.cache(taxi).version()) continue;
         versions_[taxi] = state.cache(taxi).version();
         add(state, taxi, true);
+    }
+}
+
+void RoutePoolRepair::set_limit(std::size_t limit) {
+    if (!limit) throw std::invalid_argument("route pool limit must be positive");
+    limit_ = limit;
+    for (auto& bank : pool_) while (bank.size() > limit_) {
+        const auto worst = std::min_element(bank.begin(), bank.end(), [](const auto& a, const auto& b) {
+            return a.second.profit < b.second.profit;
+        });
+        bank.erase(worst);
     }
 }
 

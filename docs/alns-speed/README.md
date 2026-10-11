@@ -2,6 +2,8 @@
 
 Runtime profiling, insertion optimizations, and speed experiments for ALNS.
 
+- [Direct route generation](direct-path-generation.md): the current generation-first solver, ALNS fallback, and matched r240 evidence.
+- [Short annealing and route-pool repair](short-annealing-route-pool.md): the preceding 6,000-step optimization and its matched r240 evidence.
 - [Speed campaign](alns-speed-campaign.md): retained optimizations, granular neighborhood trials, runtime distribution, and validation.
 - [GCC optimization pragmas](pragma-optimization.md): C++17 judge-package comparison of O2, O3, and loop unrolling.
 - [AVX2 and selective unrolling](pragma-followup.md): follow-up trials of a CPU target and explicit insertion-loop factors.

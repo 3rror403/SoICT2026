@@ -97,25 +97,25 @@ void nonnegative(double x, const char* name) {
 void valid_window(Window w) {
     nonnegative(w.earliest, "negative or nonfinite window start");
     nonnegative(w.latest, "negative or nonfinite window end");
-    if (w.earliest > w.latest) throw std::invalid_argument("reversed time window");
+    if (w.earliest > w.latest) throw std::invalid_argument("error");
 }
 }
 
 void Instance::validate() const {
-    if (taxis.empty()) throw std::invalid_argument("instance needs at least one taxi");
+    if (taxis.empty()) throw std::invalid_argument("error");
     const auto v = node_count();
     if (!vertex_ids.empty()) {
-        if (vertex_ids.size() != v) throw std::invalid_argument("invalid vertex mapping size");
+        if (vertex_ids.size() != v) throw std::invalid_argument("error");
         std::vector<bool> seen(v, false);
         for (const auto id : vertex_ids) {
             if (id == 0 || id > v || seen[id - 1])
-                throw std::invalid_argument("vertex IDs must be a permutation of 1..V");
+                throw std::invalid_argument("error");
             seen[id - 1] = true;
         }
     }
     if (v > std::numeric_limits<std::size_t>::max() / v ||
         travel_time.size() != v * v || travel_cost.size() != v * v)
-        throw std::invalid_argument("matrix dimensions do not match node count");
+        throw std::invalid_argument("error");
     for (const auto& taxi : taxis) nonnegative(taxi.parcel_capacity, "invalid taxi capacity");
     for (const auto& p : passengers) {
         nonnegative(p.revenue, "invalid passenger revenue");
@@ -125,7 +125,7 @@ void Instance::validate() const {
     for (const auto& p : parcels) {
         nonnegative(p.revenue, "invalid parcel revenue");
         if (!std::isfinite(p.weight) || p.weight <= 0)
-            throw std::invalid_argument("invalid parcel weight");
+            throw std::invalid_argument("error");
         nonnegative(p.service, "invalid parcel service duration");
         valid_window(p.pickup);
         valid_window(p.delivery);
@@ -284,9 +284,9 @@ Instance read_instance(std::istream& in) {
     read(in, n, "passenger count");
     read(in, m, "parcel count");
     if (k == 0 || k > 100000 || n > 20000 || m > 20000 || n + m > 20000)
-        throw std::runtime_error("invalid or unsupported instance size");
+        throw std::runtime_error("error");
     const std::size_t v = k + 2 * (n + m);
-    if (v > 50000) throw std::runtime_error("node count too large");
+    if (v > 50000) throw std::runtime_error("error");
     Instance instance;
     instance.taxis.resize(k);
     instance.passengers.resize(n);
@@ -297,7 +297,7 @@ Instance read_instance(std::istream& in) {
         auto& id = instance.vertex_ids[node];
         read(in, id, "vertex ID");
         if (id == 0 || id > v || seen[id - 1])
-            throw std::runtime_error("vertex IDs must be distinct and within 1..V");
+            throw std::runtime_error("error");
         seen[id - 1] = true;
     };
     for (std::size_t taxi = 0; taxi < k; ++taxi) {
@@ -335,7 +335,7 @@ Instance read_instance(std::istream& in) {
                 read(in, (*matrix)[internal[u] * v + internal[w]], "matrix entry");
     }
     std::string extra;
-    if (in >> extra) throw std::runtime_error("unexpected data after instance matrices");
+    if (in >> extra) throw std::runtime_error("error");
     instance.validate();
     return instance;
 }
@@ -371,14 +371,14 @@ namespace soict {
 void write_solution(std::ostream& out, const Solution& solution, const Instance& instance) {
     instance.validate();
     const auto evaluation = solution.evaluate(instance);
-    if (!evaluation.feasible) throw std::runtime_error("invalid solution: " + evaluation.error);
+    if (!evaluation.feasible) throw std::runtime_error("error" + evaluation.error);
     out << std::setprecision(17) << evaluation.benefit << '\n';
     for (const auto& route : solution.routes) {
         out << route.size();
         for (const auto node : route) out << ' ' << instance.vertex_id(node);
         out << '\n';
     }
-    if (!out) throw std::runtime_error("failed to write solution");
+    if (!out) throw std::runtime_error("error");
 }
 } // namespace soict
 
@@ -474,7 +474,7 @@ namespace {
 std::atomic<std::uint64_t> next_route_version{1};
 double service(const Instance& in, std::size_t node) {
     const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();
-    if (node < k || node >= in.node_count()) throw std::logic_error("invalid service node");
+    if (node < k || node >= in.node_count()) throw std::logic_error("error");
     if (node < k + 2 * n) return in.passengers[(node - k) % n].service;
     return in.parcels[(node - k - 2 * n) % m].service;
 }
@@ -957,10 +957,10 @@ SearchState::SearchState(const Instance& in, Solution solution,
       locations_(in.passengers.size() + in.parcels.size()),
       removal_cache_(locations_.size()) {
     if (insertion_scratch_->request_count() != locations_.size())
-        throw std::logic_error("insertion scratch request count mismatch");
+        throw std::logic_error("error");
     active_taxis_.reserve(in.taxis.size());
     const auto evaluation = solution.evaluate(in);
-    if (!evaluation.feasible) throw std::logic_error("invalid search state: " + evaluation.error);
+    if (!evaluation.feasible) throw std::logic_error("error" + evaluation.error);
     benefit_ = evaluation.benefit;
     for (std::size_t k = 0; k < solution.routes.size(); ++k)
         if (!solution.routes[k].empty()) rebuild_route(k, solution.routes[k]);
@@ -968,7 +968,7 @@ SearchState::SearchState(const Instance& in, Solution solution,
 
 void SearchState::copy_from(const SearchState& other) {
     if (this == &other) return;
-    if (instance_ != other.instance_) throw std::logic_error("cannot copy states of different instances");
+    if (instance_ != other.instance_) throw std::logic_error("error");
     // Rebuild versions are globally unique; version 0 denotes a cleared route.
     // Equal versions on the same instance/taxi already contain identical data.
     for (std::size_t taxi = 0; taxi < routes_by_taxi_.size(); ++taxi)
@@ -1347,7 +1347,7 @@ void SearchState::check() const {
     const auto result = solution().evaluate(*instance_);
     if (!result.feasible || std::abs(result.benefit - benefit_) >
                                1e-6 * std::max(1.0, std::abs(result.benefit)))
-        throw std::logic_error("search-state objective or feasibility mismatch: " + result.error);
+        throw std::logic_error("error" + result.error);
 }
 } // namespace soict::alns
 
@@ -1397,7 +1397,7 @@ namespace soict::alns {
 Balance::Balance(std::size_t couples, std::size_t requests, bool thompson)
     : thompson_(thompson), couples_(couples), sizes_(couples),
       reward_sum_(couples, 0), calls_(couples, 0) {
-    if (couples == 0) throw std::invalid_argument("BALANCE needs an operator couple");
+    if (couples == 0) throw std::invalid_argument("error");
     for (std::size_t p = 1; p <= requests; p *= 2) {
         powers_.push_back(p);
         if (p > requests / 2) break;
@@ -1481,7 +1481,11 @@ struct Config {
     std::uint64_t seed = 1;
     double time_limit = 59.0;
     double temperature = 200.0;
-    double cooling = std::exp(std::log(1e-4) / 60000.0);
+    // Spend the search budget on collecting diverse routes, then let the
+    // final route-pool master combine them. The former 60,000-step schedule
+    // can still be selected with --disable-path-generation and
+    // --cooling 0.9998465061085267.
+    double cooling = std::exp(std::log(1e-4) / 6000.0);
     bool check = false;
     bool local_search = true;
     bool clean_cut_2opt_star = true;
@@ -1490,6 +1494,11 @@ struct Config {
     bool route_removal = true;
     bool opportunity_removal = true;
     bool route_pool_repair = true;
+    bool path_generation = true;
+    bool paths_only = false;
+    std::size_t path_prefix_limit = 50000;
+    std::size_t route_pool_limit = 200;
+    std::size_t path_pool_limit = 48;
     std::size_t ls_interval = 1;
     bool thompson = false;
     std::string log_directory;
@@ -1506,6 +1515,7 @@ struct Result {
     std::size_t iterations = 0;
     double seconds = 0;
     bool annealing_complete = false;
+    bool paths_only = false;
 };
 Result solve(const Instance& instance, const Config& config);
 } // namespace soict::alns
@@ -2153,6 +2163,14 @@ class RoutePoolRepair {
 public:
     explicit RoutePoolRepair(const Instance& instance, std::size_t limit = 200);
     void remember(const SearchState& state);
+    // Enumerate feasible prefixes independently for each taxi. Only completed
+    // positive-profit routes enter the existing capped, served-set bank.
+    // Completion refers to prefix enumeration, not retention of every column.
+    void generate(Deadline deadline, std::size_t prefix_limit = 50000);
+    void set_limit(std::size_t limit);
+    std::size_t generated_prefixes() const { return generated_prefixes_; }
+    std::size_t completed_taxis() const { return completed_taxis_; }
+    bool enumeration_complete() const { return completed_taxis_ == pool_.size(); }
     bool improve(SearchState& state, Deadline deadline);
     std::size_t columns() const { return column_count_; }
     std::size_t nodes() const { return nodes_; }
@@ -2166,9 +2184,12 @@ private:
     const Instance& instance_;
     std::size_t limit_, column_count_ = 0, nodes_ = 0;
     bool timed_out_ = false;
+    std::size_t generated_prefixes_ = 0, completed_taxis_ = 0;
     std::vector<std::map<std::vector<std::size_t>, Column>> pool_;
     std::vector<std::uint64_t> versions_;
     void add(const SearchState&, std::size_t taxi, bool enforce_limit);
+    void add_column(std::size_t taxi, const std::vector<std::size_t>& requests,
+                    const std::vector<std::size_t>& route, double profit, bool enforce_limit);
 };
 } // namespace soict::alns
 
@@ -2189,7 +2210,9 @@ private:
 namespace soict::alns {
 Result solve(const Instance& instance, const Config& config) {
     using Clock = std::chrono::steady_clock;
-    if (!config.ls_interval) throw std::invalid_argument("ls interval must be positive");
+    if (!config.ls_interval) throw std::invalid_argument("error");
+    if (config.paths_only && !config.route_pool_repair)
+        throw std::invalid_argument("error");
     const auto start = Clock::now();
     const auto deadline = start + std::chrono::duration_cast<Clock::duration>(
                                   std::chrono::duration<double>(config.time_limit));
@@ -2233,27 +2256,45 @@ Result solve(const Instance& instance, const Config& config) {
         std::chrono::duration_cast<Clock::duration>(
             std::chrono::duration<double>(std::min(1.0, config.time_limit * 0.05))));
     current.set_empty_taxi_index(build_empty_taxi_index(current, index_deadline));
-    std::vector<std::size_t> initial_order(current.request_count());
-    std::iota(initial_order.begin(), initial_order.end(), 0);
-    std::shuffle(initial_order.begin(), initial_order.end(), rng);
-    for (const auto request : initial_order) {
-        if (Clock::now() >= deadline) break;
-        const auto choice = best_insertion(current, request);
-        if (choice && choice->gain > 1e-9)
-            current.insert(request, choice->taxi, choice->pickup, choice->delivery);
+    std::unique_ptr<RoutePoolRepair> route_pool;
+    bool paths_only = config.paths_only;
+    if (config.route_pool_repair) {
+        route_pool = std::make_unique<RoutePoolRepair>(instance, config.route_pool_limit);
+        if (config.path_generation || config.paths_only) {
+            const auto generation_start = Clock::now();
+            const auto generation_deadline = std::min(search_deadline, generation_start +
+                std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
+                    std::min(2.0, config.time_limit * 0.2))));
+            route_pool->generate(generation_deadline, config.path_prefix_limit);
+            if (route_pool->enumeration_complete()) {
+                paths_only = true;
+                route_pool->set_limit(std::min(config.route_pool_limit, config.path_pool_limit));
+            }
+            std::cerr << "path_prefixes=" << route_pool->generated_prefixes()
+                      << " path_completed_taxis=" << route_pool->completed_taxis()
+                      << " path_seconds=" << std::chrono::duration<double>(Clock::now()-generation_start).count()
+                      << '\n';
+        }
+    }
+    if (!paths_only) {
+        std::vector<std::size_t> initial_order(current.request_count());
+        std::iota(initial_order.begin(), initial_order.end(), 0);
+        std::shuffle(initial_order.begin(), initial_order.end(), rng);
+        for (const auto request : initial_order) {
+            if (Clock::now() >= deadline) break;
+            const auto choice = best_insertion(current, request);
+            if (choice && choice->gain > 1e-9)
+                current.insert(request, choice->taxi, choice->pickup, choice->delivery);
+        }
     }
     if (config.check) current.check();
     SearchState best = current;
     SearchState candidate = current;
-    std::unique_ptr<RoutePoolRepair> route_pool;
-    if (config.route_pool_repair) {
-        route_pool = std::make_unique<RoutePoolRepair>(instance);
-        route_pool->remember(current);
-    }
+    if (route_pool) route_pool->remember(current);
     double temperature = config.temperature;
     const double minimum_temperature = config.temperature * 1e-4;
     std::size_t iterations = 0;
-    while (temperature > minimum_temperature) {
+    while (!paths_only && temperature > minimum_temperature) {
         const auto iteration_start = Clock::now();
         if (iteration_start >= search_deadline) break;
         const auto selection = balance.select(rng, current.served_count());
@@ -2300,6 +2341,7 @@ Result solve(const Instance& instance, const Config& config) {
     result.iterations = iterations;
     result.seconds = std::chrono::duration<double>(Clock::now() - start).count();
     result.annealing_complete = temperature <= minimum_temperature;
+    result.paths_only = paths_only && !route_pool->timed_out();
     return result;
 }
 } // namespace soict::alns
@@ -2790,7 +2832,7 @@ void PositiveInsertionCache::select_winner(std::size_t request) {
 void PositiveInsertionCache::prepare(const SearchState& state,
     const std::vector<std::size_t>& requests) {
     const auto& index = state.empty_taxi_index();
-    if (!index) throw std::logic_error("positive insertion cache requires empty taxi index");
+    if (!index) throw std::logic_error("error");
     if (index_ != index || taxis_ != state.taxi_count() ||
         requests_ != state.request_count()) {
         index_ = index;
@@ -2976,7 +3018,7 @@ void ProfitInsertion::apply(SearchState& state, const std::vector<std::size_t>& 
         }
         if (!choice) return;
         if (!state.insert(choice->request, choice->taxi, choice->pickup, choice->delivery))
-            throw std::logic_error("profit repair descriptor disagrees with insertion");
+            throw std::logic_error("error");
         if (indexed) positive_cache_.refresh_taxi(state, choice->taxi, pool);
     }
 }
@@ -2986,6 +3028,7 @@ void ProfitInsertion::apply(SearchState& state, const std::vector<std::size_t>& 
 
 // BEGIN src/search/alns/operators/Repair/RoutePoolRepair.cpp
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <iomanip>
 #include <ostream>
@@ -2995,7 +3038,7 @@ void ProfitInsertion::apply(SearchState& state, const std::vector<std::size_t>& 
 namespace soict::alns {
 RoutePoolRepair::RoutePoolRepair(const Instance& instance, std::size_t limit)
     : instance_(instance), limit_(limit), pool_(instance.taxis.size()), versions_(pool_.size(), 0) {
-    if (!limit) throw std::invalid_argument("route pool limit must be positive");
+    if (!limit) throw std::invalid_argument("error");
 }
 
 void RoutePoolRepair::add(const SearchState& state, std::size_t taxi, bool enforce_limit) {
@@ -3015,7 +3058,12 @@ void RoutePoolRepair::add(const SearchState& state, std::size_t taxi, bool enfor
     }
     std::sort(requests.begin(), requests.end());
     const auto profit = revenue - state.cache(taxi).cost();
-    if (profit <= 1e-9) return;
+    add_column(taxi, requests, nodes, profit, enforce_limit);
+}
+
+void RoutePoolRepair::add_column(std::size_t taxi, const std::vector<std::size_t>& requests,
+        const std::vector<std::size_t>& nodes, double profit, bool enforce_limit) {
+    if (!std::isfinite(profit) || profit <= 1e-9) return;
     auto& bank = pool_[taxi];
     const auto found = bank.find(requests);
     if (found != bank.end() && found->second.profit >= profit) return;
@@ -3028,12 +3076,140 @@ void RoutePoolRepair::add(const SearchState& state, std::size_t taxi, bool enfor
     }
 }
 
+void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit) {
+    if (!prefix_limit) throw std::invalid_argument("error");
+    generated_prefixes_ = completed_taxis_ = 0;
+    if (std::chrono::steady_clock::now() >= deadline) return;
+    const auto& in = instance_;
+    const auto n = in.passengers.size(), nr = n + in.parcels.size(), nv = in.node_count();
+    struct Request {
+        std::size_t pickup, delivery;
+        double ready, latest, drop_ready, drop_latest, service, revenue, weight;
+    };
+    std::vector<Request> requests;
+    for (std::size_t r = 0; r < nr; ++r) {
+        if (r < n) {
+            const auto& p = in.passengers[r];
+            requests.push_back({in.passenger_pickup(r), in.passenger_dropoff(r),
+                p.pickup.earliest, p.pickup.latest, 0, std::numeric_limits<double>::infinity(),
+                p.service, p.revenue, 0});
+        } else {
+            const auto& p = in.parcels[r-n];
+            requests.push_back({in.parcel_pickup(r-n), in.parcel_dropoff(r-n),
+                p.pickup.earliest, p.pickup.latest, p.delivery.earliest, p.delivery.latest,
+                p.service, p.revenue, p.weight});
+        }
+    }
+    struct Arc { std::size_t request; double latest_departure; };
+    std::vector<std::vector<Arc>> next(nv);
+    for (std::size_t node = 0; node < nv; ++node) {
+        if (std::chrono::steady_clock::now() >= deadline) return;
+        auto& arcs = next[node];
+        for (std::size_t r = 0; r < nr; ++r) {
+            const auto travel = in.travel_time[node*nv+requests[r].pickup];
+            const auto guard = 8*std::numeric_limits<double>::epsilon()*
+                std::max({1.0,std::abs(requests[r].latest),std::abs(travel)});
+            const auto latest = requests[r].latest - travel + 1e-8 + guard;
+            if (latest >= -1e-8) arcs.push_back({r, latest});
+        }
+        std::sort(arcs.begin(), arcs.end(), [](const auto& a, const auto& b) {
+            return a.latest_departure > b.latest_departure ||
+                (a.latest_departure == b.latest_departure && a.request < b.request);
+        });
+    }
+    generated_prefixes_ = completed_taxis_ = 0;
+    std::vector<unsigned char> picked(nr, 0), opened(nr, 0);
+    std::vector<std::size_t> route, served;
+    route.reserve(2*nr); served.reserve(nr);
+    for (std::size_t taxi = 0; taxi < pool_.size(); ++taxi) {
+        if (std::chrono::steady_clock::now() >= deadline) break;
+        // Fairly divide a finite generation budget across the remaining taxis.
+        const auto now = std::chrono::steady_clock::now();
+        const auto taxi_deadline = deadline == Deadline::max() ? deadline :
+            now + (deadline-now)/static_cast<Deadline::duration::rep>(pool_.size()-taxi);
+        std::size_t prefixes = 0;
+        bool exhausted = false;
+        const auto visit = [&](auto&& self, std::size_t last, double time, double cost,
+                               double revenue, double load, std::size_t open_count) -> void {
+            if (exhausted) return;
+            if (prefixes >= prefix_limit || ((prefixes & 63) == 0 &&
+                std::chrono::steady_clock::now() >= taxi_deadline)) {
+                exhausted = true; return;
+            }
+            ++prefixes;
+            if (!open_count && revenue-cost > 1e-9) {
+                auto key = served;
+                std::sort(key.begin(), key.end());
+                add_column(taxi, key, route, revenue-cost, true);
+            }
+            // An overflowing departure can still end a complete route: the
+            // full evaluator checks arrivals, with no return leg. It cannot
+            // be extended to another finite arrival.
+            if (!std::isfinite(time)) return;
+            for (std::size_t i = 0; i < served.size(); ++i) {
+                const auto r = served[i];
+                if (!opened[r]) continue;
+                const auto& q = requests[r];
+                const double arrival = time + in.travel_time[last*nv+q.delivery];
+                if (!std::isfinite(arrival) || arrival > q.drop_latest + 1e-8) continue;
+                opened[r] = 0; route.push_back(q.delivery);
+                self(self, q.delivery, std::max(arrival,q.drop_ready)+q.service,
+                     cost+in.travel_cost[last*nv+q.delivery], revenue, load-q.weight, open_count-1);
+                route.pop_back(); opened[r] = 1;
+                if (exhausted) return;
+            }
+            for (const auto& arc : next[last]) {
+                if (time > arc.latest_departure) break;
+                const auto r = arc.request;
+                if (picked[r]) continue;
+                const auto& q = requests[r];
+                if (load+q.weight > in.taxis[taxi].parcel_capacity+1e-8) continue;
+                const double arrival = time+in.travel_time[last*nv+q.pickup];
+                // Test the actual arrival as well: cancellation in the sorted
+                // departure threshold is not a substitute for feasibility.
+                if (arrival > q.latest+1e-8) continue;
+                const double departure = std::max(arrival,q.ready)+q.service;
+                const double expense = cost+in.travel_cost[last*nv+q.pickup];
+                picked[r] = 1; served.push_back(r); route.push_back(q.pickup);
+                if (r < n) {
+                    route.push_back(q.delivery);
+                    const auto drop_arrival = departure+in.travel_time[q.pickup*nv+q.delivery];
+                    if (std::isfinite(drop_arrival))
+                        self(self,q.delivery,drop_arrival+q.service,
+                             expense+in.travel_cost[q.pickup*nv+q.delivery], revenue+q.revenue,load,open_count);
+                    route.pop_back();
+                } else {
+                    opened[r] = 1;
+                    self(self,q.pickup,departure,expense,revenue+q.revenue,load+q.weight,open_count+1);
+                    opened[r] = 0;
+                }
+                route.pop_back(); served.pop_back(); picked[r] = 0;
+                if (exhausted) return;
+            }
+        };
+        visit(visit,taxi,0,0,0,0,0);
+        generated_prefixes_ += prefixes;
+        completed_taxis_ += !exhausted;
+    }
+}
+
 void RoutePoolRepair::remember(const SearchState& state) {
-    if (&state.instance() != &instance_) throw std::logic_error("route pool instance mismatch");
+    if (&state.instance() != &instance_) throw std::logic_error("error");
     for (const auto taxi : state.active_taxis()) {
         if (versions_[taxi] == state.cache(taxi).version()) continue;
         versions_[taxi] = state.cache(taxi).version();
         add(state, taxi, true);
+    }
+}
+
+void RoutePoolRepair::set_limit(std::size_t limit) {
+    if (!limit) throw std::invalid_argument("error");
+    limit_ = limit;
+    for (auto& bank : pool_) while (bank.size() > limit_) {
+        const auto worst = std::min_element(bank.begin(), bank.end(), [](const auto& a, const auto& b) {
+            return a.second.profit < b.second.profit;
+        });
+        bank.erase(worst);
     }
 }
 
@@ -3051,7 +3227,7 @@ void RoutePoolRepair::write(std::ostream& out) const {
 }
 
 bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
-    if (&state.instance() != &instance_) throw std::logic_error("route pool instance mismatch");
+    if (&state.instance() != &instance_) throw std::logic_error("error");
     // Restore every incumbent route even if the bank's size cap removed it.
     for (const auto taxi : state.active_taxis()) add(state, taxi, false);
     std::vector<std::vector<Column>> columns(pool_.size());
@@ -3255,7 +3431,7 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
         if (incumbent[taxi] >= 0) candidate.routes[taxi] = columns[taxi][incumbent[taxi]].route;
     const auto evaluated = candidate.evaluate(instance_);
     if (!evaluated.feasible || std::abs(evaluated.benefit - best_profit) > 1e-6)
-        throw std::logic_error("route pool selection disagrees with full evaluation");
+        throw std::logic_error("error");
     SearchState repaired(instance_, std::move(candidate), state.insertion_scratch_handle());
     repaired.set_empty_taxi_index(state.empty_taxi_index());
     state.copy_from(repaired);
@@ -3311,7 +3487,7 @@ bool AddRequest::improve(SearchState& state) const {
         }
         if (!best) break;
         if (!state.insert(best->request, best->taxi, best->pickup, best->delivery))
-            throw std::logic_error("add-request descriptor disagrees with mutation");
+            throw std::logic_error("error");
         changed = true;
         if (indexed) cache_.refresh_taxi(state, best->taxi, requests_);
     }
@@ -3346,7 +3522,7 @@ bool RemoveRequest::improve(SearchState& state) const {
         if (!best) break;
         const auto taxi = static_cast<std::size_t>(state.location(*best).taxi);
         if (!state.remove(*best))
-            throw std::logic_error("remove-request descriptor disagrees with mutation");
+            throw std::logic_error("error");
         changed = true;
         moves[*best].reset();
         for (std::size_t request = 0; request < state.request_count(); ++request)
@@ -3513,7 +3689,7 @@ bool PassengerRelocate::improve(SearchState& state) const {
             (state.remove(choice.request) && state.insert(choice.request,
                 target, choice.pickup, choice.delivery));
         if (!applied)
-            throw std::logic_error("passenger relocation descriptor disagrees with mutation");
+            throw std::logic_error("error");
         changed = true;
         if (state.is_active(source) != source_active_before ||
             state.is_active(target) != target_active_before) {
@@ -3762,7 +3938,7 @@ bool ParcelRelocate::improve(SearchState& state) const {
             (state.remove(choice.request) && state.insert(choice.request,
                 target, choice.pickup, choice.delivery));
         if (!applied)
-            throw std::logic_error("parcel relocation descriptor disagrees with mutation");
+            throw std::logic_error("error");
         changed = true;
         if (state.is_active(source) != source_active_before ||
             state.is_active(target) != target_active_before) {
@@ -3859,7 +4035,7 @@ bool CleanCut2OptStar::improve(SearchState& state) const {
                 if (best_gain > 1e-9) {
                     const double before = state.benefit();
                     if (!state.exchange_route_suffixes(taxi_a, best_a, taxi_b, best_b))
-                        throw std::logic_error("validated clean-cut exchange failed");
+                        throw std::logic_error("error");
                     ++applied_moves_;
                     total_gain_ += state.benefit() - before;
                     changed = applied = true;
@@ -4057,7 +4233,7 @@ bool ReplaceRequest::improve(SearchState& state) const {
     while (const auto choice = best_choice(state)) {
         if (!state.replace_request(choice->outgoing, choice->insertion.request,
                                    choice->insertion.pickup, choice->insertion.delivery))
-            throw std::logic_error("replacement descriptor disagrees with mutation");
+            throw std::logic_error("error");
         changed = true;
     }
     return changed;
@@ -4205,7 +4381,7 @@ bool SwapRequest::improve(SearchState& state) const {
     bool changed = false;
     while (const auto choice = best_choice(state)) {
         if (!state.swap_requests(choice->first, choice->second))
-            throw std::logic_error("request swap descriptor disagrees with mutation");
+            throw std::logic_error("error");
         changed = true;
     }
     return changed;

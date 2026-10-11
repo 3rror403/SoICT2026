@@ -42,15 +42,15 @@ def macro_compact(source, limit):
         return ''.join(output)
 
     # Token lengths include a conservative spacing allowance for ranking.
-    for _ in range(600):
+    for _ in range(1200):
         candidates = collections.Counter()
-        for width in (2, 3, 4, 6, 8, 12, 16):
+        for width in (2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64):
             candidates.update(tuple(tokens[i:i + width]) for i in range(len(tokens) - width + 1))
         alias = next(a for a in aliases if a not in occupied)
         best = None
         best_gain = 0
         for sequence, count in candidates.items():
-            if count < 3:
+            if count < 2:
                 continue
             length = sum(map(len, sequence))
             estimated = (length - len(alias)) * (count - 1) - 12
