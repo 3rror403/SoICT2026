@@ -2,7 +2,9 @@
 
 Runtime profiling, insertion optimizations, and speed experiments for ALNS.
 
-- [n500 route master](n500-route-master.md): wider generation, native LP bounds, basis reuse, and checked n500/r240 results.
+- [Synthetic performance results](../../SYNTHETIC_RESULTS.md): 27/27 checked 90-second runs, 180-second quality trials, resource caps, and updated BKS provenance.
+- [Large synthetic route pools](../../SYNTHETIC_SPEED.md): generation and master feedback, optional CPLEX, and checked 180-second results across nine synthetic instances.
+- [n500 route master](n500-route-master.md): historical wider generation, native LP bounds, basis reuse, and checked n500/r240 results.
 - [Direct route generation](direct-path-generation.md): generation-first design, ALNS fallback, and historical matched r240 evidence.
 - [Short annealing and route-pool repair](short-annealing-route-pool.md): the preceding 6,000-step optimization and its matched r240 evidence.
 - [Speed campaign](alns-speed-campaign.md): retained optimizations, granular neighborhood trials, runtime distribution, and validation.

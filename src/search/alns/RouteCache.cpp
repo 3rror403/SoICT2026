@@ -25,6 +25,9 @@ double load_delta(const Instance& in, std::size_t node) {
 
 Segment single_node(const Instance& in, std::size_t node) {
     Segment s;
+    // Even an event without a time window requires a finite arrival. The
+    // final departure after service may overflow when no later event exists.
+    s.latest_input = std::numeric_limits<double>::max();
     s.first = s.last = node;
     s.duration = service(in, node);
     const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();

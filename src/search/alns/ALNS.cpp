@@ -96,19 +96,60 @@ Result solve(const Instance& instance, const Config& config) {
     std::unique_ptr<RoutePoolRepair> route_pool;
     bool paths_only = config.paths_only;
     if (config.route_pool_repair) {
-        route_pool = std::make_unique<RoutePoolRepair>(instance, config.route_pool_limit);
+        route_pool = std::make_unique<RoutePoolRepair>(instance, config.route_pool_limit,config.seed);
         if (config.path_generation || config.paths_only) {
             const auto generation_start = Clock::now();
             const auto generation_deadline = std::min(search_deadline, generation_start +
                 std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
-                    std::min(2.0, config.time_limit * 0.2))));
+                    std::min(config.enumeration_seconds, config.time_limit * 0.2))));
             route_pool->generate(generation_deadline, config.path_prefix_limit);
-            if (route_pool->enumeration_complete()) {
+            const auto initial_completed_taxis=route_pool->completed_taxis();
+            const bool initial_enumeration_complete=route_pool->enumeration_complete();
+            const bool sampled = config.candidate_sampling &&
+                (!initial_enumeration_complete || instance.taxis.size()>48);
+            if (sampled) {
+                const auto beam_start = Clock::now();
+                // Leave a fixed selection budget instead of abandoning a
+                // large fraction of short competition runs after an easy master.
+                const auto selection_reserve=std::chrono::duration_cast<Clock::duration>(
+                    std::chrono::duration<double>(std::min(3.0,config.time_limit*0.05)));
+                const auto beam_deadline = std::min(search_deadline-selection_reserve,beam_start+
+                    std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
+                        config.generation_seconds)));
+                std::size_t phase=0;
+                do {
+                    const auto sample_deadline = instance.taxis.size()>48 ?
+                        std::min(beam_deadline,Clock::now()+std::chrono::seconds(6)) : beam_deadline;
+                    const auto initial=current.solution();
+                    SearchState generated(instance,route_pool->generate_fleets(sample_deadline,current.empty_taxi_index(),&initial,
+                                          config.local_search,config.clean_cut_2opt_star,config.fleet_refinement_interval,
+                                          config.light_fleet_refinement,config.fleet_refinement_cycles),
+                                          current.insertion_scratch_handle());
+                    generated.set_empty_taxi_index(current.empty_taxi_index());current.copy_from(generated);
+                    if (instance.taxis.size()>48 && Clock::now()+std::chrono::seconds(2)<beam_deadline) {
+                        const auto mix_deadline=std::min(beam_deadline,Clock::now()+std::chrono::seconds(6));
+                        route_pool->improve(current,mix_deadline);
+                        std::cerr<<"path_feedback_phase="<<++phase<<" path_feedback_benefit="<<current.benefit()<<'\n';
+                        if (Clock::now()+std::chrono::seconds(2)<beam_deadline) {
+                            const auto pricing_start=Clock::now();
+                            const auto price_deadline=std::min(beam_deadline,Clock::now()+std::chrono::seconds(3));
+                            if (phase%2) route_pool->generate_replacements(price_deadline,current);
+                            else route_pool->generate(price_deadline,config.path_prefix_limit,true);
+                            std::cerr<<"path_pricing_phase="<<phase<<" path_pricing_mode="<<(phase%2?"replacement":"dfs")
+                                     <<" path_pricing_seconds="<<std::chrono::duration<double>(Clock::now()-pricing_start).count();
+                            if (!(phase%2)) std::cerr<<" path_pricing_prefixes="<<route_pool->generated_prefixes();
+                            std::cerr<<'\n';
+                        }
+                    }
+                } while (instance.taxis.size()>48 && Clock::now()<beam_deadline);
                 paths_only = true;
-                route_pool->set_limit(std::min(config.route_pool_limit, config.path_pool_limit));
             }
-            std::cerr << "path_prefixes=" << route_pool->generated_prefixes()
-                      << " path_completed_taxis=" << route_pool->completed_taxis()
+            if (initial_enumeration_complete) {
+                paths_only = true;
+                if (!sampled) route_pool->set_limit(std::min(config.route_pool_limit, config.path_pool_limit));
+            }
+            std::cerr << "path_prefixes=" << route_pool->total_generated_prefixes()
+                      << " path_completed_taxis=" << initial_completed_taxis
                       << " path_seconds=" << std::chrono::duration<double>(Clock::now()-generation_start).count()
                       << '\n';
         }
@@ -202,8 +243,19 @@ Result solve(const Instance& instance, const Config& config) {
         std::cerr << "route_pool_columns=" << route_pool->columns()
                   << " route_pool_nodes=" << route_pool->nodes()
                   << " route_pool_timeout=" << route_pool->timed_out()
+                  << " route_pool_complete=" << route_pool->master_complete()
                   << " route_pool_seconds=" << std::chrono::duration<double>(Clock::now()-pool_start).count()
                   << " route_pool_gain=" << best.benefit() - before << '\n';
+        // Recombination can expose insertions and exchanges absent from the
+        // retained bank. Polish only complete moves within the remaining budget.
+        if (paths_only && config.local_search && Clock::now()+std::chrono::milliseconds(500)<deadline) {
+            const auto polish_start=Clock::now();
+            const auto before_polish=best.benefit();
+            local_search.search(best,deadline);
+            if (best.benefit()>before_polish+1e-9) route_pool->remember(best);
+            std::cerr<<"path_final_polish_seconds="<<std::chrono::duration<double>(Clock::now()-polish_start).count()
+                     <<" path_final_polish_gain="<<best.benefit()-before_polish<<'\n';
+        }
         if (!config.log_directory.empty()) {
             std::ofstream bank(std::filesystem::path(config.log_directory) / "route-pool.csv");
             if (!bank) throw std::runtime_error("cannot create route pool log");

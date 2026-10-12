@@ -26,8 +26,14 @@ struct Config {
     bool path_generation = true;
     bool paths_only = false;
     std::size_t path_prefix_limit = 1000000;
-    std::size_t route_pool_limit = 200;
-    std::size_t path_pool_limit = 200;
+    std::size_t route_pool_limit = 400;
+    std::size_t path_pool_limit = 400;
+    bool candidate_sampling = true;
+    double enumeration_seconds = 2;
+    double generation_seconds = 140;
+    std::size_t fleet_refinement_interval = 2;
+    std::size_t fleet_refinement_cycles = 3;
+    bool light_fleet_refinement = true;
     std::size_t ls_interval = 1;
     bool thompson = false;
     std::string log_directory;

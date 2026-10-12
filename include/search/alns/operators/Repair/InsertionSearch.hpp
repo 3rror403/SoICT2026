@@ -85,6 +85,8 @@ private:
 // The dense table and winners are allocated once and reused across repairs.
 class PositiveInsertionCache {
 public:
+    // Refresh only the requested row; unchanged routes retain exact choices.
+    const std::optional<InsertionChoice>& best(const SearchState&, std::size_t request);
     void prepare(const SearchState&, std::span<const std::size_t> requests);
     void refresh_taxi(const SearchState&, std::size_t taxi,
                       std::span<const std::size_t> requests);
@@ -101,6 +103,7 @@ private:
     std::size_t taxis_ = 0, requests_ = 0;
     // First requests*taxis cells, followed by one winner cell per request.
     std::vector<Entry> entries_;
+    void initialize(const SearchState&);
     void refresh_entry(const SearchState&, std::size_t request, std::size_t taxi);
     void select_winner(std::size_t request);
 };

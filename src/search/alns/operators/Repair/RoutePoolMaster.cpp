@@ -5,19 +5,27 @@
 #include <iostream>
 #include <limits>
 #include <numeric>
+#include <random>
 
 namespace soict::alns {
+#ifdef SOICT_ROUTE_POOL_CPLEX
+std::vector<double> cplex_route_prices(const std::vector<MasterColumn>&,
+    std::size_t, std::size_t, Deadline);
+MasterResult cplex_route_master(const std::vector<MasterColumn>&,
+    std::size_t, std::size_t, const std::vector<int>&, Deadline);
+#endif
 namespace {
 struct PackingMatrix {
     const std::vector<MasterColumn>& columns;
     std::vector<std::vector<std::size_t>> rows;
+    std::vector<std::size_t> resources;
     std::size_t dimension = 0, taxis;
     PackingMatrix(const std::vector<MasterColumn>& c, std::size_t k, std::size_t requests)
         : columns(c), rows(c.size()), taxis(k) {
         std::vector<int> index(k+requests,-1);
         for (std::size_t j = 0; j < c.size(); ++j) {
             const auto add = [&](std::size_t r) {
-                if (index[r] < 0) index[r] = static_cast<int>(dimension++);
+                if (index[r] < 0) {index[r] = static_cast<int>(dimension++);resources.push_back(r);}
                 rows[j].push_back(index[r]);
             };
             add(c[j].taxi); for (auto r : c[j].requests) add(k+r);
@@ -200,21 +208,50 @@ public:
             return std::numeric_limits<double>::infinity();
         return bound+1e-7+1e-10*magnitude;
     }
+    std::vector<double> request_prices(std::size_t requests) const {
+        std::vector<double> result(requests,0);
+        for (std::size_t row=0;row<matrix_->resources.size();++row) {
+            const auto resource=matrix_->resources[row];
+            if (resource>=matrix_->taxis && std::isfinite(prices_[row]))
+                result[resource-matrix_->taxis]=std::max(0.0,prices_[row]);
+        }
+        return result;
+    }
 };
+}
+
+std::vector<double> route_master_prices(const std::vector<MasterColumn>& columns,
+        std::size_t taxis, std::size_t requests, Deadline deadline) {
+#ifdef SOICT_ROUTE_POOL_CPLEX
+    try {return cplex_route_prices(columns,taxis,requests,deadline);}
+    catch (const std::exception& error) {std::cerr<<"route_pool_cplex_error="<<error.what()<<'\n';}
+#endif
+    const PackingMatrix matrix(columns,taxis,requests);
+    PackingLP root(matrix);root.primal(deadline);
+    std::cerr<<"path_price_lp_pivots="<<root.pivots<<'\n';
+    return root.request_prices(requests);
+}
+
+bool route_master_uses_cplex() {
+#ifdef SOICT_ROUTE_POOL_CPLEX
+    return true;
+#else
+    return false;
+#endif
 }
 
 MasterResult solve_route_master(const std::vector<MasterColumn>& columns,
         std::size_t taxis, std::size_t requests, const std::vector<int>& incumbent,
-        Deadline deadline) {
+        Deadline deadline, bool verbose) {
     MasterResult result; result.selected = incumbent;
     for (auto id : incumbent) if (id >= 0) result.profit += columns[id].profit;
-    if (columns.empty()) return result;
+    if (columns.empty()) {result.complete=true;return result;}
     const PackingMatrix matrix(columns,taxis,requests);
     PackingLP root(matrix); root.primal(deadline);
     result.pivots = root.pivots;
     if (root.timed_out) { result.timed_out = true; return result; }
     result.root_upper = root.upper();
-    std::cerr << "route_pool_lp_root_upper=" << result.root_upper << " route_pool_lp_root_pivots=" << root.pivots << '\n';
+    if (verbose) std::cerr << "route_pool_lp_root_upper=" << result.root_upper << " route_pool_lp_root_pivots=" << root.pivots << '\n';
     bool integral = true;
     for (const auto& c : columns) integral &= c.profit == std::round(c.profit);
     std::vector<unsigned char> fixed(taxis,0), occupied(requests,0), forbidden(columns.size(),0);
@@ -253,7 +290,7 @@ MasterResult solve_route_master(const std::vector<MasterColumn>& columns,
         }
         if (candidate > result.profit+1e-9) {
             result.profit = candidate; result.selected = std::move(fleet);
-            std::cerr << "route_pool_lp_incumbent=" << result.profit << " route_pool_lp_node=" << result.nodes << '\n';
+            if (verbose) std::cerr << "route_pool_lp_incumbent=" << result.profit << " route_pool_lp_node=" << result.nodes << '\n';
         }
         if (upper <= result.profit+1e-9) return;
         std::size_t branch = ranking.front(); double fractionality = -1;
@@ -280,6 +317,114 @@ MasterResult solve_route_master(const std::vector<MasterColumn>& columns,
         }
     };
     visit(root,0);
+    result.complete = !result.timed_out;
+    return result;
+}
+
+MasterResult improve_route_master(const std::vector<MasterColumn>& columns,
+        std::size_t taxis, std::size_t requests, const std::vector<int>& incumbent,
+        Deadline deadline, std::uint64_t seed, const std::vector<double>& request_prices) {
+#ifdef SOICT_ROUTE_POOL_CPLEX
+    try {return cplex_route_master(columns,taxis,requests,incumbent,deadline);}
+    catch (const std::exception& error) {std::cerr<<"route_pool_cplex_error="<<error.what()<<'\n';}
+#endif
+    MasterResult result;result.selected = incumbent;
+    result.root_upper = std::numeric_limits<double>::infinity();
+    for (auto id : incumbent) if (id >= 0) result.profit += columns[id].profit;
+    std::vector<std::vector<std::size_t>> banks(taxis);
+    for (std::size_t j = 0; j < columns.size(); ++j) banks[columns[j].taxi].push_back(j);
+    std::vector<double> penalties(columns.size(),0);
+    if (!request_prices.empty()) for (std::size_t j=0;j<columns.size();++j)
+        for (auto r:columns[j].requests) penalties[j]+=request_prices[r];
+    // Price-based starts favor routes that leave expensive shared requests
+    // available to other taxis. Each constructed fleet is checked directly.
+    for (const double scale:{0.0,0.5,1.0,1.5}) {
+        std::vector<std::size_t> ranking(columns.size());std::iota(ranking.begin(),ranking.end(),0);
+        std::sort(ranking.begin(),ranking.end(),[&](auto a,auto b) {
+            const auto x=columns[a].profit-scale*penalties[a],y=columns[b].profit-scale*penalties[b];
+            return x!=y?x>y:a<b;
+        });
+        std::vector<unsigned char> occupied(requests,0);std::vector<int> fleet(taxis,-1);double profit=0;
+        for (auto j:ranking) {
+            const auto& c=columns[j];if (fleet[c.taxi]>=0) continue;
+            bool free=true;for (auto r:c.requests) free&=!occupied[r];if (!free) continue;
+            fleet[c.taxi]=static_cast<int>(j);for (auto r:c.requests) occupied[r]=1;profit+=c.profit;
+        }
+        if (profit>result.profit+1e-9) {result.profit=profit;result.selected=std::move(fleet);
+            std::cerr<<"route_pool_block_incumbent="<<result.profit<<" route_pool_block_start_scale="<<scale<<'\n';}
+    }
+    for (auto& bank:banks) std::sort(bank.begin(),bank.end(),[&](auto a,auto b) {
+        const auto x=columns[a].profit-penalties[a],y=columns[b].profit-penalties[b];
+        return x!=y?x>y:a<b;
+    });
+    std::mt19937_64 rng(seed);
+    const auto start = std::chrono::steady_clock::now();
+    std::size_t rounds = 0, last_gain = 0;
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::vector<int> owner(requests,-1);
+        for (std::size_t t = 0; t < taxis; ++t) if (result.selected[t] >= 0)
+            for (auto r : columns[result.selected[t]].requests) owner[r] = static_cast<int>(t);
+        const std::size_t width = std::min(taxis,static_cast<std::size_t>(8+4*((rounds/taxis)%4)));
+        std::vector<std::size_t> group;
+        std::vector<unsigned char> inside(taxis,0);
+        const auto add = [&](std::size_t t) { if (!inside[t]) { group.push_back(t);inside[t] = 1; } };
+        const auto first = rounds%taxis; add(first);
+        // Follow the owners blocking a promising alternative. Periodic
+        // randomization diversifies the coordinated neighborhood.
+        if (!banks[first].empty()) {
+            const auto rank = rounds%3 == 0 ? rng()%std::min<std::size_t>(24,banks[first].size()) : 0;
+            for (auto r : columns[banks[first][rank]].requests)
+                if (owner[r] >= 0 && group.size() < width) add(owner[r]);
+        }
+        while (group.size() < width) {
+            std::vector<double> score(taxis,0);
+            for (auto t : group) {
+                const auto old = result.selected[t] >= 0 ? columns[result.selected[t]].profit : 0;
+                const auto count = std::min<std::size_t>(32,banks[t].size());
+                for (std::size_t j = 0; j < count; ++j) {
+                    const auto& c = columns[banks[t][j]];
+                    const auto value = std::max(1.0,c.profit-old);
+                    for (auto r : c.requests) if (owner[r] >= 0 && !inside[owner[r]]) score[owner[r]] += value;
+                }
+            }
+            std::size_t chosen = taxis;double maximum = 0;
+            for (std::size_t t = 0; t < taxis; ++t) if (!inside[t] && score[t] > maximum) {
+                maximum = score[t]; chosen = t;
+            }
+            if (chosen == taxis || rounds%5 == 4) {
+                do { chosen = rng()%taxis; } while (inside[chosen]);
+            }
+            add(chosen);
+        }
+        std::vector<MasterColumn> local;
+        std::vector<std::size_t> global;
+        std::vector<int> initial(group.size(),-1);
+        for (std::size_t t = 0; t < group.size(); ++t) for (auto id : banks[group[t]]) {
+            const auto& c = columns[id];bool available = true;
+            for (auto r : c.requests) if (owner[r] >= 0 && !inside[owner[r]]) { available = false; break; }
+            if (!available) continue;
+            if (result.selected[group[t]] == static_cast<int>(id)) initial[t] = static_cast<int>(local.size());
+            local.push_back({t,c.requests,c.profit});global.push_back(id);
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const auto local_deadline = std::min(deadline,now+std::chrono::milliseconds(150));
+        const auto solved = solve_route_master(local,group.size(),requests,initial,local_deadline,false);
+        result.nodes += solved.nodes;result.pivots += solved.pivots;
+        double old = 0;for (auto id : initial) if (id >= 0) old += local[id].profit;
+        if (solved.profit > old+1e-9) {
+            for (std::size_t t = 0; t < group.size(); ++t)
+                result.selected[group[t]] = solved.selected[t] >= 0 ? static_cast<int>(global[solved.selected[t]]) : -1;
+            result.profit += solved.profit-old;last_gain = rounds;
+            std::cerr << "route_pool_block_incumbent=" << result.profit << " route_pool_block_round=" << rounds
+                      << " route_pool_block_seconds=" << std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count() << '\n';
+        }
+        ++rounds;
+        // Return a useful incumbent instead of spending the entire allowance
+        // on identical neighborhoods after several unsuccessful full sweeps.
+        if (rounds-last_gain > 12*taxis) break;
+    }
+    std::cerr << "route_pool_block_rounds=" << rounds << '\n';
+    result.timed_out = std::chrono::steady_clock::now()>=deadline;
     return result;
 }
 }

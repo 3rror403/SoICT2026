@@ -294,8 +294,7 @@ void PositiveInsertionCache::select_winner(std::size_t request) {
     }
 }
 
-void PositiveInsertionCache::prepare(const SearchState& state,
-    std::span<const std::size_t> requests) {
+void PositiveInsertionCache::initialize(const SearchState& state) {
     const auto& index = state.empty_taxi_index();
     if (!index) throw std::logic_error("positive insertion cache requires empty taxi index");
     if (index_ != index || taxis_ != state.taxi_count() ||
@@ -308,6 +307,28 @@ void PositiveInsertionCache::prepare(const SearchState& state,
             throw std::length_error("positive insertion cache size overflow");
         entries_.assign(requests_ * (taxis_ + 1), Entry{});
     }
+}
+
+const std::optional<InsertionChoice>& PositiveInsertionCache::best(const SearchState& state,
+    std::size_t request) {
+    initialize(state);
+    if (state.location(request).taxi >= 0) {
+        entries_.at(requests_ * taxis_ + request).choice.reset();
+        return best(request);
+    }
+    index_->ensure(request);
+    for (std::size_t taxi = 0; taxi < taxis_; ++taxi)
+        if (entries_[request * taxis_ + taxi].version != state.cache(taxi).version()) {
+            refresh_entry(state, request, taxi);
+        }
+    select_winner(request);
+    return best(request);
+}
+
+void PositiveInsertionCache::prepare(const SearchState& state,
+    std::span<const std::size_t> requests) {
+    initialize(state);
+    const auto& index = index_;
     for (const auto request : requests) {
         if (state.location(request).taxi >= 0) continue;
         index->ensure(request);

@@ -4,11 +4,13 @@
 #include "eval/SolutionValidation.hpp"
 #include "model/Solution.hpp"
 #include "search/alns/ALNS.hpp"
+#include "search/alns/operators/Repair/RoutePoolMaster.hpp"
 #ifdef SOICT_WITH_CPLEX
 #include "search/mip/MIPSolver.hpp"
 #endif
 
 #include <cmath>
+#include <chrono>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -54,13 +56,20 @@ void usage() {
               << "    Optional: --log DIR --temp T --cooling RATE --check --disable-ls --ls-interval N --balance-thompson\n";
     std::cerr << "    Clean-cut suffix exchange is enabled by default; --disable-clean-cut-2opt-star disables it.\n";
     std::cerr << "    Default: bounded route generation and conflict-free fleet selection.\n"
-              << "    Incomplete generation falls back to about 6,000 ALNS iterations and final route-pool repair.\n"
+              << "    Large or incomplete banks use sampled fleets, priced routes, and repeated fleet selection.\n"
+              << "    --disable-candidate-sampling restores the ALNS fallback after incomplete enumeration.\n"
               << "    Route generation: --disable-path-generation --paths-only --path-prefix-limit N --path-pool-limit N\n"
-              << "    Generation defaults: 1,000,000 prefixes and 200 routes per taxi; generation shares at most two seconds.\n"
+              << "    Generation defaults: 1,000,000 prefixes and 400 routes per taxi; enumeration shares at most two seconds.\n"
+              << "    --enumeration-seconds controls DFS; --generation-seconds controls route sampling.\n"
+              << "    --fleet-refinement-interval N refines every N sampled fleets (default two).\n"
+              << "    Candidate sampling uses light refinement; --full-fleet-refinement adds relocation and swap.\n"
+              << "    --fleet-refinement-cycles N sets sampling refinement cycles (default three).\n"
               << "    ALNS route bank: --route-pool-limit N\n"
               << "    Route and opportunity removal are enabled; --legacy-operators restores the original three destroys and greedy repair.\n"
               << "    Ablations: --removed-only-repair --disable-profit-repair --disable-route-removal\n"
               << "               --disable-opportunity-removal --disable-route-pool-repair\n";
+    std::cerr << "    Large-bank backend: " << (soict::alns::route_master_uses_cplex()?"CPLEX (one thread)":"native C++") << ".\n"
+              << "    CLI time limits include input parsing and reserve two seconds for final output and cleanup.\n";
 #ifdef SOICT_WITH_CPLEX
     std::cerr << "  SoICT2026 solve-mip FILE [--time-limit SECONDS] [--out SOLUTION]\n";
 #endif
@@ -77,6 +86,7 @@ int main(int argc, char** argv) {
                           std::string(argv[1]) == "solve-stdio" ||
                           std::string(argv[1]) == "--instance")) {
             const bool stdio = std::string(argv[1]) == "solve-stdio";
+            const auto solve_start = std::chrono::steady_clock::now();
             const int start = std::string(argv[1]) == "--instance" ? 1 : 2;
             soict::alns::Config config;
             std::string instance_path = stdio ? "-" : "", solution_path = "-";
@@ -95,6 +105,9 @@ int main(int argc, char** argv) {
                 if (key == "--generate-paths") { config.path_generation = true; continue; }
                 if (key == "--disable-path-generation") { config.path_generation = false; continue; }
                 if (key == "--paths-only") { config.paths_only = true; continue; }
+                if (key == "--full-fleet-refinement") { config.light_fleet_refinement = false; continue; }
+                if (key == "--light-fleet-refinement") { config.light_fleet_refinement = true; continue; }
+                if (key == "--disable-candidate-sampling") { config.candidate_sampling = false; continue; }
                 if (key == "--removed-only-repair") { config.all_unserved_repair = false; continue; }
                 if (key == "--disable-profit-repair") { config.profit_repair = false; continue; }
                 if (key == "--disable-route-removal") { config.route_removal = false; continue; }
@@ -116,6 +129,16 @@ int main(int argc, char** argv) {
                     config.path_prefix_limit = count_arg(value);
                     if (!config.path_prefix_limit) throw std::invalid_argument("path prefix limit must be positive");
                 }
+                else if (key == "--fleet-refinement-cycles") {
+                    config.fleet_refinement_cycles=count_arg(value);
+                    if (!config.fleet_refinement_cycles) throw std::invalid_argument("fleet refinement cycles must be positive");
+                }
+                else if (key == "--fleet-refinement-interval") {
+                    config.fleet_refinement_interval=count_arg(value);
+                    if (!config.fleet_refinement_interval) throw std::invalid_argument("fleet refinement interval must be positive");
+                }
+                else if (key == "--generation-seconds") config.generation_seconds = alns_positive_arg(value);
+                else if (key == "--enumeration-seconds") config.enumeration_seconds = alns_positive_arg(value);
                 else if (key == "--route-pool-limit") {
                     config.route_pool_limit = count_arg(value);
                     if (!config.route_pool_limit) throw std::invalid_argument("route pool limit must be positive");
@@ -130,7 +153,7 @@ int main(int argc, char** argv) {
                 }
                 else if (key == "--time-limit" || key == "--time" || key == "-t") {
                     const double requested = alns_positive_arg(value);
-                    config.time_limit = requested > 2 ? requested - 1 : requested * 0.9;
+                    config.time_limit = requested > 3 ? requested - 2 : requested * 0.9;
                 } else if (key == "--temp" || key == "-T")
                     config.temperature = alns_positive_arg(value);
                 else if (key == "--cooling") {
@@ -147,6 +170,8 @@ int main(int argc, char** argv) {
                 if (!in) throw std::runtime_error("cannot open instance file");
             }
             const auto instance = soict::read_instance(instance_path == "-" ? std::cin : in);
+            config.time_limit = std::max(0.0,config.time_limit-
+                std::chrono::duration<double>(std::chrono::steady_clock::now()-solve_start).count());
             const auto result = soict::alns::solve(instance, config);
             std::ofstream out;
             if (solution_path != "-") {
