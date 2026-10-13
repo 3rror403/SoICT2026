@@ -66,6 +66,7 @@ def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZ
             start = source.index('                std::ostringstream line;')
             end = source.index('                std::cerr << line.str();', start) + len('                std::cerr << line.str();')
             source = source[:start] + source[end:]
+            source = source.replace('        report_progress();\r\n', '')
             source = source.replace('        report_progress();\n', '')
             start = source.index('        if (iterations % 1000 == 0) {')
             end = source.index('    if (route_pool) {', start)
@@ -76,7 +77,7 @@ def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZ
             start = source.index('    if (trace) trace << iterations')
             end = source.index('    Result result;', start)
             source = source[:start] + source[end:]
-            start = source.index('    if (clean_cut)\n')
+            start = source.index('    if (clean_cut)')
             end = source.index('    return result;', start)
             source = source[:start] + source[end:]
         source = re.sub(r'^#include <(?:span|bit|filesystem)>\n', '', source, flags=re.M)

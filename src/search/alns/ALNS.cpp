@@ -111,6 +111,9 @@ Result solve(const Instance& instance, const Config& config) {
     double temperature = config.temperature;
     const double minimum_temperature = config.temperature * 1e-4;
     std::size_t iterations = 0;
+    std::vector<std::size_t> unserved_pool;
+    unserved_pool.reserve(current.request_count());
+    std::uniform_real_distribution<double> uniform_dist(0.0, 1.0);
     const auto report_progress = [&] {
         std::ostringstream line;
         line << std::fixed << std::setprecision(3)
@@ -135,13 +138,14 @@ Result solve(const Instance& instance, const Config& config) {
         const auto removed = destroys[couple.destroy]->apply(
             candidate, selection.removal_count, rng);
         if (config.all_unserved_repair) {
-            std::vector<std::size_t> pool;
+            unserved_pool.clear();
             for (std::size_t r = 0; r < candidate.request_count(); ++r)
-                if (candidate.location(r).taxi < 0) pool.push_back(r);
-            std::shuffle(pool.begin(), pool.end(), rng);
-            repairs[couple.repair]->apply(candidate, pool, rng);
+                if (candidate.location(r).taxi < 0) unserved_pool.push_back(r);
+            std::shuffle(unserved_pool.begin(), unserved_pool.end(), rng);
+            repairs[couple.repair]->apply(candidate, unserved_pool, rng);
         } else repairs[couple.repair]->apply(candidate, removed, rng);
-        if (config.local_search && iterations % config.ls_interval == 0)
+        const bool promising = candidate.benefit() > current.benefit();
+        if (config.local_search && (promising || iterations % config.ls_interval == 0))
             local_search.search(candidate);
         if (config.check) candidate.check();
         if (route_pool) route_pool->remember(candidate);
@@ -149,8 +153,7 @@ Result solve(const Instance& instance, const Config& config) {
         const double reward = std::max(0.0, delta / std::max(1.0, std::abs(current.benefit())));
         bool accept = delta >= 0;
         if (!accept) {
-            std::uniform_real_distribution<double> uniform(0, 1);
-            accept = uniform(rng) < std::exp(delta / temperature);
+            accept = uniform_dist(rng) < std::exp(delta / temperature);
         }
         if (accept) {
             current.swap(candidate);
