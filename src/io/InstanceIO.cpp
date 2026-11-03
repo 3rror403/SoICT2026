@@ -113,7 +113,7 @@ Instance read_instance(std::istream& in) {
             for (std::size_t w = 0; w < v; ++w)
                 read(input, (*matrix)[internal[u] * v + internal[w]], "matrix entry");
     }
-    if (!input.next().empty()) throw std::runtime_error("unexpected data after instance matrices");
+    // Generator metadata may follow the matrices; it is not part of the instance.
     instance.validate();
     return instance;
 }
