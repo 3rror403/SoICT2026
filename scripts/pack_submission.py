@@ -6,7 +6,8 @@ import hashlib
 import math
 import json
 
-from cpp_compact import compact, macro_compact
+from cpp_compact import TOKEN, compact, macro_compact, shorten_aliases
+from submission_prune import prune_unused, strip_submission_validation
 from pathlib import Path
 import re
 
@@ -18,6 +19,32 @@ OPTIMIZATION_PRAGMAS = {
     'O3-unroll': '#pragma GCC optimize("O3","unroll-loops")\n',
 }
 DEFAULT_OPTIMIZATION = 'O3-unroll'
+
+
+def discard_diagnostics(source):
+    """Replace console logging statements with no-ops, preserving control flow."""
+    tokens = [m for m in TOKEN.finditer(source) if m.lastgroup not in ('space', 'comment')]
+    replacements = []
+    for i in range(len(tokens) - 3):
+        if ([m.group() for m in tokens[i:i + 2]] != ['std', '::']
+                or tokens[i + 2].group() not in ('cout', 'cerr', 'clog')
+                or tokens[i + 3].group() != '<<'):
+            continue
+        depth = 0
+        for token in tokens[i + 4:]:
+            value = token.group()
+            if value == ';' and depth == 0:
+                replacements.append((tokens[i].start(), token.start()))
+                break
+            if value in ('(', '[', '{'):
+                depth += 1
+            elif value in (')', ']', '}'):
+                depth -= 1
+        else:
+            raise ValueError('unterminated console logging statement')
+    for start, end in reversed(replacements):
+        source = source[:start] + '(void)0' + source[end:]
+    return source
 
 
 def library_sources(name):
@@ -47,6 +74,11 @@ def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZ
         relative = path.relative_to(ROOT).as_posix()
         inputs[relative] = hashlib.sha256(raw).hexdigest()
         source = raw.decode('utf-8')
+        # The standalone judge package uses the standard-library route master.
+        source = re.sub(
+            r'^#ifdef SOICT_ROUTE_POOL_CPLEX\n(.*?)^#endif\n',
+            lambda match: match.group(1).split('#else\n', 1)[1]
+            if '#else\n' in match.group(1) else '', source, flags=re.M | re.S)
         if relative == 'src/io/InstanceIO.cpp':
             start = source.index('void write_instance(')
             source = source[:start] + '} // namespace soict\n'
@@ -56,6 +88,9 @@ def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZ
             source = source[:start] + source[end:]
 
         elif relative == 'src/search/alns/ALNS.cpp':
+            # The feedback counter affects pricing, so retain it outside logging.
+            source = source.replace('std::cerr<<"path_feedback_phase="<<++phase',
+                                    '++phase; std::cerr<<"path_feedback_phase="<<phase')
             # Judge Config has no log directory; omit development logging only.
             start = source.index('    std::ofstream trace, operator_log;')
             end = source.index('    Solution empty;', start)
@@ -70,15 +105,37 @@ def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZ
             start = source.index('        if (iterations % 1000 == 0) {')
             end = source.index('    if (route_pool) {', start)
             source = source[:start] + '    }\n' + source[end:]
-            start = source.index('        const auto before = best.benefit();')
+            start = source.index('        if (!config.log_directory.empty()) {')
             end = source.index('    if (config.check) best.check();', start)
-            source = source[:start] + '        route_pool->improve(best, deadline);\n    }\n' + source[end:]
+            source = source[:start] + '    }\n' + source[end:]
             start = source.index('    if (trace) trace << iterations')
             end = source.index('    Result result;', start)
             source = source[:start] + source[end:]
             start = source.index('    if (clean_cut)\n')
             end = source.index('    return result;', start)
             source = source[:start] + source[end:]
+            # Default path generation always selects paths_only: incomplete
+            # banks use candidate sampling, and complete banks use enumeration.
+            # The judge has no CLI, so its unused ALNS fallback can be omitted.
+            source = re.sub(
+                r'^#include "search/alns/(?:Balance.hpp|operators/Destroy/[^"\n]+|'
+                r'operators/Repair/(?:GreedyInsertion|ProfitInsertion).hpp)"\n',
+                '', source, flags=re.M)
+            source = source.replace('    std::mt19937_64 rng(config.seed);\n', '')
+            start = source.index('    std::vector<std::unique_ptr<DestroyOperator>> destroys;')
+            end = source.index('    LocalSearch local_search;', start)
+            source = source[:start] + source[end:]
+            start = source.index('    if (!paths_only) {')
+            end = source.index('    if (config.check) current.check();', start)
+            source = source[:start] + source[end:]
+            start = source.index('    double temperature =')
+            end = source.index('    if (route_pool) {', start)
+            source = source[:start] + source[end:]
+            source = source.replace('result.iterations = iterations;', 'result.iterations = 0;')
+            source = source.replace('result.annealing_complete = temperature <= minimum_temperature;',
+                                    'result.annealing_complete = false;')
+        source = prune_unused(relative, source)
+        source = strip_submission_validation(relative, source)
         source = re.sub(r'^#include <(?:span|bit|filesystem)>\n', '', source, flags=re.M)
         source = source.replace(
             'const std::span<const std::size_t> subset(requests.data(), remaining);',
@@ -114,7 +171,15 @@ def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZ
               'inline std::size_t soict_bit_width(std::size_t value) {\n'
               'return value ? std::numeric_limits<unsigned long long>::digits - '
               '__builtin_clzll(static_cast<unsigned long long>(value)) : 0;\n}\n']
-    excluded = {'SyntheticGenerator.cpp', 'SolutionValidation.cpp'}
+    config_source = (ROOT / 'include/search/alns/Config.hpp').read_text()
+    for flag in ('route_pool_repair', 'path_generation', 'candidate_sampling'):
+        if not re.search(r'bool\s+' + flag + r'\s*=\s*true\s*;', config_source):
+            raise ValueError(f'path-only judge package requires default {flag}=true')
+    if not re.search(r'bool\s+check\s*=\s*false\s*;', config_source):
+        raise ValueError('judge package requires default check=false')
+    excluded = {'Instance.cpp', 'SyntheticGenerator.cpp', 'SolutionValidation.cpp', 'Balance.cpp',
+                'RouteRemoval.cpp', 'OpportunityRemoval.cpp', 'GreedyInsertion.cpp',
+                'RegretInsertion.cpp', 'ProfitInsertion.cpp'}
     for path in library_sources('soict_core') + library_sources('soict_alns'):
         if path.name not in excluded:
             pieces.append(inline(path))
@@ -123,7 +188,6 @@ def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZ
 // Judge entry point. Include input parsing in the five-minute wall budget.
 int main() {{
     const auto started = std::chrono::steady_clock::now();
-    try {{
         std::ios::sync_with_stdio(false);
         std::cin.tie(nullptr);
         const auto instance = soict::read_instance(std::cin);
@@ -141,18 +205,12 @@ int main() {{
         }} else {{
             const auto result = soict::alns::solve(instance, config);
             soict::write_solution(std::cout, result.solution, instance);
-            std::cerr << std::setprecision(17) << "iterations=" << result.iterations
-                      << " seconds=" << result.seconds
-                      << " stop=" << (result.annealing_complete ? "temperature" : "time_limit") << '\\n';
         }}
         return 0;
-    }} catch (const std::exception& error) {{
-        std::cerr << "error: " << error.what() << '\\n';
-        return 1;
-    }}
 }}
 ''')
-    source = ''.join(pieces)
+    source = discard_diagnostics(''.join(pieces))
+    source = '\n'.join(line.rstrip() for line in source.splitlines()) + '\n'
     pragma = OPTIMIZATION_PRAGMAS[optimization]
     # Reserve the directive before compression, then prepend it verbatim.
     # The compactor only handles includes; a global pragma has no body position
@@ -163,6 +221,7 @@ int main() {{
     packed, renames = compact(source)
     if len(packed) > body_limit:
         packed = macro_compact(packed, body_limit)
+    packed, renames = shorten_aliases(packed, renames)
     packed = pragma + packed
     if len(packed) > limit:
         raise ValueError(f'packed source is {len(packed)} characters, exceeds CMS limit {limit}')

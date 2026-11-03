@@ -11,7 +11,10 @@ inline std::size_t soict_bit_width(std::size_t value) {
 return value ? std::numeric_limits<unsigned long long>::digits - __builtin_clzll(static_cast<unsigned long long>(value)) : 0;
 }
 
-// BEGIN src/model/Instance.cpp
+// BEGIN src/model/Solution.cpp
+
+// BEGIN include/model/Solution.hpp
+
 
 // BEGIN include/model/Instance.hpp
 
@@ -55,92 +58,35 @@ struct Instance {
     std::vector<double> travel_time;
     std::vector<double> travel_cost;
 
-    [[nodiscard]] std::size_t node_count() const {
+    std::size_t node_count() const {
         return taxis.size() + 2 * (passengers.size() + parcels.size());
     }
-    [[nodiscard]] std::size_t vertex_id(std::size_t node) const {
-        return vertex_ids.empty() ? node + 1 : vertex_ids.at(node);
+    std::size_t vertex_id(std::size_t node) const {
+        return vertex_ids.empty() ? node + 1 : vertex_ids[node];
     }
-    [[nodiscard]] std::size_t passenger_pickup(std::size_t i) const {
+    std::size_t passenger_pickup(std::size_t i) const {
         return taxis.size() + i;
     }
-    [[nodiscard]] std::size_t passenger_dropoff(std::size_t i) const {
+    std::size_t passenger_dropoff(std::size_t i) const {
         return taxis.size() + passengers.size() + i;
     }
-    [[nodiscard]] std::size_t parcel_pickup(std::size_t j) const {
+    std::size_t parcel_pickup(std::size_t j) const {
         return taxis.size() + 2 * passengers.size() + j;
     }
-    [[nodiscard]] std::size_t parcel_dropoff(std::size_t j) const {
+    std::size_t parcel_dropoff(std::size_t j) const {
         return taxis.size() + 2 * passengers.size() + parcels.size() + j;
     }
-    [[nodiscard]] double time(std::size_t u, std::size_t v) const {
-        return travel_time.at(u * node_count() + v);
+    double time(std::size_t u, std::size_t v) const {
+        return travel_time[u * node_count() + v];
     }
-    [[nodiscard]] double cost(std::size_t u, std::size_t v) const {
-        return travel_cost.at(u * node_count() + v);
+    double cost(std::size_t u, std::size_t v) const {
+        return travel_cost[u * node_count() + v];
     }
-    void validate() const;
 };
 
 } // namespace soict
 
 // END include/model/Instance.hpp
-
-#include <cmath>
-#include <limits>
-
-namespace soict {
-namespace {
-void nonnegative(double x, const char* name) {
-    if (!std::isfinite(x) || x < 0) throw std::invalid_argument(name);
-}
-void valid_window(Window w) {
-    nonnegative(w.earliest, "negative or nonfinite window start");
-    nonnegative(w.latest, "negative or nonfinite window end");
-    if (w.earliest > w.latest) throw std::invalid_argument("error");
-}
-}
-
-void Instance::validate() const {
-    if (taxis.empty()) throw std::invalid_argument("error");
-    const auto v = node_count();
-    if (!vertex_ids.empty()) {
-        if (vertex_ids.size() != v) throw std::invalid_argument("error");
-        std::vector<bool> seen(v, false);
-        for (const auto id : vertex_ids) {
-            if (id == 0 || id > v || seen[id - 1])
-                throw std::invalid_argument("error");
-            seen[id - 1] = true;
-        }
-    }
-    if (v > std::numeric_limits<std::size_t>::max() / v ||
-        travel_time.size() != v * v || travel_cost.size() != v * v)
-        throw std::invalid_argument("error");
-    for (const auto& taxi : taxis) nonnegative(taxi.parcel_capacity, "invalid taxi capacity");
-    for (const auto& p : passengers) {
-        nonnegative(p.revenue, "invalid passenger revenue");
-        nonnegative(p.service, "invalid passenger service duration");
-        valid_window(p.pickup);
-    }
-    for (const auto& p : parcels) {
-        nonnegative(p.revenue, "invalid parcel revenue");
-        if (!std::isfinite(p.weight) || p.weight <= 0)
-            throw std::invalid_argument("error");
-        nonnegative(p.service, "invalid parcel service duration");
-        valid_window(p.pickup);
-        valid_window(p.delivery);
-    }
-    for (double x : travel_time) nonnegative(x, "invalid travel time");
-    for (double x : travel_cost) nonnegative(x, "invalid travel cost");
-}
-} // namespace soict
-
-// END src/model/Instance.cpp
-
-// BEGIN src/model/Solution.cpp
-
-// BEGIN include/model/Solution.hpp
-
 #include <string>
 #include <vector>
 
@@ -156,96 +102,31 @@ struct Evaluation {
 struct Solution {
     std::vector<std::vector<std::size_t>> routes;
 
-    [[nodiscard]] Evaluation evaluate(const Instance& instance) const;
+    Evaluation evaluate(const Instance& instance) const;
 };
 
 } // namespace soict
 
 // END include/model/Solution.hpp
-
-#include <algorithm>
-#include <cmath>
-
 namespace soict {
 Evaluation Solution::evaluate(const Instance& instance) const {
-    if (routes.size() != instance.taxis.size())
-        return {false, 0, "route count differs from taxi count"};
-    const auto n = instance.passengers.size();
-    const auto m = instance.parcels.size();
+    const auto n = instance.passengers.size(), m = instance.parcels.size();
     const auto k_count = instance.taxis.size();
-    const auto v_count = instance.node_count();
-    std::vector<int> pickup_owner(n + m, -1);
-    std::vector<int> drop_owner(n + m, -1);
+    std::vector<bool> served(n + m, false);
     double benefit = 0;
-    constexpr double eps = 1e-8;
-
     for (std::size_t k = 0; k < k_count; ++k) {
         std::size_t previous = k;
-        double departure = 0;
-        double load = 0;
-        const auto& route = routes[k];
-        for (std::size_t pos = 0; pos < route.size(); ++pos) {
-            const auto node = route[pos];
-            if (node < k_count || node >= v_count)
-                return {false, 0, "route contains invalid service node"};
-            const double arrival = departure + instance.time(previous, node);
-            if (!std::isfinite(arrival))
-                return {false, 0, "nonfinite route time"};
+        for (const auto node : routes[k]) {
             benefit -= instance.cost(previous, node);
-
-            if (node < k_count + n) {
-                const auto i = node - k_count;
-                if (pickup_owner[i] != -1)
-                    return {false, 0, "passenger picked up more than once"};
-                const auto& p = instance.passengers[i];
-                if (arrival > p.pickup.latest + eps)
-                    return {false, 0, "passenger pickup is late"};
-                if (pos + 1 == route.size() ||
-                    route[pos + 1] != instance.passenger_dropoff(i))
-                    return {false, 0, "passenger drop-off must immediately follow pickup"};
-                pickup_owner[i] = static_cast<int>(k);
-                departure = std::max(arrival, p.pickup.earliest) + p.service;
-            } else if (node < k_count + 2 * n) {
-                const auto i = node - k_count - n;
-                if (pickup_owner[i] != static_cast<int>(k) || drop_owner[i] != -1)
-                    return {false, 0, "invalid passenger drop-off"};
-                drop_owner[i] = static_cast<int>(k);
-                departure = arrival + instance.passengers[i].service;
-            } else if (node < k_count + 2 * n + m) {
-                const auto j = node - k_count - 2 * n;
-                const auto id = n + j;
-                if (pickup_owner[id] != -1)
-                    return {false, 0, "parcel picked up more than once"};
-                const auto& p = instance.parcels[j];
-                if (arrival > p.pickup.latest + eps)
-                    return {false, 0, "parcel pickup is late"};
-                load += p.weight;
-                if (load > instance.taxis[k].parcel_capacity + eps)
-                    return {false, 0, "parcel capacity exceeded"};
-                pickup_owner[id] = static_cast<int>(k);
-                departure = std::max(arrival, p.pickup.earliest) + p.service;
-            } else {
-                const auto j = node - k_count - 2 * n - m;
-                const auto id = n + j;
-                if (pickup_owner[id] != static_cast<int>(k) || drop_owner[id] != -1)
-                    return {false, 0, "invalid parcel drop-off"};
-                const auto& p = instance.parcels[j];
-                if (arrival > p.delivery.latest + eps)
-                    return {false, 0, "parcel delivery is late"};
-                load -= p.weight;
-                drop_owner[id] = static_cast<int>(k);
-                departure = std::max(arrival, p.delivery.earliest) + p.service;
-            }
+            if (node < k_count + n) served[node - k_count] = true;
+            else if (node >= k_count + 2 * n && node < k_count + 2 * n + m)
+                served[n + node - k_count - 2 * n] = true;
             previous = node;
         }
     }
-    for (std::size_t i = 0; i < n + m; ++i) {
-        if (pickup_owner[i] != drop_owner[i])
-            return {false, 0, "partially served request"};
-        if (pickup_owner[i] != -1)
-            benefit += i < n ? instance.passengers[i].revenue :
-                                instance.parcels[i - n].revenue;
-    }
+    for (std::size_t i = 0; i < n + m; ++i)
+        if (served[i]) benefit += i < n ? instance.passengers[i].revenue :
+                                        instance.parcels[i - n].revenue;
     return {true, benefit, {}};
 }
 } // namespace soict
@@ -253,6 +134,7 @@ Evaluation Solution::evaluate(const Instance& instance) const {
 // END src/model/Solution.cpp
 
 // BEGIN src/io/InstanceIO.cpp
+#include <cstdlib>
 
 // BEGIN include/io/InstanceIO.hpp
 
@@ -265,65 +147,107 @@ void write_instance(std::ostream& out, const Instance& instance);
 
 // END include/io/InstanceIO.hpp
 
+#include <array>
+#include <charconv>
 #include <iomanip>
 #include <istream>
 #include <ostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace soict {
 namespace {
-template <typename T> void read(std::istream& in, T& value, const char* field) {
-    if (!(in >> value)) throw std::runtime_error(std::string("cannot read ") + field);
+// Bounded streaming storage: matrix parsing never retains the input file.
+class NumericReader {
+    std::istream& input_;
+    std::array<char, 65536> buffer_{};
+    std::size_t position_ = 0, size_ = 0;
+    std::string continued_;
+    bool refill() {
+        size_ = static_cast<std::size_t>(input_.rdbuf()->sgetn(buffer_.data(), buffer_.size()));
+        position_ = 0;
+        return size_ != 0;
+    }
+public:
+    explicit NumericReader(std::istream& input) : input_(input) {}
+    std::string_view next() {
+        continued_.clear();
+        for (;;) {
+            if (position_ == size_ && !refill()) return {};
+            while (position_ < size_ && static_cast<unsigned char>(buffer_[position_]) <= ' ') ++position_;
+            if (position_ < size_) break;
+        }
+        for (;;) {
+            const auto start = position_;
+            while (position_ < size_ && static_cast<unsigned char>(buffer_[position_]) > ' ') ++position_;
+            const std::string_view piece(buffer_.data()+start,position_-start);
+            if (position_ < size_) {
+                if (continued_.empty()) return piece;
+                continued_.append(piece.data(),piece.size());
+                return continued_;
+            }
+            continued_.append(piece.data(),piece.size());
+            if (!refill()) return continued_;
+        }
+    }
+};
+template <typename T> void read(NumericReader& input, T& value) {
+    auto token = input.next();
+    // from_chars accepts exponent notation but omits the optional leading +.
+    if (!token.empty() && token.front() == '+') token.remove_prefix(1);
+
+    std::from_chars(token.data(),token.data()+token.size(),value);
+
+}
+void read(NumericReader& input, double& value) {
+    value = std::strtod(std::string(input.next()).c_str(), nullptr);
 }
 }
 
 Instance read_instance(std::istream& in) {
+    NumericReader input(in);
     std::size_t k = 0, n = 0, m = 0;
-    read(in, k, "taxi count");
-    read(in, n, "passenger count");
-    read(in, m, "parcel count");
-    if (k == 0 || k > 100000 || n > 20000 || m > 20000 || n + m > 20000)
-        throw std::runtime_error("error");
+    read(input, k);
+    read(input, n);
+    read(input, m);
+
     const std::size_t v = k + 2 * (n + m);
-    if (v > 50000) throw std::runtime_error("error");
+
     Instance instance;
     instance.taxis.resize(k);
     instance.passengers.resize(n);
     instance.parcels.resize(m);
     instance.vertex_ids.resize(v);
-    std::vector<bool> seen(v, false);
     const auto vertex = [&](std::size_t node) {
         auto& id = instance.vertex_ids[node];
-        read(in, id, "vertex ID");
-        if (id == 0 || id > v || seen[id - 1])
-            throw std::runtime_error("error");
-        seen[id - 1] = true;
+        read(input, id);
+
     };
     for (std::size_t taxi = 0; taxi < k; ++taxi) {
         vertex(taxi);
-        read(in, instance.taxis[taxi].parcel_capacity, "taxi capacity");
+        read(input, instance.taxis[taxi].parcel_capacity);
     }
     for (std::size_t i = 0; i < n; ++i) {
         auto& p = instance.passengers[i];
         vertex(instance.passenger_pickup(i));
         vertex(instance.passenger_dropoff(i));
-        read(in, p.pickup.earliest, "passenger earliest");
-        read(in, p.pickup.latest, "passenger latest");
-        read(in, p.service, "passenger service");
-        read(in, p.revenue, "passenger revenue");
+        read(input, p.pickup.earliest);
+        read(input, p.pickup.latest);
+        read(input, p.service);
+        read(input, p.revenue);
     }
     for (std::size_t j = 0; j < m; ++j) {
         auto& p = instance.parcels[j];
         vertex(instance.parcel_pickup(j));
         vertex(instance.parcel_dropoff(j));
-        read(in, p.weight, "parcel weight");
-        read(in, p.pickup.earliest, "parcel pickup earliest");
-        read(in, p.pickup.latest, "parcel pickup latest");
-        read(in, p.delivery.earliest, "parcel delivery earliest");
-        read(in, p.delivery.latest, "parcel delivery latest");
-        read(in, p.service, "parcel service");
-        read(in, p.revenue, "parcel revenue");
+        read(input, p.weight);
+        read(input, p.pickup.earliest);
+        read(input, p.pickup.latest);
+        read(input, p.delivery.earliest);
+        read(input, p.delivery.latest);
+        read(input, p.service);
+        read(input, p.revenue);
     }
     std::vector<std::size_t> internal(v);
     for (std::size_t node = 0; node < v; ++node)
@@ -332,11 +256,9 @@ Instance read_instance(std::istream& in) {
         matrix->resize(v * v);
         for (std::size_t u = 0; u < v; ++u)
             for (std::size_t w = 0; w < v; ++w)
-                read(in, (*matrix)[internal[u] * v + internal[w]], "matrix entry");
+                read(input, (*matrix)[internal[u] * v + internal[w]]);
     }
-    std::string extra;
-    if (in >> extra) throw std::runtime_error("error");
-    instance.validate();
+    // Generator metadata may follow the matrices; it is not part of the instance.
     return instance;
 }
 
@@ -369,16 +291,15 @@ void write_solution(std::ostream& out, const Solution& solution, const Instance&
 
 namespace soict {
 void write_solution(std::ostream& out, const Solution& solution, const Instance& instance) {
-    instance.validate();
     const auto evaluation = solution.evaluate(instance);
-    if (!evaluation.feasible) throw std::runtime_error("error" + evaluation.error);
+
     out << std::setprecision(17) << evaluation.benefit << '\n';
     for (const auto& route : solution.routes) {
         out << route.size();
         for (const auto node : route) out << ' ' << instance.vertex_id(node);
         out << '\n';
     }
-    if (!out) throw std::runtime_error("error");
+
 }
 } // namespace soict
 
@@ -422,22 +343,18 @@ public:
     void clear();
     void copy_from(const RouteCache& other);
 
-    [[nodiscard]] Segment range(const Instance& instance, std::size_t first,
+    Segment range(const Instance& instance, std::size_t first,
                                 std::size_t last) const; // inclusive
-    [[nodiscard]] bool boundary_allowed(const Instance& instance,
+    bool boundary_allowed(const Instance& instance,
                                         std::size_t position) const;
-    [[nodiscard]] double cost() const { return cost_; }
-    [[nodiscard]] std::uint64_t version() const { return version_; }
-    [[nodiscard]] const std::vector<std::size_t>& nodes() const { return nodes_; }
-    [[nodiscard]] const std::vector<double>& arrival() const { return arrival_; }
-    [[nodiscard]] const std::vector<double>& departure() const { return departure_; }
-    [[nodiscard]] const std::vector<double>& load() const { return load_; }
+    double cost() const { return cost_; }
+    std::uint64_t version() const { return version_; }
+    const std::vector<std::size_t>& nodes() const { return nodes_; }
 
 private:
     std::vector<std::size_t> nodes_;
     std::vector<Segment> singles_;
     std::vector<std::vector<Segment>> table_;
-    std::vector<double> arrival_, departure_, load_;
     double cost_ = 0;
     std::uint64_t version_ = 0;
 };
@@ -451,8 +368,7 @@ public:
     void add_range(std::size_t first, std::size_t end); // [first, end)
     void add_segment(const Segment& segment);
     void add_node(std::size_t node);
-    [[nodiscard]] std::optional<double> cost_if_feasible() const;
-    [[nodiscard]] double cost_unchecked() const;
+    std::optional<double> cost_if_feasible() const;
 
 private:
     const Instance& instance_;
@@ -474,7 +390,7 @@ namespace {
 std::atomic<std::uint64_t> next_route_version{1};
 double service(const Instance& in, std::size_t node) {
     const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();
-    if (node < k || node >= in.node_count()) throw std::logic_error("error");
+
     if (node < k + 2 * n) return in.passengers[(node - k) % n].service;
     return in.parcels[(node - k - 2 * n) % m].service;
 }
@@ -488,6 +404,9 @@ double load_delta(const Instance& in, std::size_t node) {
 
 Segment single_node(const Instance& in, std::size_t node) {
     Segment s;
+    // Even an event without a time window requires a finite arrival. The
+    // final departure after service may overflow when no later event exists.
+    s.latest_input = std::numeric_limits<double>::max();
     s.first = s.last = node;
     s.duration = service(in, node);
     const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();
@@ -530,7 +449,6 @@ RouteCache::RouteCache(const Instance& in, std::size_t taxi,
 
 void RouteCache::clear() {
     nodes_.clear(); singles_.clear();
-    arrival_.clear(); departure_.clear(); load_.clear();
     for (auto& level : table_) level.clear();
     cost_ = 0;
     version_ = 0;
@@ -540,7 +458,6 @@ void RouteCache::copy_from(const RouteCache& other) {
     if (this == &other) return;
     nodes_ = other.nodes_;
     singles_ = other.singles_;
-    arrival_ = other.arrival_; departure_ = other.departure_; load_ = other.load_;
     if (table_.size() < other.table_.size()) table_.resize(other.table_.size());
     for (std::size_t i = 0; i < other.table_.size(); ++i) table_[i] = other.table_[i];
     for (std::size_t i = other.table_.size(); i < table_.size(); ++i) table_[i].clear();
@@ -551,24 +468,15 @@ void RouteCache::copy_from(const RouteCache& other) {
 void RouteCache::rebuild(const Instance& in, std::size_t taxi,
                           const std::vector<std::size_t>& route) {
     if (&route != &nodes_) nodes_ = route;
-    singles_.clear(); arrival_.clear(); departure_.clear(); load_.clear();
-    for (auto& level : table_) level.clear();
+    singles_.clear(); for (auto& level : table_) level.clear();
     cost_ = 0;
     version_ = next_route_version.fetch_add(1, std::memory_order_relaxed);
     const auto size = route.size();
     singles_.reserve(size);
-    arrival_.reserve(size); departure_.reserve(size); load_.reserve(size);
     std::size_t previous = taxi;
-    double departure = 0, load = 0;
     for (const auto node : route) {
         singles_.push_back(single_node(in, node));
-        const double arrival = departure + in.time(previous, node);
-        departure = std::max(arrival + singles_.back().duration, singles_.back().ready);
-        load += singles_.back().load_change;
         cost_ += in.cost(previous, node);
-        arrival_.push_back(arrival);
-        departure_.push_back(departure);
-        load_.push_back(load);
         previous = node;
     }
     // Disjoint sparse table: associative, order-preserving range summary in O(1).
@@ -597,10 +505,10 @@ void RouteCache::rebuild(const Instance& in, std::size_t taxi,
 }
 
 Segment RouteCache::range(const Instance& in, std::size_t first, std::size_t last) const {
-    if (first > last || last >= nodes_.size()) throw std::out_of_range("invalid route range");
+
     if (first == last) return singles_[first];
     const auto level = soict_bit_width(first ^ last) - 1;
-    return join(in, table_.at(level)[first], table_.at(level)[last]);
+    return join(in, table_[level][first], table_[level][last]);
 }
 
 bool RouteCache::boundary_allowed(const Instance& in, std::size_t pos) const {
@@ -631,10 +539,7 @@ std::optional<double> RouteCandidate::cost_if_feasible() const {
         return std::nullopt;
     return instance_.cost(taxi_, s.first) + s.cost;
 }
-double RouteCandidate::cost_unchecked() const {
-    if (!summary_) return 0.0;
-    return instance_.cost(taxi_, summary_->first) + summary_->cost;
-}
+
 } // namespace soict::alns
 
 // END src/search/alns/RouteCache.cpp
@@ -663,42 +568,41 @@ public:
     SearchState(const Instance& instance, Solution solution,
                 std::shared_ptr<InsertionScratch> insertion_scratch = {});
     void copy_from(const SearchState& other);
-    void swap(SearchState& other) noexcept;
-    [[nodiscard]] Solution solution() const;
-    [[nodiscard]] const RouteCache& cache(std::size_t taxi) const;
-    [[nodiscard]] const std::vector<std::size_t>& active_taxis() const {
+    Solution solution() const;
+    const RouteCache& cache(std::size_t taxi) const;
+    const std::vector<std::size_t>& active_taxis() const {
         return active_taxis_;
     }
-    [[nodiscard]] bool is_active(std::size_t taxi) const {
+    bool is_active(std::size_t taxi) const {
         return taxi < routes_by_taxi_.size() && !routes_by_taxi_[taxi].nodes().empty();
     }
-    [[nodiscard]] std::size_t taxi_count() const { return instance_->taxis.size(); }
-    [[nodiscard]] const RequestLocation& location(std::size_t request) const {
-        return locations_.at(request);
+    std::size_t taxi_count() const { return instance_->taxis.size(); }
+    const RequestLocation& location(std::size_t request) const {
+        return locations_[request];
     }
-    [[nodiscard]] std::size_t request_count() const { return locations_.size(); }
-    [[nodiscard]] std::size_t passenger_count() const { return instance_->passengers.size(); }
-    [[nodiscard]] std::size_t served_count() const;
-    [[nodiscard]] double benefit() const { return benefit_; }
+    std::size_t request_count() const { return locations_.size(); }
+    std::size_t passenger_count() const { return instance_->passengers.size(); }
+    std::size_t served_count() const;
+    double benefit() const { return benefit_; }
     // State copies share this workspace; insertion scans within a solve are
     // sequential. Scratch contents are not part of the solution or its caches.
-    [[nodiscard]] InsertionScratch& insertion_scratch() const {
+    InsertionScratch& insertion_scratch() const {
         return *insertion_scratch_;
     }
-    [[nodiscard]] const std::shared_ptr<InsertionScratch>& insertion_scratch_handle() const {
+    const std::shared_ptr<InsertionScratch>& insertion_scratch_handle() const {
         return insertion_scratch_;
     }
-    [[nodiscard]] double revenue(std::size_t request) const;
-    [[nodiscard]] const Instance& instance() const { return *instance_; }
-    [[nodiscard]] std::size_t pickup_node(std::size_t request) const;
-    [[nodiscard]] const std::shared_ptr<const EmptyTaxiIndex>& empty_taxi_index() const {
+    double revenue(std::size_t request) const;
+    const Instance& instance() const { return *instance_; }
+    std::size_t pickup_node(std::size_t request) const;
+    const std::shared_ptr<const EmptyTaxiIndex>& empty_taxi_index() const {
         return empty_taxi_index_;
     }
     void set_empty_taxi_index(std::shared_ptr<const EmptyTaxiIndex> index) {
         empty_taxi_index_ = std::move(index);
     }
-    [[nodiscard]] std::optional<double> removal_gain(std::size_t request) const;
-    [[nodiscard]] std::optional<double> insertion_gain(std::size_t request,
+    std::optional<double> removal_gain(std::size_t request) const;
+    std::optional<double> insertion_gain(std::size_t request,
         std::size_t taxi, std::size_t pickup_boundary,
         std::size_t delivery_boundary) const;
 
@@ -719,7 +623,6 @@ public:
     // Reject invalid/non-improving exchanges without modifying either route.
     bool exchange_route_suffixes(std::size_t taxi_a, std::size_t cut_a,
                                  std::size_t taxi_b, std::size_t cut_b);
-    void check() const;
 
 private:
     const Instance* instance_;
@@ -742,7 +645,7 @@ private:
     void commit_validated_route(std::size_t taxi, RouteCache& updated, double gain);
     void commit_route_pair(std::size_t taxi_a, RouteCache new_a,
                            std::size_t taxi_b, RouteCache new_b, double gain);
-    [[nodiscard]] std::size_t dropoff_node(std::size_t request) const;
+    std::size_t dropoff_node(std::size_t request) const;
 };
 } // namespace soict::alns
 
@@ -769,27 +672,21 @@ public:
     };
 
     explicit InsertionScratch(std::size_t requests)
-        : requests_(requests), stride_(checked_stride(requests)), storage_(4 * stride_) {}
+        : stride_(checked_stride(requests)), storage_(4 * stride_) {}
+    std::size_t max_route_nodes() const { return stride_ - 2; }
 
-    [[nodiscard]] std::size_t request_count() const { return requests_; }
-    [[nodiscard]] std::size_t max_route_nodes() const { return stride_ - 2; }
-    [[nodiscard]] std::size_t bytes() const { return storage_.size() * sizeof(double); }
+    Buffers buffers(std::size_t route_nodes) {
 
-    [[nodiscard]] Buffers buffers(std::size_t route_nodes) {
-        if (route_nodes > max_route_nodes())
-            throw std::out_of_range("insertion route exceeds fixed scratch capacity");
         auto* data = storage_.data();
         return {data, data + stride_, data + 2 * stride_, data + 3 * stride_};
     }
 
 private:
     static std::size_t checked_stride(std::size_t requests) {
-        constexpr auto limit = std::numeric_limits<std::size_t>::max() / sizeof(double) / 4;
-        if (requests > (limit - 2) / 2)
-            throw std::length_error("insertion scratch size overflow");
+
         return 2 * requests + 2;
     }
-    std::size_t requests_, stride_;
+    std::size_t stride_;
     // Never resized: scan results own their values and do not retain pointers.
     std::vector<double> storage_;
 };
@@ -818,7 +715,7 @@ public:
     void node(std::size_t id) { append(single_node(in_, id)); }
     void segment(const Segment& next) { append(next); }
 
-    [[nodiscard]] bool feasible() const {
+    bool feasible() const {
         if (!summary_) return true;
         const auto& s = *summary_;
         return s.feasible && in_.time(taxi_, s.first) <= s.latest_input &&
@@ -870,8 +767,8 @@ struct RouteView {
     std::size_t pickup_removed = 0, delivery_removed = 0;
     bool removed = false;
 
-    [[nodiscard]] std::size_t size() const { return nodes.size() - (removed ? 2 : 0); }
-    [[nodiscard]] std::size_t node(std::size_t position) const {
+    std::size_t size() const { return nodes.size() - (removed ? 2 : 0); }
+    std::size_t node(std::size_t position) const {
         if (!removed) return nodes[position];
         if (position < pickup_removed) return nodes[position];
         if (position < delivery_removed - 1) return nodes[position + 1];
@@ -956,11 +853,10 @@ SearchState::SearchState(const Instance& in, Solution solution,
       routes_by_taxi_(in.taxis.size()),
       locations_(in.passengers.size() + in.parcels.size()),
       removal_cache_(locations_.size()) {
-    if (insertion_scratch_->request_count() != locations_.size())
-        throw std::logic_error("error");
+
     active_taxis_.reserve(in.taxis.size());
     const auto evaluation = solution.evaluate(in);
-    if (!evaluation.feasible) throw std::logic_error("error" + evaluation.error);
+
     benefit_ = evaluation.benefit;
     for (std::size_t k = 0; k < solution.routes.size(); ++k)
         if (!solution.routes[k].empty()) rebuild_route(k, solution.routes[k]);
@@ -968,7 +864,7 @@ SearchState::SearchState(const Instance& in, Solution solution,
 
 void SearchState::copy_from(const SearchState& other) {
     if (this == &other) return;
-    if (instance_ != other.instance_) throw std::logic_error("error");
+
     // Rebuild versions are globally unique; version 0 denotes a cleared route.
     // Equal versions on the same instance/taxi already contain identical data.
     for (std::size_t taxi = 0; taxi < routes_by_taxi_.size(); ++taxi)
@@ -982,19 +878,7 @@ void SearchState::copy_from(const SearchState& other) {
     benefit_ = other.benefit_;
 }
 
-void SearchState::swap(SearchState& other) noexcept {
-    using std::swap;
-    swap(instance_, other.instance_);
-    insertion_scratch_.swap(other.insertion_scratch_);
-    routes_by_taxi_.swap(other.routes_by_taxi_);
-    active_taxis_.swap(other.active_taxis_);
-    locations_.swap(other.locations_);
-    removal_cache_.swap(other.removal_cache_);
-    empty_taxi_index_.swap(other.empty_taxi_index_);
-    swap(benefit_, other.benefit_);
-    route_scratch_.swap(other.route_scratch_);
-    swap(relocation_check_, other.relocation_check_);
-}
+
 
 Solution SearchState::solution() const {
     Solution result;
@@ -1015,8 +899,8 @@ std::size_t SearchState::served_count() const {
 
 double SearchState::revenue(std::size_t request) const {
     const auto n = instance_->passengers.size();
-    return request < n ? instance_->passengers.at(request).revenue :
-                         instance_->parcels.at(request - n).revenue;
+    return request < n ? instance_->passengers[request].revenue :
+                         instance_->parcels[request - n].revenue;
 }
 std::size_t SearchState::pickup_node(std::size_t request) const {
     const auto n = instance_->passengers.size();
@@ -1037,7 +921,7 @@ void SearchState::rebuild_route(std::size_t taxi, const std::vector<std::size_t>
                              n + (node - k_count - 2 * n) % m;
         locations_[request] = {};
     }
-    auto& slot = routes_by_taxi_.at(taxi);
+    auto& slot = routes_by_taxi_[taxi];
     const bool was_active = is_active(taxi);
     if (route.empty()) {
         if (was_active) {
@@ -1233,7 +1117,7 @@ void SearchState::commit_validated_route(std::size_t taxi, RouteCache& updated,
     const auto request_id = [&](std::size_t node) {
         return node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
     };
-    auto& slot = routes_by_taxi_.at(taxi);
+    auto& slot = routes_by_taxi_[taxi];
     for (const auto node : slot.nodes()) locations_[request_id(node)] = {};
     const bool was_active = !slot.nodes().empty();
     const bool active = !updated.nodes().empty();
@@ -1343,127 +1227,10 @@ void SearchState::commit_route_pair(std::size_t taxi_a, RouteCache new_a,
     benefit_ += gain;
 }
 
-void SearchState::check() const {
-    const auto result = solution().evaluate(*instance_);
-    if (!result.feasible || std::abs(result.benefit - benefit_) >
-                               1e-6 * std::max(1.0, std::abs(result.benefit)))
-        throw std::logic_error("error" + result.error);
-}
+
 } // namespace soict::alns
 
 // END src/search/alns/SearchState.cpp
-
-// BEGIN src/search/alns/Balance.cpp
-
-// BEGIN include/search/alns/Balance.hpp
-#include <cstddef>
-#include <random>
-#include <vector>
-
-namespace soict::alns {
-struct Choice {
-    std::size_t couple = 0, size_index = 0, removal_count = 0;
-};
-class Balance {
-public:
-    Balance(std::size_t couples, std::size_t requests, bool thompson);
-    Choice select(std::mt19937_64& rng, std::size_t served);
-    void update(Choice choice, double reward);
-    [[nodiscard]] const std::vector<double>& rewards() const { return reward_sum_; }
-    [[nodiscard]] const std::vector<std::size_t>& calls() const { return calls_; }
-private:
-    struct Arm {
-        double weight = 1, sum = 0, square_sum = 0;
-        std::size_t count = 0;
-    };
-    bool thompson_;
-    std::vector<Arm> couples_;
-    std::vector<std::vector<Arm>> sizes_;
-    std::vector<std::size_t> powers_;
-    std::vector<double> reward_sum_;
-    std::vector<std::size_t> calls_;
-    std::size_t choose(const std::vector<Arm>& arms, std::mt19937_64& rng) const;
-};
-} // namespace soict::alns
-
-// END include/search/alns/Balance.hpp
-
-#include <algorithm>
-#include <cmath>
-#include <limits>
-#include <stdexcept>
-
-namespace soict::alns {
-Balance::Balance(std::size_t couples, std::size_t requests, bool thompson)
-    : thompson_(thompson), couples_(couples), sizes_(couples),
-      reward_sum_(couples, 0), calls_(couples, 0) {
-    if (couples == 0) throw std::invalid_argument("error");
-    for (std::size_t p = 1; p <= requests; p *= 2) {
-        powers_.push_back(p);
-        if (p > requests / 2) break;
-    }
-    if (powers_.empty()) powers_.push_back(1);
-    for (auto& arms : sizes_) arms.resize(powers_.size());
-}
-
-std::size_t Balance::choose(const std::vector<Arm>& arms, std::mt19937_64& rng) const {
-    if (!thompson_) {
-        double total = 0;
-        for (const auto& arm : arms) total += arm.weight;
-        std::uniform_real_distribution<double> draw(0, total);
-        double target = draw(rng);
-        for (std::size_t i = 0; i < arms.size(); ++i) {
-            target -= arms[i].weight;
-            if (target <= 0) return i;
-        }
-        return arms.size() - 1;
-    }
-    // Normal-Gamma posterior with MV-FSTSP priors.
-    constexpr double mu0 = 0, lambda0 = 0.01, alpha0 = 1, beta0 = 100;
-    std::size_t choice = 0;
-    double best = -std::numeric_limits<double>::infinity();
-    for (std::size_t i = 0; i < arms.size(); ++i) {
-        const auto& a = arms[i];
-        const double count = static_cast<double>(a.count);
-        const double lambda = lambda0 + count;
-        const double mean = (lambda0 * mu0 + a.sum) / lambda;
-        const double alpha = alpha0 + count / 2;
-        const double beta = beta0 + 0.5 *
-            (a.square_sum + lambda0 * mu0 * mu0 - lambda * mean * mean);
-        std::gamma_distribution<double> gamma(alpha, 1.0 / std::max(beta, 1e-12));
-        const double precision = gamma(rng);
-        std::normal_distribution<double> normal(mean,
-            1.0 / std::sqrt(std::max(lambda * precision, 1e-12)));
-        const double sample = normal(rng);
-        if (sample > best) { best = sample; choice = i; }
-    }
-    return choice;
-}
-
-Choice Balance::select(std::mt19937_64& rng, std::size_t served) {
-    Choice choice;
-    choice.couple = choose(couples_, rng);
-    choice.size_index = choose(sizes_[choice.couple], rng);
-    choice.removal_count = std::min(served, powers_[choice.size_index]);
-    return choice;
-}
-
-void Balance::update(Choice choice, double reward) {
-    reward = std::max(0.0, reward);
-    auto update_arm = [reward](Arm& a) {
-        ++a.count;
-        a.sum += reward;
-        a.square_sum += reward * reward;
-        a.weight = 0.9 * a.weight + 0.1 * (0.01 + reward);
-    };
-    update_arm(couples_[choice.couple]);
-    update_arm(sizes_[choice.couple][choice.size_index]);
-    reward_sum_[choice.couple] += reward;
-    ++calls_[choice.couple];
-}
-} // namespace soict::alns
-
-// END src/search/alns/Balance.cpp
 
 // BEGIN src/search/alns/ALNS.cpp
 
@@ -1480,28 +1247,24 @@ namespace soict::alns {
 struct Config {
     std::uint64_t seed = 1;
     double time_limit = 59.0;
-    double temperature = 200.0;
     // Spend the search budget on collecting diverse routes, then let the
     // final route-pool master combine them. The former 60,000-step schedule
     // can still be selected with --disable-path-generation and
     // --cooling 0.9998465061085267.
-    double cooling = std::exp(std::log(1e-4) / 6000.0);
-    bool check = false;
     bool local_search = true;
     bool clean_cut_2opt_star = true;
-    bool all_unserved_repair = true;
-    bool profit_repair = true;
-    bool route_removal = true;
-    bool opportunity_removal = true;
     bool route_pool_repair = true;
     bool path_generation = true;
     bool paths_only = false;
-    std::size_t path_prefix_limit = 50000;
-    std::size_t route_pool_limit = 200;
-    std::size_t path_pool_limit = 48;
-    std::size_t ls_interval = 1;
-    bool thompson = false;
-    std::string log_directory;
+    std::size_t path_prefix_limit = 1000000;
+    std::size_t route_pool_limit = 400;
+    std::size_t path_pool_limit = 400;
+    bool candidate_sampling = true;
+    double enumeration_seconds = 2;
+    double generation_seconds = 140;
+    std::size_t fleet_refinement_interval = 2;
+    std::size_t fleet_refinement_cycles = 3;
+    bool light_fleet_refinement = true;
 };
 } // namespace soict::alns
 
@@ -1509,20 +1272,15 @@ struct Config {
 #include <cstddef>
 
 namespace soict::alns {
-struct Result {
-    Solution solution;
-    double benefit = 0;
-    std::size_t iterations = 0;
-    double seconds = 0;
-    bool annealing_complete = false;
-    bool paths_only = false;
-};
+struct Result { Solution solution; };
 Result solve(const Instance& instance, const Config& config);
 } // namespace soict::alns
 
 // END include/search/alns/ALNS.hpp
 
-// BEGIN include/search/alns/operators/Destroy/RandomRemoval.hpp
+// BEGIN include/search/alns/operators/LocalSearch/LocalSearch.hpp
+
+// BEGIN include/search/alns/operators/LocalSearch/Move.hpp
 
 // BEGIN include/search/alns/operators/Destroy/DestroyOperator.hpp
 #include <cstddef>
@@ -1534,7 +1292,6 @@ namespace soict::alns {
 class DestroyOperator {
 public:
     virtual ~DestroyOperator() = default;
-    virtual std::string_view name() const = 0;
     virtual std::vector<std::size_t> apply(SearchState& state, std::size_t count,
                                            std::mt19937_64& rng) const = 0;
 };
@@ -1543,80 +1300,15 @@ public:
 // END include/search/alns/operators/Destroy/DestroyOperator.hpp
 
 namespace soict::alns {
-class RandomRemoval final : public DestroyOperator {
-public:
-    std::string_view name() const override { return "random"; }
-    std::vector<std::size_t> apply(SearchState&, std::size_t, std::mt19937_64&) const override;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Destroy/RandomRemoval.hpp
-
-// BEGIN include/search/alns/operators/Destroy/RelatedRemoval.hpp
-
-namespace soict::alns {
-class RelatedRemoval final : public DestroyOperator {
-public:
-    std::string_view name() const override { return "related"; }
-    std::vector<std::size_t> apply(SearchState&, std::size_t, std::mt19937_64&) const override;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Destroy/RelatedRemoval.hpp
-
-// BEGIN include/search/alns/operators/Destroy/WorstRemoval.hpp
-
-namespace soict::alns {
-class WorstRemoval final : public DestroyOperator {
-public:
-    std::string_view name() const override { return "worst"; }
-    std::vector<std::size_t> apply(SearchState&, std::size_t, std::mt19937_64&) const override;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Destroy/WorstRemoval.hpp
-
-// BEGIN include/search/alns/operators/Destroy/RouteRemoval.hpp
-
-namespace soict::alns {
-// Rebuild whole routes first; a partial route is a complete-request subset.
-class RouteRemoval final : public DestroyOperator {
-public:
-    std::string_view name() const override { return "route"; }
-    std::vector<std::size_t> apply(SearchState&, std::size_t, std::mt19937_64&) const override;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Destroy/RouteRemoval.hpp
-
-// BEGIN include/search/alns/operators/Destroy/OpportunityRemoval.hpp
-
-namespace soict::alns {
-// Open space around an unserved, individually profitable request. Related
-// removal normally seeds from a served pickup and never targets lost revenue.
-class OpportunityRemoval final : public DestroyOperator {
-public:
-    std::string_view name() const override { return "opportunity"; }
-    std::vector<std::size_t> apply(SearchState&, std::size_t, std::mt19937_64&) const override;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Destroy/OpportunityRemoval.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/LocalSearch.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/Move.hpp
-
-namespace soict::alns {
 class Move {
 public:
     virtual ~Move() = default;
-    virtual std::string_view name() const = 0;
     virtual bool improve(SearchState& state) const = 0;
 };
 } // namespace soict::alns
 
 // END include/search/alns/operators/LocalSearch/Move.hpp
+#include <chrono>
 #include <memory>
 #include <vector>
 
@@ -1624,7 +1316,8 @@ namespace soict::alns {
 class LocalSearch {
 public:
     void add_move(std::unique_ptr<Move> move) { moves_.push_back(std::move(move)); }
-    bool search(SearchState& state) const;
+    bool search(SearchState& state, std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::time_point::max()) const;
 private:
     std::vector<std::unique_ptr<Move>> moves_;
 };
@@ -1637,20 +1330,6 @@ private:
 // BEGIN include/search/alns/operators/LocalSearch/MoveCache.hpp
 
 // BEGIN include/search/alns/operators/Repair/InsertionSearch.hpp
-
-// BEGIN include/search/alns/operators/Repair/RepairOperator.hpp
-
-namespace soict::alns {
-class RepairOperator {
-public:
-    virtual ~RepairOperator() = default;
-    virtual std::string_view name() const = 0;
-    virtual void apply(SearchState&, const std::vector<std::size_t>& removed,
-                       std::mt19937_64&) const = 0;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Repair/RepairOperator.hpp
 #include <chrono>
 #include <cstdint>
 #include <limits>
@@ -1685,18 +1364,16 @@ public:
     // Extend an unfinished request's index on first use. A solver process
     // searches in one thread, so this shared cache has no locking overhead.
     bool ensure(std::size_t request, Deadline deadline = Deadline::max()) const;
-    [[nodiscard]] bool complete(std::size_t request) const {
-        return complete_.at(request);
+    bool complete(std::size_t request) const {
+        return complete_[request];
     }
-    [[nodiscard]] const std::vector<EmptyTaxiChoice>& choices(std::size_t request) const {
-        return choices_.at(request);
+    const std::vector<EmptyTaxiChoice>& choices(std::size_t request) const {
+        return choices_[request];
     }
-    [[nodiscard]] const RequestSegments& request_segments(std::size_t request) const {
-        return request_segments_.at(request);
+    const RequestSegments& request_segments(std::size_t request) const {
+        return request_segments_[request];
     }
-    [[nodiscard]] std::size_t request_segment_bytes() const {
-        return request_segments_.size() * sizeof(RequestSegments);
-    }
+
 private:
     const Instance* instance_;
     mutable std::vector<std::vector<EmptyTaxiChoice>> choices_;
@@ -1707,9 +1384,6 @@ private:
 };
 std::shared_ptr<const EmptyTaxiIndex> build_empty_taxi_index(
     const SearchState& empty_state, Deadline deadline);
-InsertionOptions insertion_options(const SearchState& state, std::size_t request);
-std::optional<InsertionChoice> best_insertion(const SearchState& state,
-                                              std::size_t request);
 // The supplied route may be a temporary route with another request removed.
 // A non-positive insertion can still participate in an improving replacement.
 std::optional<InsertionChoice> best_insertion_on_route(const SearchState& state,
@@ -1719,30 +1393,21 @@ std::optional<InsertionChoice> best_insertion_on_route(const SearchState& state,
 // Reuse an unserved request's route choice while that route is unchanged.
 // A scan made above a gain threshold is reused only when the current best
 // meets that threshold; otherwise the route is rescanned exactly.
-class BestInsertionCache {
-public:
-    std::optional<InsertionChoice> best(const SearchState& state,
-                                        std::size_t request);
-private:
-    struct Entry {
-        std::uint64_t route_version = 0;
-        double threshold = -std::numeric_limits<double>::infinity();
-        std::optional<InsertionChoice> best;
-    };
-    std::vector<std::vector<Entry>> entries_;
-};
+
 
 // Exact positive choices at a fixed floor, independent of other taxis' gains.
 // The dense table and winners are allocated once and reused across repairs.
 class PositiveInsertionCache {
 public:
+    // Refresh only the requested row; unchanged routes retain exact choices.
+    const std::optional<InsertionChoice>& best(const SearchState&, std::size_t request);
     void prepare(const SearchState&, const std::vector<std::size_t>& requests);
     void refresh_taxi(const SearchState&, std::size_t taxi,
                       const std::vector<std::size_t>& requests);
-    [[nodiscard]] const std::optional<InsertionChoice>& best(std::size_t request) const {
-        return entries_.at(requests_ * taxis_ + request).choice;
+    const std::optional<InsertionChoice>& best(std::size_t request) const {
+        return entries_[requests_ * taxis_ + request].choice;
     }
-    [[nodiscard]] std::size_t storage_bytes() const { return entries_.size() * sizeof(Entry); }
+
 private:
     struct Entry {
         std::uint64_t version = std::numeric_limits<std::uint64_t>::max();
@@ -1752,6 +1417,7 @@ private:
     std::size_t taxis_ = 0, requests_ = 0;
     // First requests*taxis cells, followed by one winner cell per request.
     std::vector<Entry> entries_;
+    void initialize(const SearchState&);
     void refresh_entry(const SearchState&, std::size_t request, std::size_t taxi);
     void select_winner(std::size_t request);
 };
@@ -1759,19 +1425,7 @@ private:
 // Repair only inserts requests, so an accepted insertion changes one taxi.
 // Retain the top two positions per request and active taxi; rescan that taxi
 // after insertion while keeping the other taxis' positions unchanged.
-class RepairInsertionCache {
-public:
-    [[nodiscard]] static bool enabled_for(const SearchState& state);
-    explicit RepairInsertionCache(const SearchState& state);
-    RepairInsertionCache(const SearchState& state, const std::vector<std::size_t>& requests);
-    [[nodiscard]] InsertionOptions options(std::size_t request) const;
-    void refresh_taxi(std::size_t taxi);
-private:
-    const SearchState& state_;
-    using TaxiOptions = std::pair<std::size_t, InsertionOptions>;
-    std::vector<std::vector<TaxiOptions>> route_options_;
-    std::vector<std::size_t> requests_;
-};
+
 } // namespace soict::alns
 
 // END include/search/alns/operators/Repair/InsertionSearch.hpp
@@ -1849,7 +1503,7 @@ public:
     void add(std::optional<InsertionChoice> choice, std::size_t source) {
         if (choice && choice->gain > 1e-9) moves_.push_back({*choice, source});
     }
-    [[nodiscard]] std::optional<RelocationDescriptor> best() const {
+    std::optional<RelocationDescriptor> best() const {
         if (moves_.empty()) return std::nullopt;
         return *std::max_element(moves_.begin(), moves_.end(),
             [](const auto& a, const auto& b) {
@@ -1875,21 +1529,21 @@ namespace soict::alns {
 class ParcelRelocationContext {
 public:
     ParcelRelocationContext(const SearchState& state, std::size_t request);
-    [[nodiscard]] bool valid() const { return served_; }
-    [[nodiscard]] bool removal_feasible() const { return removal_gain_.has_value(); }
-    [[nodiscard]] double removal_savings() const { return removal_savings_; }
-    [[nodiscard]] std::size_t length(std::size_t taxi) const;
-    [[nodiscard]] std::optional<double> gain(std::size_t taxi,
+    bool valid() const { return served_; }
+    bool removal_feasible() const { return removal_gain_.has_value(); }
+    double removal_savings() const { return removal_savings_; }
+    std::size_t length(std::size_t taxi) const;
+    std::optional<double> gain(std::size_t taxi,
         std::size_t pickup_boundary, std::size_t delivery_boundary) const;
-    [[nodiscard]] std::optional<double> gain(std::size_t taxi, const RouteCache& route,
+    std::optional<double> gain(std::size_t taxi, const RouteCache& route,
         std::size_t pickup_boundary, std::size_t delivery_boundary) const;
     // Benefit delta from changed travel-cost arcs; feasibility is checked by gain().
-    [[nodiscard]] std::optional<double> calculate_delta_fast(std::size_t taxi,
+    std::optional<double> calculate_delta_fast(std::size_t taxi,
         const RouteCache& route, std::size_t pickup_boundary,
         std::size_t delivery_boundary) const;
-    [[nodiscard]] std::optional<FastRouteCheck> pickup_prefix(
+    std::optional<FastRouteCheck> pickup_prefix(
         std::size_t taxi, const RouteCache& route, std::size_t pickup_boundary) const;
-    [[nodiscard]] std::optional<double> gain_from_prefix(std::size_t taxi,
+    std::optional<double> gain_from_prefix(std::size_t taxi,
         const RouteCache& route, std::size_t pickup_boundary,
         std::size_t delivery_boundary, const FastRouteCheck& prefix) const;
 private:
@@ -1899,8 +1553,8 @@ private:
     std::optional<double> removal_gain_;
     double removal_savings_ = 0;
     Segment pickup_, delivery_;
-    [[nodiscard]] std::size_t original_position(std::size_t position) const;
-    [[nodiscard]] bool source_boundary_allowed(const RouteCache& route,
+    std::size_t original_position(std::size_t position) const;
+    bool source_boundary_allowed(const RouteCache& route,
                                                 std::size_t boundary) const;
     void add_source_range(FastRouteCheck& candidate, std::size_t first,
                           std::size_t end) const;
@@ -1908,11 +1562,10 @@ private:
 
 class ParcelRelocate final : public Move {
 public:
-    std::string_view name() const override { return "parcel_relocate"; }
     bool improve(SearchState&) const override;
 private:
     mutable MoveCache cache_;
-    [[nodiscard]] std::optional<InsertionChoice> best_on_taxi(
+    std::optional<InsertionChoice> best_on_taxi(
         const SearchState&, const ParcelRelocationContext&, std::size_t request,
         std::size_t taxi, const RouteCache&, std::uint64_t source_version) const;
 };
@@ -1929,16 +1582,16 @@ namespace soict::alns {
 class PassengerRelocationContext {
 public:
     PassengerRelocationContext(const SearchState& state, std::size_t request);
-    [[nodiscard]] bool valid() const { return served_; }
-    [[nodiscard]] bool removal_feasible() const { return removal_gain_.has_value(); }
-    [[nodiscard]] double removal_savings() const { return removal_savings_; }
-    [[nodiscard]] std::size_t length(std::size_t taxi) const;
-    [[nodiscard]] std::optional<double> gain(std::size_t taxi,
+    bool valid() const { return served_; }
+    bool removal_feasible() const { return removal_gain_.has_value(); }
+    double removal_savings() const { return removal_savings_; }
+    std::size_t length(std::size_t taxi) const;
+    std::optional<double> gain(std::size_t taxi,
                                               std::size_t boundary) const;
-    [[nodiscard]] std::optional<double> gain(std::size_t taxi,
+    std::optional<double> gain(std::size_t taxi,
         const RouteCache& route, std::size_t boundary) const;
     // Benefit delta from changed travel-cost arcs; feasibility is checked by gain().
-    [[nodiscard]] std::optional<double> calculate_delta_fast(std::size_t taxi,
+    std::optional<double> calculate_delta_fast(std::size_t taxi,
         const RouteCache& route, std::size_t boundary) const;
 private:
     const SearchState& state_;
@@ -1946,18 +1599,17 @@ private:
     bool served_ = false;
     std::optional<double> removal_gain_;
     double removal_savings_ = 0;
-    [[nodiscard]] std::size_t original_position(std::size_t position) const;
+    std::size_t original_position(std::size_t position) const;
     void add_source_range(FastRouteCheck& candidate, std::size_t first,
                           std::size_t end) const;
 };
 
 class PassengerRelocate final : public Move {
 public:
-    std::string_view name() const override { return "passenger_relocate"; }
     bool improve(SearchState&) const override;
 private:
     mutable MoveCache cache_;
-    [[nodiscard]] std::optional<InsertionChoice> best_on_taxi(
+    std::optional<InsertionChoice> best_on_taxi(
         const SearchState&, const PassengerRelocationContext&, std::size_t request,
         std::size_t taxi, const RouteCache&, std::uint64_t source_version) const;
 };
@@ -1970,11 +1622,9 @@ private:
 namespace soict::alns {
 class AddRequest final : public Move {
 public:
-    std::string_view name() const override { return "add-request"; }
     bool improve(SearchState& state) const override;
 private:
     mutable PositiveInsertionCache cache_;
-    mutable BestInsertionCache fallback_cache_;
     mutable std::vector<std::size_t> requests_;
 };
 } // namespace soict::alns
@@ -1986,7 +1636,6 @@ private:
 namespace soict::alns {
 class RemoveRequest final : public Move {
 public:
-    std::string_view name() const override { return "remove-request"; }
     bool improve(SearchState& state) const override;
 };
 } // namespace soict::alns
@@ -2000,14 +1649,8 @@ namespace soict::alns {
 // Exchange suffixes at boundaries where every request is wholly on one side.
 class CleanCut2OptStar final : public Move {
 public:
-    std::string_view name() const override { return "clean-cut-2opt-star"; }
     bool improve(SearchState& state) const override;
-    [[nodiscard]] std::size_t calls() const { return calls_; }
-    [[nodiscard]] std::size_t applied_moves() const { return applied_moves_; }
-    [[nodiscard]] double total_gain() const { return total_gain_; }
 private:
-    mutable std::size_t calls_ = 0, applied_moves_ = 0;
-    mutable double total_gain_ = 0;
 };
 } // namespace soict::alns
 
@@ -2026,21 +1669,12 @@ struct ReplacementChoice {
 class ReplaceRequest final : public Move {
 public:
     // The original scan remains available for differential validation.
-    explicit ReplaceRequest(bool use_smd = true) : use_smd_(use_smd) {}
-    std::string_view name() const override { return "replace-request"; }
+    ReplaceRequest() = default;
     bool improve(SearchState&) const override;
-    [[nodiscard]] std::optional<ReplacementChoice> best_choice(const SearchState&) const;
+    std::optional<ReplacementChoice> best_choice(const SearchState&) const;
 private:
-    bool use_smd_;
-    [[nodiscard]] std::optional<ReplacementChoice> best_choice_reference(const SearchState&) const;
-    struct Entry {
-        bool valid = false;
-        double threshold = 0;
-        std::optional<ReplacementChoice> choice;
-    };
+
     struct Row {
-        std::uint64_t route_version = 0;
-        std::vector<Entry> entries;
         std::uint64_t reduced_version = 0;
         RouteCache reduced;
         double removal_gain = 0;
@@ -2094,10 +1728,9 @@ std::optional<double> request_swap_gain(const SearchState&, std::size_t first,
 
 class SwapRequest final : public Move {
 public:
-    explicit SwapRequest(bool use_smd = true) : use_smd_(use_smd) {}
-    std::string_view name() const override { return "swap-request"; }
+    SwapRequest() = default;
     bool improve(SearchState&) const override;
-    [[nodiscard]] std::optional<RequestSwapChoice> best_choice(const SearchState&) const;
+    std::optional<RequestSwapChoice> best_choice(const SearchState&) const;
 private:
     struct Descriptor {
         std::uint64_t generation = 0;
@@ -2112,7 +1745,6 @@ private:
         bool operator()(const QueuedChoice&, const QueuedChoice&) const;
     };
     using Queue = std::priority_queue<QueuedChoice, std::vector<QueuedChoice>, LowerPriority>;
-    bool use_smd_;
     mutable const Instance* instance_ = nullptr;
     mutable std::vector<std::uint64_t> versions_;
     mutable std::vector<std::vector<Descriptor>> descriptors_; // taxi_a < taxi_b
@@ -2124,34 +1756,6 @@ private:
 
 // END include/search/alns/operators/LocalSearch/SwapRequest.hpp
 
-// BEGIN include/search/alns/operators/Repair/GreedyInsertion.hpp
-
-namespace soict::alns {
-class GreedyInsertion final : public RepairOperator {
-public:
-    std::string_view name() const override { return "greedy"; }
-    void apply(SearchState&, const std::vector<std::size_t>&, std::mt19937_64&) const override;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Repair/GreedyInsertion.hpp
-
-// BEGIN include/search/alns/operators/Repair/ProfitInsertion.hpp
-
-namespace soict::alns {
-// Repeatedly select the largest positive marginal benefit across the pool.
-class ProfitInsertion final : public RepairOperator {
-public:
-    std::string_view name() const override { return "profit"; }
-    void apply(SearchState&, const std::vector<std::size_t>&, std::mt19937_64&) const override;
-private:
-    mutable PositiveInsertionCache positive_cache_;
-    mutable BestInsertionCache fallback_cache_;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Repair/ProfitInsertion.hpp
-
 // BEGIN include/search/alns/operators/Repair/RoutePoolRepair.hpp
 #include <map>
 #include <iosfwd>
@@ -2161,35 +1765,51 @@ namespace soict::alns {
 // Identical served sets on one taxi retain only the most profitable sequence.
 class RoutePoolRepair {
 public:
-    explicit RoutePoolRepair(const Instance& instance, std::size_t limit = 200);
+    explicit RoutePoolRepair(const Instance& instance, std::size_t limit = 200, std::uint64_t seed = 1);
     void remember(const SearchState& state);
     // Enumerate feasible prefixes independently for each taxi. Only completed
     // positive-profit routes enter the existing capped, served-set bank.
     // Completion refers to prefix enumeration, not retention of every column.
-    void generate(Deadline deadline, std::size_t prefix_limit = 50000);
+    void generate(Deadline deadline, std::size_t prefix_limit = 50000, bool priced = false);
+    // Perturb complete routes and repair with cached insertion. Preserve all
+    // sampled alternatives and return the best feasible sampled fleet.
+    Solution generate_fleets(Deadline deadline, std::shared_ptr<const EmptyTaxiIndex> index = {},
+                             const Solution* initial = nullptr, bool refine = true,
+                             bool clean_cut = true, std::size_t refinement_interval = 2,
+                             bool light_refinement = true, std::size_t refinement_cycles = 3);
+    void generate_replacements(Deadline deadline, const SearchState& fleet);
     void set_limit(std::size_t limit);
-    std::size_t generated_prefixes() const { return generated_prefixes_; }
-    std::size_t completed_taxis() const { return completed_taxis_; }
     bool enumeration_complete() const { return completed_taxis_ == pool_.size(); }
     bool improve(SearchState& state, Deadline deadline);
-    std::size_t columns() const { return column_count_; }
-    std::size_t nodes() const { return nodes_; }
-    bool timed_out() const { return timed_out_; }
-    void write(std::ostream& out) const;
+    // Statistics and completion describe the most recent improve() call,
+    // before any subsequent generation changes that call's route bank.
 private:
     struct Column {
         std::vector<std::size_t> requests, route;
         double profit = 0;
     };
+    struct Arc { std::size_t request; double latest_departure; };
     const Instance& instance_;
     std::size_t limit_, column_count_ = 0, nodes_ = 0;
     bool timed_out_ = false;
-    std::size_t generated_prefixes_ = 0, completed_taxis_ = 0;
+    std::size_t completed_taxis_ = 0;
+    std::vector<double> floors_;
+    std::uint64_t seed_ = 1;
+    std::uint64_t fleet_calls_ = 0;
+    std::uint64_t pricing_calls_ = 0;
+    std::uint64_t generation_calls_ = 0;
     std::vector<std::map<std::vector<std::size_t>, Column>> pool_;
     std::vector<std::uint64_t> versions_;
+    std::vector<std::vector<Arc>> next_;
+    std::vector<double> delivery_lower_;
+    bool generation_index_ready_ = false;
+    std::uint64_t bank_revision_ = 0;
+    mutable std::uint64_t prices_revision_ = std::numeric_limits<std::uint64_t>::max();
+    mutable std::vector<double> cached_prices_;
     void add(const SearchState&, std::size_t taxi, bool enforce_limit);
     void add_column(std::size_t taxi, const std::vector<std::size_t>& requests,
                     const std::vector<std::size_t>& route, double profit, bool enforce_limit);
+    std::vector<double> estimate_prices(Deadline deadline = Deadline::min()) const;
 };
 } // namespace soict::alns
 
@@ -2210,40 +1830,21 @@ private:
 namespace soict::alns {
 Result solve(const Instance& instance, const Config& config) {
     using Clock = std::chrono::steady_clock;
-    if (!config.ls_interval) throw std::invalid_argument("error");
-    if (config.paths_only && !config.route_pool_repair)
-        throw std::invalid_argument("error");
+
+
     const auto start = Clock::now();
     const auto deadline = start + std::chrono::duration_cast<Clock::duration>(
                                   std::chrono::duration<double>(config.time_limit));
-    std::mt19937_64 rng(config.seed);
     const double polish_reserve = config.route_pool_repair ? 1.0 : 0.0;
     const auto search_deadline = deadline - std::chrono::duration_cast<Clock::duration>(
         std::chrono::duration<double>(std::min(polish_reserve, config.time_limit * 0.05)));
-    std::vector<std::unique_ptr<DestroyOperator>> destroys;
-    destroys.push_back(std::make_unique<RandomRemoval>());
-    destroys.push_back(std::make_unique<WorstRemoval>());
-    destroys.push_back(std::make_unique<RelatedRemoval>());
-    if (config.route_removal) destroys.push_back(std::make_unique<RouteRemoval>());
-    if (config.opportunity_removal) destroys.push_back(std::make_unique<OpportunityRemoval>());
-    std::vector<std::unique_ptr<RepairOperator>> repairs;
-    repairs.push_back(std::make_unique<GreedyInsertion>());
-    if (config.profit_repair) repairs.push_back(std::make_unique<ProfitInsertion>());
-    struct Couple { std::size_t destroy, repair; };
-    std::vector<Couple> couples;
-    for (std::size_t d = 0; d < destroys.size(); ++d)
-        for (std::size_t r = 0; r < repairs.size(); ++r) couples.push_back({d, r});
-    Balance balance(couples.size(), instance.passengers.size() + instance.parcels.size(),
-                    config.thompson);
     LocalSearch local_search;
     local_search.add_move(std::make_unique<RemoveRequest>());
     local_search.add_move(std::make_unique<AddRequest>());
     local_search.add_move(std::make_unique<PassengerRelocate>());
     local_search.add_move(std::make_unique<ParcelRelocate>());
-    CleanCut2OptStar* clean_cut = nullptr;
     if (config.clean_cut_2opt_star) {
         auto move = std::make_unique<CleanCut2OptStar>();
-        clean_cut = move.get();
         local_search.add_move(std::move(move));
     }
     local_search.add_move(std::make_unique<SwapRequest>());
@@ -2259,89 +1860,74 @@ Result solve(const Instance& instance, const Config& config) {
     std::unique_ptr<RoutePoolRepair> route_pool;
     bool paths_only = config.paths_only;
     if (config.route_pool_repair) {
-        route_pool = std::make_unique<RoutePoolRepair>(instance, config.route_pool_limit);
+        route_pool = std::make_unique<RoutePoolRepair>(instance, config.route_pool_limit,config.seed);
         if (config.path_generation || config.paths_only) {
             const auto generation_start = Clock::now();
             const auto generation_deadline = std::min(search_deadline, generation_start +
                 std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
-                    std::min(2.0, config.time_limit * 0.2))));
+                    std::min(config.enumeration_seconds, config.time_limit * 0.2))));
             route_pool->generate(generation_deadline, config.path_prefix_limit);
-            if (route_pool->enumeration_complete()) {
+            const bool initial_enumeration_complete=route_pool->enumeration_complete();
+            const bool sampled = config.candidate_sampling &&
+                (!initial_enumeration_complete || instance.taxis.size()>48);
+            if (sampled) {
+                const auto beam_start = Clock::now();
+                // Leave a fixed selection budget instead of abandoning a
+                // large fraction of short competition runs after an easy master.
+                const auto selection_reserve=std::chrono::duration_cast<Clock::duration>(
+                    std::chrono::duration<double>(std::min(3.0,config.time_limit*0.05)));
+                const auto beam_deadline = std::min(search_deadline-selection_reserve,beam_start+
+                    std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
+                        config.generation_seconds)));
+                std::size_t phase=0;
+                do {
+                    const auto sample_deadline = instance.taxis.size()>48 ?
+                        std::min(beam_deadline,Clock::now()+std::chrono::seconds(6)) : beam_deadline;
+                    const auto initial=current.solution();
+                    SearchState generated(instance,route_pool->generate_fleets(sample_deadline,current.empty_taxi_index(),&initial,
+                                          config.local_search,config.clean_cut_2opt_star,config.fleet_refinement_interval,
+                                          config.light_fleet_refinement,config.fleet_refinement_cycles),
+                                          current.insertion_scratch_handle());
+                    generated.set_empty_taxi_index(current.empty_taxi_index());current.copy_from(generated);
+                    if (instance.taxis.size()>48 && Clock::now()+std::chrono::seconds(2)<beam_deadline) {
+                        const auto mix_deadline=std::min(beam_deadline,Clock::now()+std::chrono::seconds(6));
+                        route_pool->improve(current,mix_deadline);
+                        ++phase; (void)0;
+                        if (Clock::now()+std::chrono::seconds(2)<beam_deadline) {
+                            const auto price_deadline=std::min(beam_deadline,Clock::now()+std::chrono::seconds(3));
+                            if (phase%2) route_pool->generate_replacements(price_deadline,current);
+                            else route_pool->generate(price_deadline,config.path_prefix_limit,true);
+                            (void)0;
+                            if (!(phase%2)) (void)0;
+                            (void)0;
+                        }
+                    }
+                } while (instance.taxis.size()>48 && Clock::now()<beam_deadline);
                 paths_only = true;
-                route_pool->set_limit(std::min(config.route_pool_limit, config.path_pool_limit));
             }
-            std::cerr << "path_prefixes=" << route_pool->generated_prefixes()
-                      << " path_completed_taxis=" << route_pool->completed_taxis()
-                      << " path_seconds=" << std::chrono::duration<double>(Clock::now()-generation_start).count()
-                      << '\n';
+            if (initial_enumeration_complete) {
+                paths_only = true;
+                if (!sampled) route_pool->set_limit(std::min(config.route_pool_limit, config.path_pool_limit));
+            }
+            (void)0;
         }
     }
-    if (!paths_only) {
-        std::vector<std::size_t> initial_order(current.request_count());
-        std::iota(initial_order.begin(), initial_order.end(), 0);
-        std::shuffle(initial_order.begin(), initial_order.end(), rng);
-        for (const auto request : initial_order) {
-            if (Clock::now() >= deadline) break;
-            const auto choice = best_insertion(current, request);
-            if (choice && choice->gain > 1e-9)
-                current.insert(request, choice->taxi, choice->pickup, choice->delivery);
-        }
-    }
-    if (config.check) current.check();
     SearchState best = current;
-    SearchState candidate = current;
     if (route_pool) route_pool->remember(current);
-    double temperature = config.temperature;
-    const double minimum_temperature = config.temperature * 1e-4;
-    std::size_t iterations = 0;
-    while (!paths_only && temperature > minimum_temperature) {
-        const auto iteration_start = Clock::now();
-        if (iteration_start >= search_deadline) break;
-        const auto selection = balance.select(rng, current.served_count());
-        const auto couple = couples[selection.couple];
-        candidate.copy_from(current);
-        const auto removed = destroys[couple.destroy]->apply(
-            candidate, selection.removal_count, rng);
-        if (config.all_unserved_repair) {
-            std::vector<std::size_t> pool;
-            for (std::size_t r = 0; r < candidate.request_count(); ++r)
-                if (candidate.location(r).taxi < 0) pool.push_back(r);
-            std::shuffle(pool.begin(), pool.end(), rng);
-            repairs[couple.repair]->apply(candidate, pool, rng);
-        } else repairs[couple.repair]->apply(candidate, removed, rng);
-        if (config.local_search && iterations % config.ls_interval == 0)
-            local_search.search(candidate);
-        if (config.check) candidate.check();
-        if (route_pool) route_pool->remember(candidate);
-        const double delta = candidate.benefit() - current.benefit();
-        const double reward = std::max(0.0, delta / std::max(1.0, std::abs(current.benefit())));
-        bool accept = delta >= 0;
-        if (!accept) {
-            std::uniform_real_distribution<double> uniform(0, 1);
-            accept = uniform(rng) < std::exp(delta / temperature);
-        }
-        if (accept) {
-            current.swap(candidate);
-            if (current.benefit() > best.benefit() + 1e-9) {
-                best.copy_from(current);
-
-            }
-        }
-        balance.update(selection, reward);
-        ++iterations;
-        temperature = std::max(minimum_temperature, temperature * config.cooling);
-    }
     if (route_pool) {
         route_pool->improve(best, deadline);
+        (void)0;
+        // Recombination can expose insertions and exchanges absent from the
+        // retained bank. Polish only complete moves within the remaining budget.
+        if (paths_only && config.local_search && Clock::now()+std::chrono::milliseconds(500)<deadline) {
+            const auto before_polish=best.benefit();
+            local_search.search(best,deadline);
+            if (best.benefit()>before_polish+1e-9) route_pool->remember(best);
+            (void)0;
+        }
     }
-    if (config.check) best.check();
     Result result;
     result.solution = best.solution();
-    result.benefit = best.benefit();
-    result.iterations = iterations;
-    result.seconds = std::chrono::duration<double>(Clock::now() - start).count();
-    result.annealing_complete = temperature <= minimum_temperature;
-    result.paths_only = paths_only && !route_pool->timed_out();
     return result;
 }
 } // namespace soict::alns
@@ -2349,6 +1935,17 @@ Result solve(const Instance& instance, const Config& config) {
 // END src/search/alns/ALNS.cpp
 
 // BEGIN src/search/alns/operators/Destroy/RandomRemoval.cpp
+
+// BEGIN include/search/alns/operators/Destroy/RandomRemoval.hpp
+
+namespace soict::alns {
+class RandomRemoval final : public DestroyOperator {
+public:
+    std::vector<std::size_t> apply(SearchState&, std::size_t, std::mt19937_64&) const override;
+};
+} // namespace soict::alns
+
+// END include/search/alns/operators/Destroy/RandomRemoval.hpp
 
 #include <algorithm>
 #include <numeric>
@@ -2372,6 +1969,17 @@ std::vector<std::size_t> RandomRemoval::apply(SearchState& state, std::size_t co
 // END src/search/alns/operators/Destroy/RandomRemoval.cpp
 
 // BEGIN src/search/alns/operators/Destroy/WorstRemoval.cpp
+
+// BEGIN include/search/alns/operators/Destroy/WorstRemoval.hpp
+
+namespace soict::alns {
+class WorstRemoval final : public DestroyOperator {
+public:
+    std::vector<std::size_t> apply(SearchState&, std::size_t, std::mt19937_64&) const override;
+};
+} // namespace soict::alns
+
+// END include/search/alns/operators/Destroy/WorstRemoval.hpp
 
 #include <limits>
 
@@ -2397,6 +2005,17 @@ std::vector<std::size_t> WorstRemoval::apply(SearchState& state, std::size_t cou
 // END src/search/alns/operators/Destroy/WorstRemoval.cpp
 
 // BEGIN src/search/alns/operators/Destroy/RelatedRemoval.cpp
+
+// BEGIN include/search/alns/operators/Destroy/RelatedRemoval.hpp
+
+namespace soict::alns {
+class RelatedRemoval final : public DestroyOperator {
+public:
+    std::vector<std::size_t> apply(SearchState&, std::size_t, std::mt19937_64&) const override;
+};
+} // namespace soict::alns
+
+// END include/search/alns/operators/Destroy/RelatedRemoval.hpp
 
 #include <cmath>
 #include <limits>
@@ -2440,101 +2059,6 @@ std::vector<std::size_t> RelatedRemoval::apply(SearchState& state, std::size_t c
 
 // END src/search/alns/operators/Destroy/RelatedRemoval.cpp
 
-// BEGIN src/search/alns/operators/Destroy/RouteRemoval.cpp
-#include <algorithm>
-
-namespace soict::alns {
-std::vector<std::size_t> RouteRemoval::apply(SearchState& state, std::size_t count,
-                                            std::mt19937_64& rng) const {
-    auto taxis = state.active_taxis();
-    std::shuffle(taxis.begin(), taxis.end(), rng);
-    std::vector<std::size_t> removed;
-    for (const auto taxi : taxis) {
-        if (removed.size() >= count) break;
-        std::vector<std::size_t> requests;
-        for (std::size_t r = 0; r < state.request_count(); ++r)
-            if (state.location(r).taxi == static_cast<int>(taxi)) requests.push_back(r);
-        const auto remaining = count - removed.size();
-        if (requests.size() <= remaining) {
-            if (state.remove_requests(taxi, requests))
-                removed.insert(removed.end(), requests.begin(), requests.end());
-        } else {
-            // Atomic subsets avoid requiring each nonmetric shortcut to be
-            // feasible. The returned pool contains only successful removals.
-            for (int attempt = 0; attempt < 4; ++attempt) {
-                std::shuffle(requests.begin(), requests.end(), rng);
-                const std::vector<std::size_t> subset(requests.begin(), requests.begin() + remaining);
-                if (state.remove_requests(taxi, subset)) {
-                    removed.insert(removed.end(), subset.begin(), subset.end());
-                    break;
-                }
-            }
-        }
-    }
-    return removed;
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/Destroy/RouteRemoval.cpp
-
-// BEGIN src/search/alns/operators/Destroy/OpportunityRemoval.cpp
-#include <algorithm>
-#include <cmath>
-
-namespace soict::alns {
-std::vector<std::size_t> OpportunityRemoval::apply(SearchState& state, std::size_t count,
-                                                   std::mt19937_64& rng) const {
-    if (!count) return {};
-    const auto& in = state.instance();
-    const auto& index = state.empty_taxi_index();
-    std::vector<std::size_t> targets, served;
-    std::vector<double> weights;
-    for (std::size_t r = 0; r < state.request_count(); ++r) {
-        if (state.location(r).taxi >= 0) { served.push_back(r); continue; }
-        double opportunity = state.revenue(r);
-        if (index) {
-            index->ensure(r);
-            const auto& choices = index->choices(r);
-            opportunity = choices.empty() ? 0 : std::max(0.0, choices.front().gain);
-        }
-        if (opportunity > 1e-9) { targets.push_back(r); weights.push_back(opportunity); }
-    }
-    if (served.empty()) return {};
-    std::size_t anchor;
-    if (targets.empty()) anchor = served[rng() % served.size()];
-    else anchor = targets[std::discrete_distribution<std::size_t>(weights.begin(), weights.end())(rng)];
-    const auto dropoff = [&](std::size_t r) {
-        return r < state.passenger_count() ? in.passenger_dropoff(r) :
-            in.parcel_dropoff(r - state.passenger_count());
-    };
-    const auto earliest = [&](std::size_t r) {
-        return r < state.passenger_count() ? in.passengers[r].pickup.earliest :
-            in.parcels[r - state.passenger_count()].pickup.earliest;
-    };
-    const auto pickup_a = state.pickup_node(anchor), drop_a = dropoff(anchor);
-    std::vector<std::pair<double, std::size_t>> ranked;
-    for (auto r : served) {
-        const auto pickup = state.pickup_node(r), drop = dropoff(r);
-        const double distance = 0.5 * (in.time(pickup_a, pickup) + in.time(pickup, pickup_a) +
-            in.time(drop_a, drop) + in.time(drop, drop_a)) + std::abs(earliest(anchor) - earliest(r));
-        ranked.emplace_back(distance, r);
-    }
-    std::sort(ranked.begin(), ranked.end());
-    std::uniform_real_distribution<double> uniform(0, 1);
-    std::vector<std::size_t> removed;
-    while (!ranked.empty() && removed.size() < count) {
-        const auto position = std::min(ranked.size() - 1,
-            static_cast<std::size_t>(std::pow(uniform(rng), 3) * ranked.size()));
-        const auto r = ranked[position].second;
-        ranked.erase(ranked.begin() + position);
-        if (state.remove(r)) removed.push_back(r);
-    }
-    return removed;
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/Destroy/OpportunityRemoval.cpp
-
 // BEGIN src/search/alns/operators/Repair/InsertionSearch.cpp
 
 #include <algorithm>
@@ -2566,7 +2090,7 @@ EmptyTaxiIndex::EmptyTaxiIndex(const Instance& instance)
 }
 
 bool EmptyTaxiIndex::ensure(std::size_t request, Deadline deadline) const {
-    if (complete_.at(request)) return true;
+    if (complete_[request]) return true;
     const auto& in = *instance_;
     const auto n = in.passengers.size();
     const auto pickup = request < n ? in.passenger_pickup(request) :
@@ -2611,25 +2135,9 @@ void consider(InsertionOptions& result, InsertionChoice choice) {
     } else result.second_gain = std::max(result.second_gain, choice.gain);
 }
 
-void combine(InsertionOptions& result, const InsertionOptions& route) {
-    if (route.best) consider(result, *route.best);
-    result.second_gain = std::max(result.second_gain, route.second_gain);
-}
 
-bool add_empty_taxis(InsertionOptions& result, const SearchState& state,
-                     std::size_t request) {
-    const auto& index = state.empty_taxi_index();
-    const bool indexed = index && index->ensure(request);
-    if (indexed) {
-        std::size_t found = 0;
-        for (const auto& empty : index->choices(request)) {
-            if (state.is_active(empty.taxi)) continue;
-            consider(result, {request, empty.taxi, 0, 0, empty.gain});
-            if (++found == 2) break;
-        }
-    }
-    return indexed;
-}
+
+
 
 RequestSegments request_segments(const SearchState& state, std::size_t request) {
     const auto& in = state.instance();
@@ -2739,66 +2247,6 @@ std::optional<InsertionChoice> best_insertion_on_route(const SearchState& state,
                       state.insertion_scratch(), minimum_gain, true).best;
 }
 
-namespace {
-InsertionOptions insertion_options_impl(const SearchState& state, std::size_t request,
-                                         bool need_second) {
-    InsertionOptions result;
-    if (state.location(request).taxi >= 0) return result;
-    const bool indexed = add_empty_taxis(result, state, request);
-    const auto data = request_segments(state, request);
-    auto& scratch = state.insertion_scratch();
-    const auto threshold = [&] {
-        return need_second ? result.second_gain :
-            (result.best ? result.best->gain : -std::numeric_limits<double>::infinity());
-    };
-    if (indexed) {
-        for (const auto taxi : state.active_taxis())
-            combine(result, scan_route(state, request, taxi, state.cache(taxi), data,
-                                       scratch, threshold(), !need_second));
-    } else {
-        for (std::size_t taxi = 0; taxi < state.taxi_count(); ++taxi)
-            combine(result, scan_route(state, request, taxi, state.cache(taxi), data,
-                                       scratch, threshold(), !need_second));
-    }
-    return result;
-}
-} // namespace
-
-InsertionOptions insertion_options(const SearchState& state, std::size_t request) {
-    return insertion_options_impl(state, request, true);
-}
-
-std::optional<InsertionChoice> best_insertion(const SearchState& state,
-                                              std::size_t request) {
-    return insertion_options_impl(state, request, false).best;
-}
-
-std::optional<InsertionChoice> BestInsertionCache::best(const SearchState& state,
-                                                        std::size_t request) {
-    if (state.location(request).taxi >= 0) return std::nullopt;
-    InsertionOptions result;
-    if (!add_empty_taxis(result, state, request))
-        return best_insertion(state, request);
-    if (entries_.size() <= request) entries_.resize(request + 1);
-    auto& row = entries_[request];
-    if (row.size() < state.taxi_count()) row.resize(state.taxi_count());
-    const auto& data = state.empty_taxi_index()->request_segments(request);
-    auto& scratch = state.insertion_scratch();
-    for (const auto taxi : state.active_taxis()) {
-        const auto& route = state.cache(taxi);
-        auto& entry = row[taxi];
-        const auto threshold = result.best ? result.best->gain :
-            -std::numeric_limits<double>::infinity();
-        if (entry.route_version != route.version() || threshold < entry.threshold) {
-            entry.best = scan_route(state, request, taxi, route, data, scratch, threshold, true).best;
-            entry.route_version = route.version();
-            entry.threshold = threshold;
-        }
-        if (entry.best) consider(result, *entry.best);
-    }
-    return result.best;
-}
-
 void PositiveInsertionCache::refresh_entry(const SearchState& state,
     std::size_t request, std::size_t taxi) {
     auto& entry = entries_[request * taxis_ + taxi];
@@ -2829,20 +2277,39 @@ void PositiveInsertionCache::select_winner(std::size_t request) {
     }
 }
 
-void PositiveInsertionCache::prepare(const SearchState& state,
-    const std::vector<std::size_t>& requests) {
+void PositiveInsertionCache::initialize(const SearchState& state) {
     const auto& index = state.empty_taxi_index();
-    if (!index) throw std::logic_error("error");
+
     if (index_ != index || taxis_ != state.taxi_count() ||
         requests_ != state.request_count()) {
         index_ = index;
         taxis_ = state.taxi_count();
         requests_ = state.request_count();
-        if (taxis_ == std::numeric_limits<std::size_t>::max() ||
-            requests_ > std::numeric_limits<std::size_t>::max() / (taxis_ + 1))
-            throw std::length_error("positive insertion cache size overflow");
+
         entries_.assign(requests_ * (taxis_ + 1), Entry{});
     }
+}
+
+const std::optional<InsertionChoice>& PositiveInsertionCache::best(const SearchState& state,
+    std::size_t request) {
+    initialize(state);
+    if (state.location(request).taxi >= 0) {
+        entries_[requests_ * taxis_ + request].choice.reset();
+        return best(request);
+    }
+    index_->ensure(request);
+    for (std::size_t taxi = 0; taxi < taxis_; ++taxi)
+        if (entries_[request * taxis_ + taxi].version != state.cache(taxi).version()) {
+            refresh_entry(state, request, taxi);
+        }
+    select_winner(request);
+    return best(request);
+}
+
+void PositiveInsertionCache::prepare(const SearchState& state,
+    const std::vector<std::size_t>& requests) {
+    initialize(state);
+    const auto& index = index_;
     for (const auto request : requests) {
         if (state.location(request).taxi >= 0) continue;
         index->ensure(request);
@@ -2867,178 +2334,61 @@ void PositiveInsertionCache::refresh_taxi(const SearchState& state,
     }
 }
 
-bool RepairInsertionCache::enabled_for(const SearchState& state) {
-    return state.empty_taxi_index() && state.request_count() - state.served_count() >= 4;
-}
-
-RepairInsertionCache::RepairInsertionCache(const SearchState& state)
-    : state_(state), route_options_(state.request_count()) {
-    requests_.resize(state.request_count());
-    std::iota(requests_.begin(), requests_.end(), 0);
-    if (!state.empty_taxi_index()) return;
-    for (const auto request : requests_) {
-        if (state.location(request).taxi >= 0) continue;
-        const auto data = request_segments(state, request);
-        auto& options = route_options_[request];
-        options.reserve(state.active_taxis().size());
-        for (const auto taxi : state.active_taxis())
-            options.emplace_back(taxi, scan_route(state, request, taxi,
-                                                 state.cache(taxi), data, state.insertion_scratch()));
-    }
-}
-
-RepairInsertionCache::RepairInsertionCache(const SearchState& state,
-    const std::vector<std::size_t>& requests)
-    : state_(state), route_options_(state.request_count()) {
-    std::vector<bool> included(state.request_count(), false);
-    for (const auto request : requests) {
-        if (included.at(request) || state.location(request).taxi >= 0) continue;
-        included[request] = true;
-        requests_.push_back(request);
-        if (!state.empty_taxi_index()) continue;
-        const auto data = request_segments(state, request);
-        for (const auto taxi : state.active_taxis())
-            route_options_[request].emplace_back(taxi, scan_route(state, request,
-                taxi, state.cache(taxi), data, state.insertion_scratch()));
-    }
-}
-
-InsertionOptions RepairInsertionCache::options(std::size_t request) const {
-    InsertionOptions result;
-    if (state_.location(request).taxi >= 0) return result;
-    if (!state_.empty_taxi_index()) return insertion_options(state_, request);
-    add_empty_taxis(result, state_, request);
-    for (const auto& [taxi, route] : route_options_.at(request)) combine(result, route);
-    return result;
-}
-
-void RepairInsertionCache::refresh_taxi(std::size_t taxi) {
-    if (!state_.empty_taxi_index()) return;
-    const auto& route = state_.cache(taxi);
-    for (const auto request : requests_) {
-        if (state_.location(request).taxi >= 0) continue;
-        auto& options = route_options_[request];
-        const auto found = std::lower_bound(options.begin(), options.end(), taxi,
-            [](const TaxiOptions& entry, std::size_t id) { return entry.first < id; });
-        const auto data = request_segments(state_, request);
-        auto updated = scan_route(state_, request, taxi, route, data, state_.insertion_scratch());
-        if (found == options.end() || found->first != taxi)
-            options.insert(found, {taxi, std::move(updated)});
-        else found->second = std::move(updated);
-    }
-}
 } // namespace soict::alns
 
 // END src/search/alns/operators/Repair/InsertionSearch.cpp
 
-// BEGIN src/search/alns/operators/Repair/GreedyInsertion.cpp
-
-namespace soict::alns {
-void GreedyInsertion::apply(SearchState& state, const std::vector<std::size_t>& removed,
-                            std::mt19937_64&) const {
-    for (const auto request : removed) {
-        const auto choice = best_insertion(state, request);
-        if (choice && choice->gain > 1e-9)
-            state.insert(request, choice->taxi, choice->pickup, choice->delivery);
-    }
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/Repair/GreedyInsertion.cpp
-
-// BEGIN src/search/alns/operators/Repair/RegretInsertion.cpp
-
-// BEGIN include/search/alns/operators/Repair/RegretInsertion.hpp
-
-namespace soict::alns {
-class RegretInsertion final : public RepairOperator {
-public:
-    std::string_view name() const override { return "regret2"; }
-    void apply(SearchState&, const std::vector<std::size_t>&, std::mt19937_64&) const override;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Repair/RegretInsertion.hpp
-
-#include <cmath>
-
-namespace soict::alns {
-void RegretInsertion::apply(SearchState& state, const std::vector<std::size_t>& removed,
-                            std::mt19937_64&) const {
-    std::vector<bool> pending(state.request_count(), false);
-    for (const auto request : removed) pending.at(request) = true;
-    // A repair mutates only one taxi per insertion. Cache only its candidate
-    // pool and rescan the changed taxi, keeping exactly the same ordering.
-    RepairInsertionCache cache(state, removed);
-    while (true) {
-        std::optional<InsertionChoice> choice;
-        double best_regret = -1;
-        for (const auto request : removed) {
-            if (!pending[request]) continue;
-            const auto options = cache.options(request);
-            if (!options.best || options.best->gain <= 1e-9) continue;
-            const double regret = std::isfinite(options.second_gain) ?
-                                  options.best->gain - options.second_gain :
-                                  options.best->gain;
-            if (!choice || regret > best_regret ||
-                (regret == best_regret && options.best->gain > choice->gain)) {
-                choice = options.best;
-                best_regret = regret;
-            }
-        }
-        if (!choice || !state.insert(choice->request, choice->taxi,
-                                      choice->pickup, choice->delivery)) return;
-        pending[choice->request] = false;
-        cache.refresh_taxi(choice->taxi);
-    }
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/Repair/RegretInsertion.cpp
-
-// BEGIN src/search/alns/operators/Repair/ProfitInsertion.cpp
-#include <stdexcept>
-
-namespace soict::alns {
-void ProfitInsertion::apply(SearchState& state, const std::vector<std::size_t>& pool,
-                            std::mt19937_64&) const {
-    const bool indexed = bool(state.empty_taxi_index());
-    if (indexed) positive_cache_.prepare(state, pool);
-    for (;;) {
-        std::optional<InsertionChoice> choice;
-        double highest = 0;
-        for (const auto request : pool) {
-            if (state.location(request).taxi >= 0) continue;
-            const auto option = indexed ? positive_cache_.best(request) :
-                                          fallback_cache_.best(state, request);
-            if (option && option->gain > 1e-9 && option->gain > highest) {
-                choice = option;
-                highest = option->gain;
-            }
-        }
-        if (!choice) return;
-        if (!state.insert(choice->request, choice->taxi, choice->pickup, choice->delivery))
-            throw std::logic_error("error");
-        if (indexed) positive_cache_.refresh_taxi(state, choice->taxi, pool);
-    }
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/Repair/ProfitInsertion.cpp
-
 // BEGIN src/search/alns/operators/Repair/RoutePoolRepair.cpp
+
+// BEGIN include/search/alns/operators/Repair/RoutePoolMaster.hpp
+#include <vector>
+
+namespace soict::alns {
+struct MasterColumn {
+    std::size_t taxi;
+    std::vector<std::size_t> requests;
+    double profit;
+};
+struct MasterResult {
+    std::vector<int> selected;
+    // Optional full-bank request prices for the next generation phase.
+    // These guide route generation; they do not certify a restricted solve.
+    std::vector<double> request_prices;
+    double profit = 0, root_upper = 0;
+    std::size_t nodes = 0, pivots = 0;
+    bool timed_out = false;
+    bool complete = false;
+};
+std::vector<double> route_master_prices(const std::vector<MasterColumn>& columns,
+    std::size_t taxis, std::size_t requests, Deadline deadline);
+bool route_master_uses_cplex();
+// Restricted set-packing master. The input incumbent must be feasible.
+MasterResult solve_route_master(const std::vector<MasterColumn>& columns,
+    std::size_t taxis, std::size_t requests, const std::vector<int>& incumbent,
+    Deadline deadline, bool verbose = true);
+// Coordinated LP neighborhoods preserve a feasible fleet throughout. This
+// heuristic does not claim that the unrestricted bank master is complete.
+MasterResult improve_route_master(const std::vector<MasterColumn>& columns,
+    std::size_t taxis, std::size_t requests, const std::vector<int>& incumbent,
+    Deadline deadline, std::uint64_t seed = 1, const std::vector<double>& request_prices = {});
+}
+
+// END include/search/alns/operators/Repair/RoutePoolMaster.hpp
 #include <algorithm>
 #include <cmath>
 #include <functional>
 #include <iomanip>
+#include <iostream>
 #include <ostream>
 #include <numeric>
 #include <stdexcept>
+#include <random>
 
 namespace soict::alns {
-RoutePoolRepair::RoutePoolRepair(const Instance& instance, std::size_t limit)
-    : instance_(instance), limit_(limit), pool_(instance.taxis.size()), versions_(pool_.size(), 0) {
-    if (!limit) throw std::invalid_argument("error");
+RoutePoolRepair::RoutePoolRepair(const Instance& instance, std::size_t limit, std::uint64_t seed)
+    : instance_(instance), limit_(limit), floors_(instance.taxis.size(),-std::numeric_limits<double>::infinity()), seed_(seed),
+      pool_(instance.taxis.size()), versions_(pool_.size(), 0) {
+
 }
 
 void RoutePoolRepair::add(const SearchState& state, std::size_t taxi, bool enforce_limit) {
@@ -3065,23 +2415,36 @@ void RoutePoolRepair::add_column(std::size_t taxi, const std::vector<std::size_t
         const std::vector<std::size_t>& nodes, double profit, bool enforce_limit) {
     if (!std::isfinite(profit) || profit <= 1e-9) return;
     auto& bank = pool_[taxi];
+    if (enforce_limit && bank.size() >= limit_ && profit < floors_[taxi]) return;
     const auto found = bank.find(requests);
     if (found != bank.end() && found->second.profit >= profit) return;
     bank[requests] = Column{requests, nodes, profit};
+    ++bank_revision_;
+    if (!enforce_limit) floors_[taxi] = -std::numeric_limits<double>::infinity();
     if (enforce_limit && bank.size() > limit_) {
         const auto worst = std::min_element(bank.begin(), bank.end(), [](const auto& a, const auto& b) {
             return a.second.profit < b.second.profit;
         });
         bank.erase(worst);
+        floors_[taxi] = std::min_element(bank.begin(),bank.end(),[](const auto& a,const auto& b) {
+            return a.second.profit < b.second.profit;
+        })->second.profit;
     }
 }
 
-void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit) {
-    if (!prefix_limit) throw std::invalid_argument("error");
-    generated_prefixes_ = completed_taxis_ = 0;
+void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool priced) {
+
+    completed_taxis_ = 0;
     if (std::chrono::steady_clock::now() >= deadline) return;
     const auto& in = instance_;
     const auto n = in.passengers.size(), nr = n + in.parcels.size(), nv = in.node_count();
+    auto prices=priced?estimate_prices(deadline):std::vector<double>(nr,0);
+    const double scales[]={1.0,0.8,1.2};
+    if (priced) {
+        const auto scale=scales[generation_calls_%3];for (auto& price:prices) price*=scale;
+        (void)0;
+    }
+    const auto generation_seed=seed_+0x9e3779b97f4a7c15ULL*generation_calls_++;
     struct Request {
         std::size_t pickup, delivery;
         double ready, latest, drop_ready, drop_latest, service, revenue, weight;
@@ -3092,15 +2455,55 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit) {
             const auto& p = in.passengers[r];
             requests.push_back({in.passenger_pickup(r), in.passenger_dropoff(r),
                 p.pickup.earliest, p.pickup.latest, 0, std::numeric_limits<double>::infinity(),
-                p.service, p.revenue, 0});
+                p.service, p.revenue-prices[r], 0});
         } else {
             const auto& p = in.parcels[r-n];
             requests.push_back({in.parcel_pickup(r-n), in.parcel_dropoff(r-n),
                 p.pickup.earliest, p.pickup.latest, p.delivery.earliest, p.delivery.latest,
-                p.service, p.revenue, p.weight});
+                p.service, p.revenue-prices[r], p.weight});
         }
     }
-    struct Arc { std::size_t request; double latest_departure; };
+    const auto m=in.parcels.size();
+    if (!generation_index_ready_) {
+    // Unrestricted shortest paths give optimistic travel times even on
+    // directed/nonmetric matrices. Landmark triangle differences therefore
+    // bound every legal service path without assuming direct arcs are metric.
+    const auto preprocess_start=std::chrono::steady_clock::now();
+    const auto preprocess_seconds=std::min(0.6,0.25*std::chrono::duration<double>(deadline-preprocess_start).count());
+    const auto preprocess_deadline=preprocess_start+std::chrono::duration_cast<Deadline::duration>(
+        std::chrono::duration<double>(std::max(0.0,preprocess_seconds)));
+    std::vector<std::vector<double>> landmarks;
+    std::vector<double> spread(nv,std::numeric_limits<double>::infinity());
+    std::vector<unsigned char> used_landmark(nv,0);
+    std::size_t landmark=0;
+    for (std::size_t l=0;l<std::min<std::size_t>(8,nv);++l) {
+        if (std::chrono::steady_clock::now()>=preprocess_deadline) break;
+        std::vector<double> distance(in.travel_time.begin()+landmark*nv,in.travel_time.begin()+(landmark+1)*nv);
+        distance[landmark]=0;std::vector<unsigned char> visited(nv,0);bool complete=true;
+        for (std::size_t step=0;step<nv;++step) {
+            if ((step&63)==0 && std::chrono::steady_clock::now()>=preprocess_deadline) {complete=false;break;}
+            std::size_t v=nv;double value=std::numeric_limits<double>::infinity();
+            for (std::size_t u=0;u<nv;++u) if (!visited[u] && distance[u]<value) {v=u;value=distance[u];}
+            if (v==nv) break;
+            visited[v]=1;
+            for (std::size_t u=0;u<nv;++u) if (!visited[u])
+                distance[u]=std::min(distance[u],value+in.travel_time[v*nv+u]);
+        }
+        if (!complete) break;
+        used_landmark[landmark]=1;
+        for (std::size_t u=0;u<nv;++u) spread[u]=std::min(spread[u],distance[u]);
+        landmarks.push_back(std::move(distance));double farthest=-1;
+        for (std::size_t u=0;u<nv;++u) if (!used_landmark[u] && spread[u]>farthest) {farthest=spread[u];landmark=u;}
+    }
+    std::vector<double> delivery_lower(nv*m,0);
+    for (std::size_t node=0;node<nv;++node) for (std::size_t r=0;r<m;++r) {
+        auto& lower=delivery_lower[node*m+r];const auto drop=in.parcel_dropoff(r);
+        for (const auto& d:landmarks) {
+            const double guard=1e-8+64*std::numeric_limits<double>::epsilon()*nv*std::max({1.0,d[drop],d[node]});
+            lower=std::max(lower,d[drop]-d[node]-guard);
+        }
+    }
+    (void)0;
     std::vector<std::vector<Arc>> next(nv);
     for (std::size_t node = 0; node < nv; ++node) {
         if (std::chrono::steady_clock::now() >= deadline) return;
@@ -3117,7 +2520,11 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit) {
                 (a.latest_departure == b.latest_departure && a.request < b.request);
         });
     }
-    generated_prefixes_ = completed_taxis_ = 0;
+    next_=std::move(next);delivery_lower_=std::move(delivery_lower);generation_index_ready_=true;
+    (void)0;
+    }
+    const auto& next=next_;const auto& delivery_lower=delivery_lower_;
+    completed_taxis_ = 0;
     std::vector<unsigned char> picked(nr, 0), opened(nr, 0);
     std::vector<std::size_t> route, served;
     route.reserve(2*nr); served.reserve(nr);
@@ -3128,26 +2535,67 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit) {
         const auto taxi_deadline = deadline == Deadline::max() ? deadline :
             now + (deadline-now)/static_cast<Deadline::duration::rep>(pool_.size()-taxi);
         std::size_t prefixes = 0;
-        bool exhausted = false;
+        std::map<std::vector<std::size_t>,std::pair<double,Column>> priced_bank;
+        double priced_floor=-std::numeric_limits<double>::infinity();
+        std::size_t prefix_ceiling = prefix_limit;
+        auto branch_deadline=taxi_deadline;
+        bool exhausted = false, incomplete = false;
+        std::size_t first_remaining=0;
+        for (const auto& arc:next[taxi]) {
+            const auto& q=requests[arc.request];
+            if (q.weight<=in.taxis[taxi].parcel_capacity+1e-8 &&
+                in.travel_time[taxi*nv+q.pickup]<=q.latest+1e-8) ++first_remaining;
+        }
         const auto visit = [&](auto&& self, std::size_t last, double time, double cost,
                                double revenue, double load, std::size_t open_count) -> void {
             if (exhausted) return;
-            if (prefixes >= prefix_limit || ((prefixes & 63) == 0 &&
-                std::chrono::steady_clock::now() >= taxi_deadline)) {
+            if (prefixes >= prefix_ceiling || ((prefixes & 63) == 0 &&
+                std::chrono::steady_clock::now() >= branch_deadline)) {
                 exhausted = true; return;
             }
             ++prefixes;
-            if (!open_count && revenue-cost > 1e-9) {
+            for (auto r:served) if (opened[r] && time+delivery_lower[last*m+r-n]>requests[r].drop_latest+1e-8)
+                return;
+            if (!open_count && revenue-cost > 1e-9 &&
+                (priced ? (priced_bank.size()<limit_ || revenue-cost>=priced_floor) :
+                    (pool_[taxi].size()<limit_ || revenue-cost>=floors_[taxi]))) {
                 auto key = served;
                 std::sort(key.begin(), key.end());
-                add_column(taxi, key, route, revenue-cost, true);
+                if (!priced) add_column(taxi, key, route, revenue-cost, true);
+                else {
+                    const auto score=revenue-cost;
+                    auto found=priced_bank.find(key);
+                    if (found==priced_bank.end() || found->second.first<score) {
+                        double profit=-cost;for (auto r:key)
+                            profit+=r<n?in.passengers[r].revenue:in.parcels[r-n].revenue;
+                        priced_bank[key]={score,Column{key,route,profit}};
+                        if (priced_bank.size()>limit_) {
+                            const auto worse=[](const auto& a,const auto& b){return a.second.first<b.second.first;};
+                            priced_bank.erase(std::min_element(priced_bank.begin(),priced_bank.end(),worse));
+                            priced_floor=std::min_element(priced_bank.begin(),priced_bank.end(),worse)->second.first;
+                        }
+                    }
+                }
             }
             // An overflowing departure can still end a complete route: the
             // full evaluator checks arrivals, with no return leg. It cannot
             // be extended to another finite arrival.
             if (!std::isfinite(time)) return;
-            for (std::size_t i = 0; i < served.size(); ++i) {
-                const auto r = served[i];
+            auto count=next[last].size();
+            std::uint64_t hash=0;
+            if (priced) {
+                const auto eligible=std::partition_point(next[last].begin(),next[last].end(),
+                    [&](const auto& arc){return time<=arc.latest_departure;});
+                count=static_cast<std::size_t>(eligible-next[last].begin());
+                hash=generation_seed+taxi*0x94d049bb133111ebULL+last*0xbf58476d1ce4e5b9ULL;
+                hash=(hash^(hash>>30))*0xbf58476d1ce4e5b9ULL;hash^=hash>>27;
+            }
+            const auto delivery_events=served.size(),events=delivery_events+count;
+            const auto offset=events && (hash&1)?static_cast<std::size_t>(hash%events):0;
+            for (std::size_t i=0;i<events;++i) {
+                const auto event=offset?(i+offset)%events:i;
+                if (event<delivery_events) {
+                const auto r = served[event];
                 if (!opened[r]) continue;
                 const auto& q = requests[r];
                 const double arrival = time + in.travel_time[last*nv+q.delivery];
@@ -3157,9 +2605,10 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit) {
                      cost+in.travel_cost[last*nv+q.delivery], revenue, load-q.weight, open_count-1);
                 route.pop_back(); opened[r] = 1;
                 if (exhausted) return;
-            }
-            for (const auto& arc : next[last]) {
-                if (time > arc.latest_departure) break;
+                continue;
+                }
+                const auto& arc=next[last][event-delivery_events];
+                if (!priced && time>arc.latest_departure) break;
                 const auto r = arc.request;
                 if (picked[r]) continue;
                 const auto& q = requests[r];
@@ -3168,6 +2617,17 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit) {
                 // Test the actual arrival as well: cancellation in the sorted
                 // departure threshold is not a substitute for feasibility.
                 if (arrival > q.latest+1e-8) continue;
+                const bool first=priced && served.empty();
+                if (first) {
+                    const auto seed_start=std::chrono::steady_clock::now();
+                    if (prefixes>=prefix_limit || seed_start>=taxi_deadline) {incomplete=true;return;}
+                    // A difficult first pickup must not consume the entire
+                    // taxi budget and hide every other entry into its route.
+                    // Redistribute unused work from completed branches.
+                    prefix_ceiling=prefixes+std::max<std::size_t>(1,(prefix_limit-prefixes)/first_remaining);
+                    branch_deadline=taxi_deadline==Deadline::max()?taxi_deadline:
+                        seed_start+(taxi_deadline-seed_start)/static_cast<Deadline::duration::rep>(first_remaining);
+                }
                 const double departure = std::max(arrival,q.ready)+q.service;
                 const double expense = cost+in.travel_cost[last*nv+q.pickup];
                 picked[r] = 1; served.push_back(r); route.push_back(q.pickup);
@@ -3184,17 +2644,256 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit) {
                     opened[r] = 0;
                 }
                 route.pop_back(); served.pop_back(); picked[r] = 0;
-                if (exhausted) return;
+                if (first) {incomplete|=exhausted;exhausted=false;--first_remaining;}
+                else if (exhausted) return;
             }
         };
         visit(visit,taxi,0,0,0,0,0);
-        generated_prefixes_ += prefixes;
-        completed_taxis_ += !exhausted;
+        completed_taxis_ += !exhausted && !incomplete;
+        for (const auto& [key,c]:priced_bank) add_column(taxi,key,c.second.route,c.second.profit,false);
     }
 }
 
+std::vector<double> RoutePoolRepair::estimate_prices(Deadline deadline) const {
+    const auto nr = instance_.passengers.size()+instance_.parcels.size();
+    if (prices_revision_==bank_revision_ && cached_prices_.size()==nr) {
+        (void)0;
+        return cached_prices_;
+    }
+    std::vector<const Column*> columns;
+    std::vector<std::size_t> taxis;
+    for (std::size_t t = 0; t < pool_.size(); ++t) for (const auto& [key,c] : pool_[t]) {
+        columns.push_back(&c);taxis.push_back(t);
+    }
+
+    std::vector<std::size_t> order(columns.size());std::iota(order.begin(),order.end(),0);
+    std::sort(order.begin(),order.end(),[&](auto a,auto b) { return columns[a]->profit > columns[b]->profit; });
+    std::vector<unsigned char> occupied(nr,0), assigned(pool_.size(),0);
+    double lower = 0;
+    for (auto j : order) {
+        if (assigned[taxis[j]]) continue;
+        bool free = true;for (auto r : columns[j]->requests) free &= !occupied[r];
+        if (!free) continue;
+        assigned[taxis[j]] = 1;for (auto r : columns[j]->requests) occupied[r] = 1;
+        lower += columns[j]->profit;
+    }
+    std::vector<double> prices(nr,0), best_prices = prices;
+    double best = std::numeric_limits<double>::infinity();
+    for (std::size_t iteration = 0; iteration < 192; ++iteration) {
+        std::vector<double> maximum(pool_.size(),0);
+        std::vector<const Column*> chosen(pool_.size(),nullptr);
+        for (std::size_t j = 0; j < columns.size(); ++j) {
+            const auto& c = *columns[j];double value = c.profit;
+            for (auto r : c.requests) value -= prices[r];
+            if (value > maximum[taxis[j]]) { maximum[taxis[j]] = value;chosen[taxis[j]] = &c; }
+        }
+        const auto dual = std::accumulate(prices.begin(),prices.end(),0.0)+
+                          std::accumulate(maximum.begin(),maximum.end(),0.0);
+        if (dual < best) { best = dual;best_prices = prices; }
+        std::vector<std::size_t> uses(nr,0);
+        for (const auto c : chosen) if (c) for (auto r : c->requests) ++uses[r];
+        double norm = 0;
+        for (std::size_t r = 0; r < nr; ++r) if (prices[r] > 0 || uses[r] > 1) {
+            const auto g = static_cast<double>(uses[r])-1;norm += g*g;
+        }
+        if (norm == 0 || dual <= lower+1e-7 || !std::isfinite(dual)) break;
+        const auto step = 0.7*(dual-lower)/norm;
+        for (std::size_t r = 0; r < nr; ++r)
+            prices[r] = std::max(0.0,prices[r]+step*(static_cast<double>(uses[r])-1));
+    }
+    if ((route_master_uses_cplex() || pool_.size()<=96) &&
+        std::chrono::steady_clock::now()+std::chrono::milliseconds(250)<deadline) {
+        std::vector<MasterColumn> subset;
+        for (std::size_t taxi=0;taxi<pool_.size();++taxi) {
+            std::vector<std::pair<double,const Column*>> ranked;
+            for (const auto& [key,c]:pool_[taxi]) {
+                double score=c.profit;for (auto r:key) score-=best_prices[r];ranked.push_back({score,&c});
+            }
+            const auto count=route_master_uses_cplex()?ranked.size():std::min<std::size_t>(64,ranked.size());
+            std::partial_sort(ranked.begin(),ranked.begin()+count,ranked.end(),[](const auto& a,const auto& b){return a.first>b.first;});
+            for (std::size_t j=0;j<count;++j) subset.push_back({taxi,ranked[j].second->requests,ranked[j].second->profit});
+        }
+        const auto lp_deadline=std::min(deadline,std::chrono::steady_clock::now()+std::chrono::seconds(2));
+        auto proposed=route_master_prices(subset,pool_.size(),nr,lp_deadline);
+        double value=std::accumulate(proposed.begin(),proposed.end(),0.0);
+        for (const auto& bank:pool_) {
+            double maximum=0;
+            for (const auto& [key,c]:bank) {
+                double score=c.profit;for (auto r:key) score-=proposed[r];maximum=std::max(maximum,score);
+            }
+            value+=maximum;
+        }
+        (void)0;
+        if (value<best) best_prices=std::move(proposed);
+    }
+    return best_prices;
+}
+
+Solution RoutePoolRepair::generate_fleets(Deadline deadline, std::shared_ptr<const EmptyTaxiIndex> index,
+                                       const Solution* initial, bool refine, bool clean_cut, std::size_t refinement_interval,
+                                       bool light_refinement, std::size_t refinement_cycles) {
+
+
+    const auto nr = instance_.passengers.size()+instance_.parcels.size();
+    Solution blank;if (initial) blank=*initial;else blank.routes.resize(pool_.size());SearchState empty(instance_,blank);
+    if (!index) index=build_empty_taxi_index(empty,std::min(deadline,std::chrono::steady_clock::now()+std::chrono::seconds(1)));
+    empty.set_empty_taxi_index(std::move(index));
+    std::vector<std::size_t> requests(nr);std::iota(requests.begin(),requests.end(),0);
+    std::mt19937_64 rng(seed_+0x9e3779b97f4a7c15ULL*fleet_calls_++);
+    std::size_t builds=0;
+    SearchState state=empty,best=empty;PositiveInsertionCache cache;
+    RandomRemoval random_removal;RelatedRemoval related_removal;WorstRemoval worst_removal;
+    std::vector<std::unique_ptr<Move>> refinement;
+    refinement.push_back(std::make_unique<RemoveRequest>());
+    refinement.push_back(std::make_unique<AddRequest>());
+    if (!light_refinement) {
+        refinement.push_back(std::make_unique<PassengerRelocate>());
+        refinement.push_back(std::make_unique<ParcelRelocate>());
+    }
+    if (clean_cut) refinement.push_back(std::make_unique<CleanCut2OptStar>());
+    if (!light_refinement) refinement.push_back(std::make_unique<SwapRequest>());
+    refinement.push_back(std::make_unique<ReplaceRequest>());
+    while (std::chrono::steady_clock::now()<deadline) {
+        if (builds) {
+            if (builds%8==0 || state.benefit()<best.benefit()*0.995) state.copy_from(best);
+            const auto removed=std::max<std::size_t>(4,state.served_count()/12);
+            if (builds%4==1) random_removal.apply(state,removed,rng);
+            else if (builds%4==2) related_removal.apply(state,removed,rng);
+            else if (builds%4==3) worst_removal.apply(state,removed,rng);
+            else for (std::size_t i=0,count=2+rng()%std::max<std::size_t>(2,pool_.size()/12);i<count;++i) {
+                const auto taxi=rng()%pool_.size();std::vector<std::size_t> removed;
+                for (auto r:requests) if (state.location(r).taxi==static_cast<int>(taxi)) removed.push_back(r);
+                (void)(!removed.empty() && !state.remove_requests(taxi,removed));
+            }
+        }
+        std::shuffle(requests.begin(),requests.end(),rng);
+        for (auto r:requests) {
+            if (std::chrono::steady_clock::now()>=deadline) break;
+            if (state.location(r).taxi>=0) continue;
+            const auto choice=cache.best(state,r);if (!choice || choice->gain<=1e-9) continue;
+            (void)(!state.insert(choice->request,choice->taxi,choice->pickup,choice->delivery));
+            // Preserve complementary fleet routes even when their individual
+            // profit is below the absolute bank floor.
+            add(state,choice->taxi,false);
+        }
+        // A request rejected early in a construction can become profitable
+        // after later insertions share its access travel. Fill to a fixed point.
+        for (;;) {
+            if (std::chrono::steady_clock::now()>=deadline) break;
+            std::optional<InsertionChoice> choice;
+            for (auto r:requests) if (state.location(r).taxi<0) {
+                const auto& option=cache.best(state,r);
+                if (option && option->gain>1e-9 && (!choice || option->gain>choice->gain)) choice=option;
+            }
+            if (!choice) break;
+            (void)(!state.insert(choice->request,choice->taxi,choice->pickup,choice->delivery));
+            add(state,choice->taxi,false);
+        }
+        // Expensive refinement is occasional, rather than every proposal.
+        if (refine && builds%refinement_interval==0 && std::chrono::steady_clock::now()+std::chrono::milliseconds(250)<deadline) {
+            for (std::size_t cycle=0;cycle<refinement_cycles;++cycle) {
+                bool changed=false;
+                for (std::size_t j=0;j<refinement.size();++j) {
+                    changed=refinement[j]->improve(state)||changed;
+                }
+                if (!changed) break;
+            }
+            for (auto taxi:state.active_taxis()) add(state,taxi,false);
+        }
+        if (state.benefit()>best.benefit()+1e-9) {
+            best.copy_from(state);
+            (void)0;
+        }
+        ++builds;
+    }
+    (void)0;
+    return best.solution();
+}
+
+void RoutePoolRepair::generate_replacements(Deadline deadline, const SearchState& fleet) {
+    auto prices=estimate_prices(deadline);
+    const double scales[]={1.0,0.8,1.2};const auto scale=scales[pricing_calls_%3];
+    for (auto& price:prices) price*=scale;(void)0;
+    const auto nr=fleet.request_count(),n=fleet.passenger_count(),k=pool_.size();
+    std::mt19937_64 rng(seed_+0x9e3779b97f4a7c15ULL*pricing_calls_++);
+    std::size_t moves=0;
+    for (std::size_t taxi=0;taxi<k;++taxi) {
+        const auto now=std::chrono::steady_clock::now();if (now>=deadline) break;
+        const auto taxi_deadline=now+(deadline-now)/static_cast<Deadline::duration::rep>(k-taxi);
+        Solution initial;initial.routes.resize(k);initial.routes[taxi]=fleet.cache(taxi).nodes();
+        std::vector<std::pair<double,const Column*>> ranked;
+        for (const auto& [key,c]:pool_[taxi]) {
+            double score=c.profit;for (auto r:key) score-=prices[r];ranked.push_back({score,&c});
+        }
+        const auto count=std::min<std::size_t>(3,ranked.size());
+        std::partial_sort(ranked.begin(),ranked.begin()+count,ranked.end(),[](const auto& a,const auto& b){return a.first>b.first;});
+        std::vector<std::vector<std::size_t>> seeds{initial.routes[taxi]};
+        for (std::size_t j=0;j<count;++j) seeds.push_back(ranked[j].second->route);
+        SearchState state(instance_,initial,fleet.insertion_scratch_handle());
+        state.set_empty_taxi_index(fleet.empty_taxi_index());
+        std::size_t restarts=0;
+        for (std::size_t iteration=0;iteration<48 && std::chrono::steady_clock::now()<taxi_deadline;++iteration) {
+            double gain=1e-8;std::optional<InsertionChoice> insertion;std::optional<std::size_t> outgoing;
+            std::vector<std::size_t> replacement_nodes;
+            for (std::size_t r=0;r<nr;++r) if (state.location(r).taxi<0) {
+                if ((r&31)==0 && std::chrono::steady_clock::now()>=taxi_deadline) break;
+                const auto choice=best_insertion_on_route(state,r,taxi,state.cache(taxi),gain+prices[r]);
+                if (choice && choice->gain-prices[r]>gain) {gain=choice->gain-prices[r];insertion=choice;outgoing.reset();}
+            }
+            std::vector<std::size_t> served;
+            for (std::size_t r=0;r<nr;++r) if (state.location(r).taxi>=0) served.push_back(r);
+            for (auto r:served) {
+                const auto removal=state.removal_gain(r);
+                if (removal && *removal+prices[r]>gain) {
+                    gain=*removal+prices[r];outgoing=r;insertion.reset();replacement_nodes.clear();
+                }
+                if (std::chrono::steady_clock::now()>=taxi_deadline) break;
+                const auto loc=state.location(r);auto nodes=state.cache(taxi).nodes();
+                nodes.erase(nodes.begin()+loc.dropoff);nodes.erase(nodes.begin()+loc.pickup);
+                RouteCache reduced(instance_,taxi,nodes);
+                const auto base_gain=removal_savings_cost(instance_,taxi,state.cache(taxi).nodes(),loc.pickup,loc.dropoff)-state.revenue(r);
+                for (std::size_t incoming=0;incoming<nr;++incoming) if (state.location(incoming).taxi<0) {
+                    if ((incoming&31)==0 && std::chrono::steady_clock::now()>=taxi_deadline) break;
+                    const auto choice=best_insertion_on_route(state,incoming,taxi,reduced,gain-base_gain-prices[r]+prices[incoming]);
+                    if (choice && choice->gain+base_gain+prices[r]-prices[incoming]>gain) {
+                        gain=choice->gain+base_gain+prices[r]-prices[incoming];outgoing=r;insertion=choice;replacement_nodes=nodes;
+                    }
+                }
+            }
+            if (gain<=1e-8) {
+                if (++restarts>8) break;
+                initial.routes[taxi]=seeds[restarts%seeds.size()];
+                SearchState restart(instance_,initial,fleet.insertion_scratch_handle());
+                restart.set_empty_taxi_index(fleet.empty_taxi_index());state.copy_from(restart);
+                served.clear();for (std::size_t r=0;r<nr;++r) if (state.location(r).taxi>=0) served.push_back(r);
+                if (!served.empty()) {
+                    std::shuffle(served.begin(),served.end(),rng);
+                    served.resize(std::min(served.size(),static_cast<std::size_t>(1+rng()%3)));
+                    state.remove_requests(taxi,served);
+                }
+                continue;
+            }
+            if (outgoing && insertion) {
+                const auto r=insertion->request;
+                const auto drop=r<n?instance_.passenger_dropoff(r):instance_.parcel_dropoff(r-n);
+                replacement_nodes.insert(replacement_nodes.begin()+insertion->delivery,drop);
+                replacement_nodes.insert(replacement_nodes.begin()+insertion->pickup,state.pickup_node(r));
+                // Validate the completed replacement directly. A nonmetric
+                // removal-only shortcut need not be feasible.
+                Solution candidate;candidate.routes.resize(k);candidate.routes[taxi]=replacement_nodes;
+                SearchState changed(instance_,candidate,fleet.insertion_scratch_handle());
+                changed.set_empty_taxi_index(fleet.empty_taxi_index());state.copy_from(changed);
+            } else if (outgoing) {
+                (void)(!state.remove(*outgoing));
+            } else (void)(!state.insert(insertion->request,taxi,insertion->pickup,insertion->delivery));
+            add(state,taxi,false);++moves;
+        }
+    }
+    (void)0;
+}
+
 void RoutePoolRepair::remember(const SearchState& state) {
-    if (&state.instance() != &instance_) throw std::logic_error("error");
+
     for (const auto taxi : state.active_taxis()) {
         if (versions_[taxi] == state.cache(taxi).version()) continue;
         versions_[taxi] = state.cache(taxi).version();
@@ -3203,31 +2902,22 @@ void RoutePoolRepair::remember(const SearchState& state) {
 }
 
 void RoutePoolRepair::set_limit(std::size_t limit) {
-    if (!limit) throw std::invalid_argument("error");
+
     limit_ = limit;
+    std::fill(floors_.begin(),floors_.end(),-std::numeric_limits<double>::infinity());
     for (auto& bank : pool_) while (bank.size() > limit_) {
         const auto worst = std::min_element(bank.begin(), bank.end(), [](const auto& a, const auto& b) {
             return a.second.profit < b.second.profit;
         });
         bank.erase(worst);
+        ++bank_revision_;
     }
 }
 
-void RoutePoolRepair::write(std::ostream& out) const {
-    out << "taxi,benefit,route\n" << std::setprecision(17);
-    for (std::size_t taxi = 0; taxi < pool_.size(); ++taxi)
-        for (const auto& [key, column] : pool_[taxi]) {
-            out << taxi + 1 << ',' << column.profit << ",\"";
-            for (std::size_t i = 0; i < column.route.size(); ++i) {
-                if (i) out << ' ';
-                out << instance_.vertex_id(column.route[i]);
-            }
-            out << "\"\n";
-        }
-}
+
 
 bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
-    if (&state.instance() != &instance_) throw std::logic_error("error");
+
     // Restore every incumbent route even if the bank's size cap removed it.
     for (const auto taxi : state.active_taxis()) add(state, taxi, false);
     std::vector<std::vector<Column>> columns(pool_.size());
@@ -3271,6 +2961,9 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
         return true;
     };
     nodes_ = 0; timed_out_ = false;
+    const auto warmup_start = std::chrono::steady_clock::now();
+    const auto warmup_deadline = order.size() > 48 ?
+        std::min(deadline,warmup_start+std::chrono::seconds(2)) : deadline;
     // Repair small groups around the feasible incumbent before searching the
     // complete master. This supplies good feasible bounds under a short limit.
     const auto optimize_group = [&](const std::vector<std::size_t>& group) {
@@ -3289,7 +2982,7 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
         std::function<void(std::size_t,double)> visit = [&](std::size_t depth, double profit) {
             if (timed_out_) return;
             ++nodes_;
-            if ((nodes_ & 63) == 0 && std::chrono::steady_clock::now() >= deadline) {
+            if ((nodes_ & 63) == 0 && std::chrono::steady_clock::now() >= warmup_deadline) {
                 timed_out_ = true; return;
             }
             if (depth == group.size()) {
@@ -3314,7 +3007,7 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
             chosen[depth] = -1;
             if (!timed_out_) visit(depth + 1, profit);
         };
-        if (std::chrono::steady_clock::now() < deadline) visit(0,0);
+        if (std::chrono::steady_clock::now() < warmup_deadline) visit(0,0);
         else timed_out_ = true;
         if (group_profit <= old_profit + 1e-9) return false;
         for (std::size_t i = 0; i < group.size(); ++i) incumbent[group[i]] = best_group[i];
@@ -3328,10 +3021,36 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
             for (std::size_t b = a + 1; b < order.size() && !timed_out_; ++b)
                 changed = optimize_group({order[a],order[b]}) || changed;
     }
-    for (std::size_t a = 0; a < order.size() && !timed_out_; ++a)
+    (void)0;
+    for (std::size_t a = 0; order.size()<=48 && a < order.size() && !timed_out_; ++a)
         for (std::size_t b = a + 1; b < order.size() && !timed_out_; ++b)
             for (std::size_t c = b + 1; c < order.size() && !timed_out_; ++c)
                 optimize_group({order[a],order[b],order[c]});
+    (void)0;
+    if (column_count_ > 2000) {
+        std::vector<MasterColumn> master;
+        std::vector<std::pair<std::size_t,std::size_t>> locations;
+        std::vector<int> initial(incumbent.size(),-1);
+        for (std::size_t taxi = 0; taxi < columns.size(); ++taxi)
+            for (std::size_t i = 0; i < columns[taxi].size(); ++i) {
+                if (incumbent[taxi] == static_cast<int>(i)) initial[taxi] = static_cast<int>(master.size());
+                const auto& c = columns[taxi][i];
+                master.push_back({taxi,c.requests,c.profit}); locations.emplace_back(taxi,i);
+            }
+        const auto guides = columns.size() > 48 && !route_master_uses_cplex() ? estimate_prices() : std::vector<double>{};
+        const auto solved = columns.size() > 48 ?
+            improve_route_master(master,columns.size(),state.request_count(),initial,deadline,seed_,guides) :
+            solve_route_master(master,columns.size(),state.request_count(),initial,deadline);
+        if (solved.request_prices.size()==state.request_count()) {
+            cached_prices_=solved.request_prices;prices_revision_=bank_revision_;
+        }
+        best_profit = solved.profit; timed_out_ = solved.timed_out; nodes_ += solved.nodes;
+        std::fill(incumbent.begin(),incumbent.end(),-1);
+        for (auto id : solved.selected) if (id >= 0) {
+            const auto [taxi,index] = locations[id]; incumbent[taxi] = static_cast<int>(index);
+        }
+        (void)0;
+    } else {
     // Nonnegative request prices give a valid Lagrangian upper bound:
     // sum(price) + sum_t max(0, profit(route) - sum_request price).
     // Use projected subgradients to tighten it; every iterate is valid, so
@@ -3367,6 +3086,7 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
         for (std::size_t r = 0; r < prices.size(); ++r)
             prices[r] = std::max(0.0, prices[r] + step * (static_cast<double>(uses[r]) - 1));
     }
+    (void)0;
     prices = std::move(best_prices);
     const double price_total = std::accumulate(prices.begin(), prices.end(), 0.0);
     for (auto taxi : order) {
@@ -3424,14 +3144,15 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
     };
     if (std::chrono::steady_clock::now() < deadline) search(0,0,0);
     else timed_out_ = true;
+
+    }
     if (best_profit <= state.benefit() + 1e-9) return false;
     Solution candidate;
     candidate.routes.resize(state.taxi_count());
     for (std::size_t taxi = 0; taxi < incumbent.size(); ++taxi)
         if (incumbent[taxi] >= 0) candidate.routes[taxi] = columns[taxi][incumbent[taxi]].route;
     const auto evaluated = candidate.evaluate(instance_);
-    if (!evaluated.feasible || std::abs(evaluated.benefit - best_profit) > 1e-6)
-        throw std::logic_error("error");
+
     SearchState repaired(instance_, std::move(candidate), state.insertion_scratch_handle());
     repaired.set_empty_taxi_index(state.empty_taxi_index());
     state.copy_from(repaired);
@@ -3441,14 +3162,429 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
 
 // END src/search/alns/operators/Repair/RoutePoolRepair.cpp
 
+// BEGIN src/search/alns/operators/Repair/RoutePoolMaster.cpp
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <iostream>
+#include <limits>
+#include <numeric>
+#include <random>
+
+namespace soict::alns {
+namespace {
+struct PackingMatrix {
+    const std::vector<MasterColumn>& columns;
+    std::vector<std::vector<std::size_t>> rows;
+    std::vector<std::size_t> resources;
+    std::size_t dimension = 0, taxis;
+    PackingMatrix(const std::vector<MasterColumn>& c, std::size_t k, std::size_t requests)
+        : columns(c), rows(c.size()), taxis(k) {
+        std::vector<int> index(k+requests,-1);
+        for (std::size_t j = 0; j < c.size(); ++j) {
+            const auto add = [&](std::size_t r) {
+                if (index[r] < 0) {index[r] = static_cast<int>(dimension++);resources.push_back(r);}
+                rows[j].push_back(index[r]);
+            };
+            add(c[j].taxi); for (auto r : c[j].requests) add(k+r);
+        }
+    }
+};
+
+// A child adds x_j <= 0 or -x_j <= -1 to its parent's packing LP.
+// The parent's dual remains feasible, so dual simplex restores primal
+// feasibility while reusing the inverse basis and prices.
+class PackingLP {
+    const PackingMatrix* matrix_;
+    std::size_t n_;
+    std::vector<double> inverse_, basic_, prices_, rhs_, signs_;
+    std::vector<std::size_t> basis_;
+    std::vector<unsigned char> in_basis_;
+    std::vector<int> bound_row_;
+
+    double coefficient(std::size_t row, std::size_t column) const {
+        const auto nc = matrix_->columns.size();
+        if (column >= nc) return inverse_[row*n_+column-nc];
+        double value = 0;
+        for (auto r : matrix_->rows[column]) value += inverse_[row*n_+r];
+        if (bound_row_[column] >= 0) {
+            const auto r = static_cast<std::size_t>(bound_row_[column]);
+            value += signs_[r]*inverse_[row*n_+r];
+        }
+        return value;
+    }
+    double reduced(std::size_t column) const {
+        const auto nc = matrix_->columns.size();
+        if (column >= nc) return -prices_[column-nc];
+        double value = matrix_->columns[column].profit;
+        for (auto r : matrix_->rows[column]) value -= prices_[r];
+        if (bound_row_[column] >= 0) {
+            const auto r = static_cast<std::size_t>(bound_row_[column]);
+            value -= signs_[r]*prices_[r];
+        }
+        return value;
+    }
+    void pivot(std::size_t leaving, std::size_t entering) {
+        std::vector<double> direction(n_), row(n_);
+        for (std::size_t i = 0; i < n_; ++i) direction[i] = coefficient(i,entering);
+        const auto divisor = direction[leaving];
+        const double step = basic_[leaving]/divisor, gain = reduced(entering);
+        for (std::size_t r = 0; r < n_; ++r) {
+            row[r] = inverse_[leaving*n_+r]/divisor;
+            prices_[r] += gain*row[r];
+        }
+        for (std::size_t i = 0; i < n_; ++i) if (i != leaving) {
+            basic_[i] -= step*direction[i];
+            if (direction[i] == 0) continue;
+            for (std::size_t r = 0; r < n_; ++r) inverse_[i*n_+r] -= direction[i]*row[r];
+        }
+        std::copy(row.begin(),row.end(),inverse_.begin()+leaving*n_);
+        basic_[leaving] = step;
+        in_basis_[basis_[leaving]] = 0;
+        basis_[leaving] = entering; in_basis_[entering] = 1;
+        ++pivots;
+    }
+public:
+    std::size_t pivots = 0;
+    bool timed_out = false;
+    explicit PackingLP(const PackingMatrix& matrix) : matrix_(&matrix), n_(matrix.dimension),
+        inverse_(n_*n_,0), basic_(n_,1), prices_(n_,0), rhs_(n_,1), signs_(n_,0),
+        basis_(n_), in_basis_(matrix.columns.size()+n_,0), bound_row_(matrix.columns.size(),-1) {
+        for (std::size_t i = 0; i < n_; ++i) {
+            inverse_[i*n_+i] = 1;
+            basis_[i] = matrix.columns.size()+i; in_basis_[basis_[i]] = 1;
+        }
+    }
+    void primal(Deadline deadline) {
+        const auto nc = matrix_->columns.size();
+        std::size_t degenerate = 0;
+        for (std::size_t iteration = 0; iteration < 10000; ++iteration) {
+            if ((iteration & 7) == 0 && std::chrono::steady_clock::now() >= deadline) {
+                timed_out = true; return;
+            }
+            std::size_t entering = nc+n_;
+            double gain = 1e-8;
+            for (std::size_t j = 0; j < nc+n_; ++j) {
+                if (in_basis_[j]) continue;
+                const double value = reduced(j);
+                if (value > gain) {
+                    gain = value; entering = j;
+                    if (degenerate > n_) break;
+                }
+            }
+            if (entering == nc+n_) return;
+            std::size_t leaving = n_;
+            double step = std::numeric_limits<double>::infinity();
+            for (std::size_t i = 0; i < n_; ++i) {
+                const auto d = coefficient(i,entering);
+                if (d <= 1e-9) continue;
+                const auto ratio = std::max(0.0,basic_[i])/d;
+                if (ratio < step-1e-9 || (std::abs(ratio-step) <= 1e-9 &&
+                    (leaving == n_ || basis_[i] < basis_[leaving]))) {
+                    leaving = i; step = ratio;
+                }
+            }
+            if (leaving == n_ || !std::isfinite(step)) return;
+            degenerate = step < 1e-9 ? degenerate+1 : 0;
+            pivot(leaving,entering);
+        }
+    }
+    void constrain(std::size_t column, bool include) {
+        const double sign = include ? -1 : 1, rhs = include ? -1 : 0;
+        const auto old = n_++;
+        std::vector<double> enlarged(n_*n_,0);
+        for (std::size_t i = 0; i < old; ++i)
+            std::copy_n(inverse_.begin()+i*old,old,enlarged.begin()+i*n_);
+        double value = 0;
+        for (std::size_t i = 0; i < old; ++i) if (basis_[i] == column) {
+            value = basic_[i];
+            for (std::size_t r = 0; r < old; ++r) enlarged[old*n_+r] = -sign*inverse_[i*old+r];
+            break;
+        }
+        enlarged[old*n_+old] = 1; inverse_ = std::move(enlarged);
+        basic_.push_back(rhs-sign*value); prices_.push_back(0); rhs_.push_back(rhs); signs_.push_back(sign);
+        basis_.push_back(matrix_->columns.size()+old); in_basis_.push_back(1);
+        bound_row_[column] = static_cast<int>(old); pivots = 0;
+    }
+    void dual(Deadline deadline) {
+        const auto nc = matrix_->columns.size();
+        for (std::size_t iteration = 0; iteration < 10000; ++iteration) {
+            if ((iteration & 7) == 0 && std::chrono::steady_clock::now() >= deadline) {
+                timed_out = true; return;
+            }
+            std::size_t leaving = n_;
+            double minimum = -1e-7;
+            for (std::size_t i = 0; i < n_; ++i)
+                if (basic_[i] < minimum) { minimum = basic_[i]; leaving = i; }
+            if (leaving == n_) return;
+            std::size_t entering = nc+n_;
+            double ratio = std::numeric_limits<double>::infinity();
+            for (std::size_t j = 0; j < nc+n_; ++j) {
+                if (in_basis_[j]) continue;
+                const auto d = coefficient(leaving,j);
+                if (d >= -1e-9) continue;
+                const double candidate = reduced(j)/d;
+                if (candidate < ratio-1e-9) { entering = j; ratio = candidate; }
+            }
+            // A numerical stop is never used as an infeasibility proof. The
+            // checked price bound remains valid and branching is exhaustive.
+            if (entering == nc+n_) return;
+            pivot(leaving,entering);
+        }
+    }
+    std::vector<double> values() const {
+        std::vector<double> x(matrix_->columns.size(),0);
+        for (std::size_t i = 0; i < n_; ++i)
+            if (basis_[i] < x.size() && std::isfinite(basic_[i]))
+                x[basis_[i]] = std::clamp(basic_[i],0.0,1.0);
+        return x;
+    }
+    double upper() const {
+        // Any nonnegative prices give a valid bound, including branch-row
+        // prices. Check residual profit for every column independently.
+        auto prices = prices_;
+        double bound = 0, magnitude = 0;
+        for (std::size_t r = 0; r < n_; ++r) {
+            if (!std::isfinite(prices[r])) return std::numeric_limits<double>::infinity();
+            prices[r] = std::max(0.0,prices[r]);
+            bound += prices[r]*rhs_[r]; magnitude += std::abs(prices[r]*rhs_[r]);
+        }
+        std::vector<double> residual(matrix_->taxis,0);
+        for (std::size_t j = 0; j < matrix_->columns.size(); ++j) {
+            const auto& c = matrix_->columns[j];
+            double value = c.profit;
+            for (auto r : matrix_->rows[j]) value -= prices[r];
+            if (bound_row_[j] >= 0) {
+                const auto r = static_cast<std::size_t>(bound_row_[j]);
+                value -= signs_[r]*prices[r];
+            }
+            residual[c.taxi] = std::max(residual[c.taxi],value);
+        }
+        const auto remainder = std::accumulate(residual.begin(),residual.end(),0.0);
+        bound += remainder; magnitude += remainder;
+        if (!std::isfinite(bound) || !std::isfinite(magnitude))
+            return std::numeric_limits<double>::infinity();
+        return bound+1e-7+1e-10*magnitude;
+    }
+    std::vector<double> request_prices(std::size_t requests) const {
+        std::vector<double> result(requests,0);
+        for (std::size_t row=0;row<matrix_->resources.size();++row) {
+            const auto resource=matrix_->resources[row];
+            if (resource>=matrix_->taxis && std::isfinite(prices_[row]))
+                result[resource-matrix_->taxis]=std::max(0.0,prices_[row]);
+        }
+        return result;
+    }
+};
+}
+
+std::vector<double> route_master_prices(const std::vector<MasterColumn>& columns,
+        std::size_t taxis, std::size_t requests, Deadline deadline) {
+    const PackingMatrix matrix(columns,taxis,requests);
+    PackingLP root(matrix);root.primal(deadline);
+    (void)0;
+    return root.request_prices(requests);
+}
+
+bool route_master_uses_cplex() {
+    return false;
+}
+
+MasterResult solve_route_master(const std::vector<MasterColumn>& columns,
+        std::size_t taxis, std::size_t requests, const std::vector<int>& incumbent,
+        Deadline deadline, bool verbose) {
+    MasterResult result; result.selected = incumbent;
+    for (auto id : incumbent) if (id >= 0) result.profit += columns[id].profit;
+    if (columns.empty()) {result.complete=true;return result;}
+    const PackingMatrix matrix(columns,taxis,requests);
+    PackingLP root(matrix); root.primal(deadline);
+    result.pivots = root.pivots;
+    if (root.timed_out) { result.timed_out = true; return result; }
+    result.root_upper = root.upper();
+    if (verbose) (void)0;
+    bool integral = true;
+    for (const auto& c : columns) integral &= c.profit == std::round(c.profit);
+    std::vector<unsigned char> fixed(taxis,0), occupied(requests,0), forbidden(columns.size(),0);
+    std::vector<int> selected(taxis,-1);
+    const auto compatible = [&](std::size_t id) {
+        const auto& c = columns[id];
+        if (fixed[c.taxi] || forbidden[id]) return false;
+        for (auto r : c.requests) if (occupied[r]) return false;
+        return true;
+    };
+    std::function<void(const PackingLP&,double)> visit = [&](const PackingLP& lp, double profit) {
+        if (result.timed_out) return;
+        if (std::chrono::steady_clock::now() >= deadline) { result.timed_out = true; return; }
+        ++result.nodes;
+        double upper = lp.upper(); if (integral) upper = std::floor(upper);
+        if (upper <= result.profit+1e-9) return;
+        const auto x = lp.values();
+        std::vector<std::size_t> ranking;
+        for (std::size_t j = 0; j < columns.size(); ++j) if (compatible(j)) ranking.push_back(j);
+        if (ranking.empty()) {
+            if (profit > result.profit+1e-9) { result.profit = profit; result.selected = selected; }
+            return;
+        }
+        std::stable_sort(ranking.begin(),ranking.end(),[&](auto a,auto b) {
+            return x[a] != x[b] ? x[a] > x[b] : columns[a].profit > columns[b].profit;
+        });
+        auto used = occupied, assigned = fixed; auto fleet = selected;
+        double candidate = profit;
+        for (auto id : ranking) {
+            const auto& c = columns[id];
+            if (assigned[c.taxi]) continue;
+            bool free = true; for (auto r : c.requests) free &= !used[r];
+            if (!free) continue;
+            assigned[c.taxi] = 1; for (auto r : c.requests) used[r] = 1;
+            fleet[c.taxi] = static_cast<int>(id); candidate += c.profit;
+        }
+        if (candidate > result.profit+1e-9) {
+            result.profit = candidate; result.selected = std::move(fleet);
+            if (verbose) (void)0;
+        }
+        if (upper <= result.profit+1e-9) return;
+        std::size_t branch = ranking.front(); double fractionality = -1;
+        for (auto j : ranking) {
+            if (x[j] <= 1e-7 || x[j] >= 1-1e-7) continue;
+            const auto score = std::min(x[j],1-x[j]);
+            if (score > fractionality) { fractionality = score; branch = j; }
+        }
+        const auto& c = columns[branch];
+        {
+            auto child = lp; child.constrain(branch,true); child.dual(deadline);
+            result.pivots += child.pivots;
+            if (child.timed_out) { result.timed_out = true; return; }
+            fixed[c.taxi] = 1; for (auto r : c.requests) occupied[r] = 1;
+            selected[c.taxi] = static_cast<int>(branch); visit(child,profit+c.profit);
+            selected[c.taxi] = -1;
+            fixed[c.taxi] = 0; for (auto r : c.requests) occupied[r] = 0;
+        }
+        if (!result.timed_out) {
+            auto child = lp; child.constrain(branch,false); child.dual(deadline);
+            result.pivots += child.pivots;
+            if (child.timed_out) { result.timed_out = true; return; }
+            forbidden[branch] = 1; visit(child,profit); forbidden[branch] = 0;
+        }
+    };
+    visit(root,0);
+    result.complete = !result.timed_out;
+    return result;
+}
+
+MasterResult improve_route_master(const std::vector<MasterColumn>& columns,
+        std::size_t taxis, std::size_t requests, const std::vector<int>& incumbent,
+        Deadline deadline, std::uint64_t seed, const std::vector<double>& request_prices) {
+    MasterResult result;result.selected = incumbent;
+    result.root_upper = std::numeric_limits<double>::infinity();
+    for (auto id : incumbent) if (id >= 0) result.profit += columns[id].profit;
+    std::vector<std::vector<std::size_t>> banks(taxis);
+    for (std::size_t j = 0; j < columns.size(); ++j) banks[columns[j].taxi].push_back(j);
+    std::vector<double> penalties(columns.size(),0);
+    if (!request_prices.empty()) for (std::size_t j=0;j<columns.size();++j)
+        for (auto r:columns[j].requests) penalties[j]+=request_prices[r];
+    // Price-based starts favor routes that leave expensive shared requests
+    // available to other taxis. Each constructed fleet is checked directly.
+    for (const double scale:{0.0,0.5,1.0,1.5}) {
+        std::vector<std::size_t> ranking(columns.size());std::iota(ranking.begin(),ranking.end(),0);
+        std::sort(ranking.begin(),ranking.end(),[&](auto a,auto b) {
+            const auto x=columns[a].profit-scale*penalties[a],y=columns[b].profit-scale*penalties[b];
+            return x!=y?x>y:a<b;
+        });
+        std::vector<unsigned char> occupied(requests,0);std::vector<int> fleet(taxis,-1);double profit=0;
+        for (auto j:ranking) {
+            const auto& c=columns[j];if (fleet[c.taxi]>=0) continue;
+            bool free=true;for (auto r:c.requests) free&=!occupied[r];if (!free) continue;
+            fleet[c.taxi]=static_cast<int>(j);for (auto r:c.requests) occupied[r]=1;profit+=c.profit;
+        }
+        if (profit>result.profit+1e-9) {result.profit=profit;result.selected=std::move(fleet);
+            (void)0;}
+    }
+    for (auto& bank:banks) std::sort(bank.begin(),bank.end(),[&](auto a,auto b) {
+        const auto x=columns[a].profit-penalties[a],y=columns[b].profit-penalties[b];
+        return x!=y?x>y:a<b;
+    });
+    std::mt19937_64 rng(seed);
+    const auto start = std::chrono::steady_clock::now();
+    std::size_t rounds = 0, last_gain = 0;
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::vector<int> owner(requests,-1);
+        for (std::size_t t = 0; t < taxis; ++t) if (result.selected[t] >= 0)
+            for (auto r : columns[result.selected[t]].requests) owner[r] = static_cast<int>(t);
+        const std::size_t width = std::min(taxis,static_cast<std::size_t>(8+4*((rounds/taxis)%4)));
+        std::vector<std::size_t> group;
+        std::vector<unsigned char> inside(taxis,0);
+        const auto add = [&](std::size_t t) { if (!inside[t]) { group.push_back(t);inside[t] = 1; } };
+        const auto first = rounds%taxis; add(first);
+        // Follow the owners blocking a promising alternative. Periodic
+        // randomization diversifies the coordinated neighborhood.
+        if (!banks[first].empty()) {
+            const auto rank = rounds%3 == 0 ? rng()%std::min<std::size_t>(24,banks[first].size()) : 0;
+            for (auto r : columns[banks[first][rank]].requests)
+                if (owner[r] >= 0 && group.size() < width) add(owner[r]);
+        }
+        while (group.size() < width) {
+            std::vector<double> score(taxis,0);
+            for (auto t : group) {
+                const auto old = result.selected[t] >= 0 ? columns[result.selected[t]].profit : 0;
+                const auto count = std::min<std::size_t>(32,banks[t].size());
+                for (std::size_t j = 0; j < count; ++j) {
+                    const auto& c = columns[banks[t][j]];
+                    const auto value = std::max(1.0,c.profit-old);
+                    for (auto r : c.requests) if (owner[r] >= 0 && !inside[owner[r]]) score[owner[r]] += value;
+                }
+            }
+            std::size_t chosen = taxis;double maximum = 0;
+            for (std::size_t t = 0; t < taxis; ++t) if (!inside[t] && score[t] > maximum) {
+                maximum = score[t]; chosen = t;
+            }
+            if (chosen == taxis || rounds%5 == 4) {
+                do { chosen = rng()%taxis; } while (inside[chosen]);
+            }
+            add(chosen);
+        }
+        std::vector<MasterColumn> local;
+        std::vector<std::size_t> global;
+        std::vector<int> initial(group.size(),-1);
+        for (std::size_t t = 0; t < group.size(); ++t) for (auto id : banks[group[t]]) {
+            const auto& c = columns[id];bool available = true;
+            for (auto r : c.requests) if (owner[r] >= 0 && !inside[owner[r]]) { available = false; break; }
+            if (!available) continue;
+            if (result.selected[group[t]] == static_cast<int>(id)) initial[t] = static_cast<int>(local.size());
+            local.push_back({t,c.requests,c.profit});global.push_back(id);
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const auto local_deadline = std::min(deadline,now+std::chrono::milliseconds(150));
+        const auto solved = solve_route_master(local,group.size(),requests,initial,local_deadline,false);
+        result.nodes += solved.nodes;result.pivots += solved.pivots;
+        double old = 0;for (auto id : initial) if (id >= 0) old += local[id].profit;
+        if (solved.profit > old+1e-9) {
+            for (std::size_t t = 0; t < group.size(); ++t)
+                result.selected[group[t]] = solved.selected[t] >= 0 ? static_cast<int>(global[solved.selected[t]]) : -1;
+            result.profit += solved.profit-old;last_gain = rounds;
+            (void)0;
+        }
+        ++rounds;
+        // Return a useful incumbent instead of spending the entire allowance
+        // on identical neighborhoods after several unsuccessful full sweeps.
+        if (rounds-last_gain > 12*taxis) break;
+    }
+    (void)0;
+    result.timed_out = std::chrono::steady_clock::now()>=deadline;
+    return result;
+}
+}
+
+// END src/search/alns/operators/Repair/RoutePoolMaster.cpp
+
 // BEGIN src/search/alns/operators/LocalSearch/LocalSearch.cpp
 
 namespace soict::alns {
-bool LocalSearch::search(SearchState& state) const {
+bool LocalSearch::search(SearchState& state, std::chrono::steady_clock::time_point deadline) const {
     bool changed = false;
     for (int cycle = 0; cycle < 2; ++cycle) {
         bool cycle_changed = false;
         for (const auto& move : moves_) {
+            if (std::chrono::steady_clock::now() >= deadline) return changed || cycle_changed;
             cycle_changed = move->improve(state) || cycle_changed;
         }
         if (!cycle_changed) break;
@@ -3469,27 +3605,24 @@ bool LocalSearch::search(SearchState& state) const {
 
 namespace soict::alns {
 bool AddRequest::improve(SearchState& state) const {
-    const bool indexed = bool(state.empty_taxi_index());
     if (requests_.size() != state.request_count()) {
         requests_.resize(state.request_count());
         std::iota(requests_.begin(), requests_.end(), 0);
     }
-    if (indexed) cache_.prepare(state, requests_);
+    cache_.prepare(state, requests_);
     bool changed = false;
     for (;;) {
         std::optional<InsertionChoice> best;
         for (const auto request : requests_) {
             if (state.location(request).taxi >= 0) continue;
-            const auto move = indexed ? cache_.best(request) :
-                                       fallback_cache_.best(state, request);
+            const auto move = cache_.best(request);
             if (move && move->gain > 1e-9 &&
                 (!best || move->gain > best->gain)) best = move;
         }
         if (!best) break;
-        if (!state.insert(best->request, best->taxi, best->pickup, best->delivery))
-            throw std::logic_error("error");
+        (void)(!state.insert(best->request, best->taxi, best->pickup, best->delivery));
         changed = true;
-        if (indexed) cache_.refresh_taxi(state, best->taxi, requests_);
+        cache_.refresh_taxi(state, best->taxi, requests_);
     }
     return changed;
 }
@@ -3521,8 +3654,7 @@ bool RemoveRequest::improve(SearchState& state) const {
         }
         if (!best) break;
         const auto taxi = static_cast<std::size_t>(state.location(*best).taxi);
-        if (!state.remove(*best))
-            throw std::logic_error("error");
+        (void)(!state.remove(*best));
         changed = true;
         moves[*best].reset();
         for (std::size_t request = 0; request < state.request_count(); ++request)
@@ -3688,8 +3820,7 @@ bool PassengerRelocate::improve(SearchState& state) const {
             choice.request, choice.pickup, choice.delivery) :
             (state.remove(choice.request) && state.insert(choice.request,
                 target, choice.pickup, choice.delivery));
-        if (!applied)
-            throw std::logic_error("error");
+
         changed = true;
         if (state.is_active(source) != source_active_before ||
             state.is_active(target) != target_active_before) {
@@ -3937,8 +4068,7 @@ bool ParcelRelocate::improve(SearchState& state) const {
             choice.request, choice.pickup, choice.delivery) :
             (state.remove(choice.request) && state.insert(choice.request,
                 target, choice.pickup, choice.delivery));
-        if (!applied)
-            throw std::logic_error("error");
+
         changed = true;
         if (state.is_active(source) != source_active_before ||
             state.is_active(target) != target_active_before) {
@@ -3988,7 +4118,6 @@ std::vector<std::size_t> clean_boundaries(const SearchState& state, std::size_t 
 } // namespace
 
 bool CleanCut2OptStar::improve(SearchState& state) const {
-    ++calls_;
     const auto& in = state.instance();
     bool changed = false;
     for (;;) {
@@ -4033,11 +4162,7 @@ bool CleanCut2OptStar::improve(SearchState& state) const {
                     }
                 }
                 if (best_gain > 1e-9) {
-                    const double before = state.benefit();
-                    if (!state.exchange_route_suffixes(taxi_a, best_a, taxi_b, best_b))
-                        throw std::logic_error("error");
-                    ++applied_moves_;
-                    total_gain_ += state.benefit() - before;
+                    (void)(!state.exchange_route_suffixes(taxi_a, best_a, taxi_b, best_b));
                     changed = applied = true;
                 }
             }
@@ -4057,7 +4182,6 @@ bool CleanCut2OptStar::improve(SearchState& state) const {
 
 namespace soict::alns {
 std::optional<ReplacementChoice> ReplaceRequest::best_choice(const SearchState& state) const {
-    if (!use_smd_) return best_choice_reference(state);
     synchronize(state);
     discard_stale();
     return queue_.empty() ? std::nullopt : std::optional(queue_.top().choice);
@@ -4174,66 +4298,13 @@ void ReplaceRequest::compact_queue() const {
         }
 }
 
-std::optional<ReplacementChoice> ReplaceRequest::best_choice_reference(const SearchState& state) const {
-    std::vector<std::size_t> unserved;
-    for (std::size_t r = 0; r < state.request_count(); ++r)
-        if (state.location(r).taxi < 0) unserved.push_back(r);
-    if (unserved.empty()) return std::nullopt;
-    rows_.resize(state.request_count());
-    std::optional<ReplacementChoice> best;
-    double best_gain = 1e-9;
-    std::vector<std::size_t> nodes;
-    RouteCache reduced;
-    for (std::size_t outgoing = 0; outgoing < state.request_count(); ++outgoing) {
-        const auto loc = state.location(outgoing);
-        if (loc.taxi < 0) continue;
-        const auto taxi = static_cast<std::size_t>(loc.taxi);
-        const auto& original = state.cache(taxi);
-        auto& row = rows_[outgoing];
-        if (row.route_version != original.version()) {
-            row.route_version = original.version();
-            row.entries.clear();
-            row.entries.resize(state.request_count());
-        }
-        const double removal_gain = removal_savings_cost(state.instance(), taxi,
-            original.nodes(), loc.pickup, loc.dropoff) - state.revenue(outgoing);
-        bool prepared = false;
-        for (const auto incoming : unserved) {
-            auto& entry = row.entries[incoming];
-            // A cached positive choice is the exact best position. A scan
-            // finding no choice is reusable only at an equal/higher threshold.
-            if (!entry.valid || (!entry.choice && best_gain < entry.threshold)) {
-                if (!prepared) {
-                    nodes = original.nodes();
-                    nodes.erase(nodes.begin() + loc.dropoff);
-                    nodes.erase(nodes.begin() + loc.pickup);
-                    reduced.rebuild(state.instance(), taxi, nodes);
-                    prepared = true;
-                }
-                entry.valid = true;
-                entry.threshold = best_gain;
-                entry.choice.reset();
-                const auto insertion = best_insertion_on_route(state, incoming, taxi,
-                    reduced, best_gain - removal_gain);
-                if (insertion && insertion->gain + removal_gain > best_gain)
-                    entry.choice = ReplacementChoice{outgoing, *insertion,
-                                                       insertion->gain + removal_gain};
-            }
-            if (entry.choice && entry.choice->gain > best_gain) {
-                best = entry.choice;
-                best_gain = best->gain;
-            }
-        }
-    }
-    return best;
-}
+
 
 bool ReplaceRequest::improve(SearchState& state) const {
     bool changed = false;
     while (const auto choice = best_choice(state)) {
-        if (!state.replace_request(choice->outgoing, choice->insertion.request,
-                                   choice->insertion.pickup, choice->insertion.delivery))
-            throw std::logic_error("error");
+        (void)(!state.replace_request(choice->outgoing, choice->insertion.request,
+                                   choice->insertion.pickup, choice->insertion.delivery));
         changed = true;
     }
     return changed;
@@ -4352,19 +4423,7 @@ void SwapRequest::synchronize(const SearchState& state) const {
 }
 
 std::optional<RequestSwapChoice> SwapRequest::best_choice(const SearchState& state) const {
-    if (!use_smd_) {
-        std::optional<RequestSwapChoice> best;
-        for (std::size_t a = 0; a < state.request_count(); ++a) {
-            if (state.location(a).taxi < 0) continue;
-            for (std::size_t b = a + 1; b < state.request_count(); ++b) {
-                const auto gain = request_swap_gain(state, a, b);
-                if (!gain || *gain <= 1e-9) continue;
-                const RequestSwapChoice choice{a, b, *gain};
-                if (!best || better(choice, *best)) best = choice;
-            }
-        }
-        return best;
-    }
+
     synchronize(state);
     while (!queue_.empty()) {
         const auto& entry = queue_.top();
@@ -4380,8 +4439,7 @@ std::optional<RequestSwapChoice> SwapRequest::best_choice(const SearchState& sta
 bool SwapRequest::improve(SearchState& state) const {
     bool changed = false;
     while (const auto choice = best_choice(state)) {
-        if (!state.swap_requests(choice->first, choice->second))
-            throw std::logic_error("error");
+        (void)(!state.swap_requests(choice->first, choice->second));
         changed = true;
     }
     return changed;
@@ -4395,7 +4453,6 @@ bool SwapRequest::improve(SearchState& state) const {
 // Judge entry point. Include input parsing in the five-minute wall budget.
 int main() {
     const auto started = std::chrono::steady_clock::now();
-    try {
         std::ios::sync_with_stdio(false);
         std::cin.tie(nullptr);
         const auto instance = soict::read_instance(std::cin);
@@ -4413,13 +4470,6 @@ int main() {
         } else {
             const auto result = soict::alns::solve(instance, config);
             soict::write_solution(std::cout, result.solution, instance);
-            std::cerr << std::setprecision(17) << "iterations=" << result.iterations
-                      << " seconds=" << result.seconds
-                      << " stop=" << (result.annealing_complete ? "temperature" : "time_limit") << '\n';
         }
         return 0;
-    } catch (const std::exception& error) {
-        std::cerr << "error: " << error.what() << '\n';
-        return 1;
-    }
 }

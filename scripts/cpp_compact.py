@@ -14,6 +14,24 @@ def lex(source):
     return tokens
 
 
+def shorten_aliases(source, renames):
+    """Use remaining one-letter names for the most frequent generated aliases."""
+    counts = collections.Counter(value for kind, value in lex(source) if kind == 'identifier')
+    candidates = set(renames.values()) | set(re.findall(r'^#define\s+(\w+)', source, re.M))
+    candidates = [name for name in candidates if len(name) > 1]
+    candidates.sort(key=lambda name: (-counts[name] * (len(name) - 1), name))
+    free = [name for name in string.ascii_letters if name not in counts]
+    changes = dict(zip(candidates, free))
+    shortened = TOKEN.sub(
+        lambda match: changes.get(match.group(), match.group())
+        if match.lastgroup == 'identifier' else match.group(), source)
+    expected = [(kind, changes.get(value, value) if kind == 'identifier' else value)
+                for kind, value in lex(source)]
+    if lex(shortened) != expected:
+        raise ValueError('alias shortening changed the C++ token sequence')
+    return shortened, {name: changes.get(alias, alias) for name, alias in renames.items()}
+
+
 def macro_compact(source, limit):
     """Compress repeated token sequences using object-like C++ macros.
 
@@ -43,13 +61,15 @@ def macro_compact(source, limit):
 
     # Token lengths include a conservative spacing allowance for ranking.
     for _ in range(1200):
-        candidates = collections.Counter()
+        candidates = collections.defaultdict(list)
         for width in (2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64):
-            candidates.update(tuple(tokens[i:i + width]) for i in range(len(tokens) - width + 1))
+            for i in range(len(tokens) - width + 1):
+                candidates[tuple(tokens[i:i + width])].append(i)
         alias = next(a for a in aliases if a not in occupied)
         best = None
         best_gain = 0
-        for sequence, count in candidates.items():
+        for sequence, occurrences in candidates.items():
+            count = len(occurrences)
             if count < 2:
                 continue
             length = sum(map(len, sequence))
@@ -60,8 +80,8 @@ def macro_compact(source, limit):
             positions = []
             end = -1
             width = len(sequence)
-            for i in range(len(tokens) - width + 1):
-                if i >= end and tuple(tokens[i:i + width]) == sequence:
+            for i in occurrences:
+                if i >= end:
                     positions.append(i)
                     end = i + width
             gain = (len(render(sequence)) - len(alias)) * (len(positions) - 1) - 12
@@ -126,6 +146,7 @@ def compact(source):
         protected.update(chain.split('::'))
     protected.update("alignas alignof and and_eq asm auto bitand bitor bool break case catch char char8_t char16_t char32_t class compl concept const consteval constexpr constinit const_cast continue co_await co_return co_yield decltype default delete do double dynamic_cast else enum explicit export extern false float for friend goto if inline int long mutable namespace new noexcept not not_eq nullptr operator or or_eq private protected public register reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template this thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while xor xor_eq".split())
     protected.update("size begin end cbegin cend rbegin rend resize clear reserve empty front back data capacity max_size push_back pop_back emplace_back emplace insert erase swap find first second value value_or has_value reset get release move open close read write str eof fail good getline peek ignore tellg seekg count now duration max min assign push pop top at".split())
+    protected.update("rdbuf sgetn append remove_prefix c_str".split())
     protected.update("__builtin_clzll main final override nodiscard maybe_unused deprecated fallthrough noreturn likely unlikely no_unique_address what infinity quiet_NaN signaling_NaN lowest epsilon digits digits10 is_integer is_signed is_exact is_specialized min_exponent max_exponent npos fetch_add fetch_sub load store exchange compare_exchange_weak compare_exchange_strong memory_order_relaxed".split())
     candidates = [name for name in counts if len(name) >= 4 and name not in protected]
     candidates.sort(key=lambda name: (-counts[name] * (len(name) - 3), name))

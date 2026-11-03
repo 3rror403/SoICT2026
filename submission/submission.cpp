@@ -4,12 +4,16 @@
 #include <algorithm>
 #include <vector>
 #include <stdexcept>
-#include <cmath>
 #include <string>
+#include <cstdlib>
 #include <iosfwd>
+#include <array>
+#include <charconv>
 #include <iomanip>
 #include <istream>
 #include <ostream>
+#include <string_view>
+#include <cmath>
 #include <sstream>
 #include <cstdint>
 #include <optional>
@@ -17,7 +21,6 @@
 #include <memory>
 #include <utility>
 #include <random>
-#include <string_view>
 #include <chrono>
 #include <queue>
 #include <map>
@@ -26,284 +29,511 @@
 #include <numeric>
 #include <functional>
 #include <tuple>
-#define ko std::size_t
-#define kp const auto
-#define kq std::
-#define kr kq vector
-#define ks .size()
-#define kt [[nodiscard]
-#define ku )const
-#define kv }namespace a4::du{
-#define kw )return
-#define kx kq optional
-#define ky kq numeric_limits<double>::infinity(
-#define kz ;if(
-#define kA {return
-#define kB ;for(
-#define kC (const
-#define kD .push_back(
-#define kE static_cast<
-#define kF )throw kq logic_error("error"
-#define kG .begin()
-#define kH const double
-#define kI public:kq string_view hu(ku override
-#define kJ kr<ko>
-#define kK )throw kq invalid_argument("error"
-#define kL ,const
-#define kM kq chrono::steady_clock::now()
-#define kN ;double
-#define kO ;return
-#define kP <double>
-#define kQ kw kq nullopt
-#define kR )continue;
-#define kS ){if(
-#define kT ac.
-#define kU kq mt19937_64&
-#define kV kq uint64_t
-#define kW const bool
-#define kX .aw()
-#define kY .end()
-#define kZ ab&ac
-#define la ,ko
-#define lb );}
-#define lc ;kp
-#define ld kB ko
-#define le kq chrono::duration_cast<gy::duration>(kq chrono::duration kP(
-#define lf )if(all||ae==first||ae==second)g0.add(cG(ac,b1,r,ae,kT bn(ae)
-#define lg kq make_unique
-#define lh kT ad()
-#define li .empty()
-#define lj (aa)
-#define lk kw false
-#define ll )kz
-#define lm loc.
-#define ln ){kp
-#define lo final:public
-#define lp =0;
-#define lq (ko
-#define lr )throw kq runtime_error("error"
-#define ls private:
-#define lt [ae]
-#define lu bn(ae)
-#define lv auto&
-#define lw ku override
-#define lx kq max(
-#define ly };kv class
-#define lz kq numeric_limits
-#define lA ku kA
-#define lB in.
-#define lC .resize(
-#define lD {public:
-#define lE insert(
-#define lF =true
-#define lG =false
-#define lH ,double
-#define lI ae ll!b1.gc()kw lc aG=kT bn(bi).bl()lc&dH=kT az();kW cN=dH&&dH->gH(r ll cN kS all){static const ak fm kB kp&ah:dH->dF(r)kS kT cb
-#define lJ kw{false,0,
-#define lK ;lv loc=a6[aa];lm ae=kE int>(ae ll bz==aC lj)lm as=p;else lm bv=
-#define lL true,0,0 lb;fU();bool a8 lG;while(kp aN=g0.cx()ln ah=aN->ah lc bi=aN->bi lc dk=ah.ae;kW cP=kT cb(bi);kW cQ=kT cb(dk);kW hV
-#define lM ae,
-#define lN ks;++
-#define lO kq min(
-#define lP ae kL ak&
-#define lQ kT gq(ah.aa)&&kT lE ah.aa,dk,ah.as,ah.ar)ll!eJ kF);a8 lF kz kT cb(bi)!=cP||kT cb(dk)!=cQ){fU();continue;}g0.fc(bi,dk
-#define lR );read(in,
-#define lS ,*a3},bi);break;}}for(kp ae:kT bo()lf,aG),bi lb else{for lq ae lp ae<kT aA();++ae lf,aG),bi lb}lc fU=[&]{g0.clear()ld
-#define lT ;bool
-#define lU kq shared_ptr<
-#define lV &b1 la r la lP an,kV aG ku{kp bi=kE ko>(kT ap(r).ae ll ae!=bi&&!b1.dI()kQ kO fb.get(r,lM kT aA(),aG,an.bl(),b1.cI()
-#define lW ;void
-#define lX ;mutable
-#define lY ;struct
-#define lZ }return
-#define ma kC av&
-#define mb ku{if(
-#define mc kC kZ la aa);kt]bool gc(lA gW;}kt]bool dI(lA bJ.has_value(lb kt]double cI(lA bF;}kt]ko b6 lq ae ku;kt]kx kP a3
-#define md lb void
-#define me .erase(
-#define mf kL kJ&
-#define mg clear()
-#define mh lB cM(
-#define mi kE int>(
-#define mj ap lj.ae
-#define mk kY,[](kp&a,kp&b)kA a.
-#define ml kt]const
-#define mm .reserve(
-#define mn kx<al>
-#define mo kT ag()
-#define mp kT ap(r).
-#define mq )=default;virtual kq string_view hu(ku lp virtual
-#define mr first,
-#define ms lb return
-#define mt ;}bool
-#define mu kC kZ la aa
-#define mv kr<
-#define mw kB kp
-#define mx .duration
-#define my )break
-#define mz ->a3
-#define mA }void
-#define mB first la
-#define mC kq move(
-#define mD (in,
-#define mE (ac,
-#define mF ld ae lp ae
-#define mG af.dh(
-#define mH namespace a4
-#define mI }kJ ek(ab&la,kU lw;ly
-#define mJ =lB bk ks,n=lB au ks,m=lB aS ks
-#define mK ,ca;}lY c7{bool operator()kC be&kL be&ku;};using h1=kq priority_queue<be,mv be>
-#define mL gu);eL.cF(0,fs ks);eM.cF(0,ft ks)lc gi=eL.aY(),gj=eM.aY(ll!gi||!gj lk;kH a3=
-#define mM if(
-#define mN is ln jE=kq min_element(iG kG,iG mk second.bh<b.second.bh;});iG me jE lb mA aR::
-#define mO kt]ko
-#define mP lq lP an la
-#define mQ ;++
-#define mR kB auto
-#define mS kq isfinite(
-#define mT kq lower_bound(ax kG,ax kY
-#define mU ek(kZ la count,kU rng
-#define mV for(kp
-#define mW kT am()
-#define mX =kE ko>(lm ae)
-#define mY for lq
-#define mZ ld r lp r<lh mQ r
-#define na aa,ah->lM ah->as,ah->ar
-#define nb a9.
-#define nc (*ai,
-#define nd namespace{
-#define ne lq aa
-#define nf ae==
-#define ng [pos]
-#define nh kq uniform_real_distribution kP
-#define ni )lc
-#define nj ;class
-#define nk kx kP
-#define nl lM an
-#define nm ma in la
-#define nn )mw ae:kT bo()
-#define no an me an kG+lm bv);an me an kG+lm as
-#define np aw me aw kG+lm bv);aw me aw kG+lm as
-#define nq mb!gc()||ae>=bj.aA(
-#define ns bf.fy nc nl);aL af nc lM bf);af.cF(0,an ks ni cM=af.aY(ll!cM
-#define nt mQ r kS mp ae<0 kR kp hS=kE ko>(mp ae);dC(r,hS==bi||hS==dk,bi
-#define nu +1e-8
+#define la std::size_t
+#define lb const auto
+#define lc std::vector<
+#define G std::
+#define A .size()
+#define lf G chrono::steady_clock::now()
+#define lg G numeric_limits<double>::infinity(
+#define R )return
+#define li ;for(
+#define lj }namespace bs::ez{
+#define lk )const
+#define ll static_cast<
+#define lm G optional
+#define X .push_back(
+#define z ;if(
+#define lq .begin()
+#define lr (const
+#define ls ;return
+#define N ;double
+#define lu double>
+#define lv ,const
+#define lw continue;
+#define lx {return
+#define ly G uint64_t
+#define lz const double
+#define lA G chrono::duration_cast<e1::duration>(G chrono::duration<lu
+#define lB G nullopt
+#define F ){if(
+#define lD lc la
+#define lE li la
+#define lF li auto
+#define lG const bool
+#define lH .end()
+#define M ac.
+#define lJ .W()
+#define I ){lb
+#define H ,la
+#define e ;lb
+#define lN R false
+#define o =0;
+#define B );}
+#define lQ )if(all||h==first||h==second)jn.add(cD(ac,b3,r,h,M bk(h)
+#define lR G make_unique
+#define lS [h]
+#define lT G min(
+#define lU G chrono::
+#define lV .empty()
+#define lW =true
+#define lX {public:
+#define lY lH,[](lb&a,lb&b)lx a.
+#define U ;++
+#define Q (la
+#define mb (void)
+#define mc loc.
+#define md ll int>(
+#define me G shared_ptr<const aP>
+#define mf ab&ac
+#define D )z
+#define mh ;bool
+#define mi =false
+#define mj bk(h)
+#define mk if(
+#define ml unsigned char
+#define mm )break
+#define mn in.cH(
+#define mo G max(
+#define mp M av(
+#define mq M aj()
+#define mr ,double
+#define ms final:public c0 lX lD>h1(ab&H,G mt19937_64&lk override;};lj lD>
+#define mt h D!b3.hK()R e aG=M bk(bg).bp()e&dm=M aT();lG iM=dm&&dm->hQ(r D iM F all){static const ak fV li lb&J:dm->fR(r)F M co
+#define mu private:
+#define mv .resize(
+#define mw ;auto&loc=bm[f];mc h=md h D L==aE(f))mc ax=p;else mc bH=
+#define mx mh aR mi;while(lb aO=jn.dp()I J=aO->J e bg=aO->bg e eq=J.h;lG cM=M co(bg);lG cN=M co(eq);lG iB=bg==eq;lG gx=iB?M
+#define my G numeric_limits
+#define mz insert(
+#define mA G move(
+#define mB h lv ak&
+#define mC );read(ed,
+#define mD ,0,0,*K},bg);break;}}for(lb h:M cB()lQ,aG),bg B else{for Q h o h<M aH()U h lQ,aG),bg B}e gr=[&]{jn.clear
+#define O h,
+#define mF b3 H r H mB C,ly aG lk{lb bg=ll la>(mp r).h D h!=bg&&!b3.dP()R lB ls fJ.get(r,O M aH(),aG,C.bp(),b3.cF(),h
+#define mG true,0,0 B;gr()mx cE(J.f,J.ax,J.au):(M g2(J.f)&&M mz J.f,eq,J.ax,J.au));aR lW z M co(bg)!=cM||
+#define S [r]
+#define mI ;void
+#define mJ lr az&
+#define mK ;struct
+#define mL lk lx
+#define mM B void
+#define mN ;mutable
+#define mO .erase(
+#define mP for Q
+#define mQ G isfinite(
+#define mR lE h o h
+#define mS in.
+#define mT auto&
+#define mU B return
+#define mV first H
+#define mW A U
+#define mX final:public jt lX bool cb(
+#define mY lr lc bu>&al H Y H E lv lc int>&aU
+#define mZ first,
+#define na lj class
+#define nb (f)
+#define nd lv lD>&
+#define ne =G min_element(hO lq,hO lY second.Z<b.second
+#define nf lm<lu
+#define ng ll la>(
+#define nh c1{bool operator()lr bb&lv bb&lk;};using iK=G priority_queue<bb,lc bb>,c1>mN const
+#define ni af.dn(
+#define nj lU steady_clock::time_point
+#define nk lm<an>
+#define nl lE r o r
+#define nm .duration
+#define nn .h
+#define no }return
+#define np h1(mf H count,G mt19937_64
+#define nq =mS Y A,n=mS aw A,m=mS aX A
+#define ns g9);fa.cC(0,f2 A);fb.cC(0,f3 A)e gQ=fa.a0(),gR=fb.a0(D!gQ||!gR lN;lz K=
+#define nt ;const
+#define nu e1::now()+lU seconds
 #define nw ;}double
-#define nx kC ab&
-#define ny [aa]
-#define nz ku;kt]
-#define nA ::cC(kZ ku{
-#define nB ne ku{kp n=ai->au ks kO aa<n?ai
-#define nC kW hV=nf b5 lc ch=an kX ks-(hV?2
-#define nD =kT
-#define nE mQ r)dC(r,lL=bi==dk;kW eJ=hV?kT cH(ah.aa,ah.as,ah.ar
-#define nF {double
-#define nG bk ks
-#define nH au ks
-#define nI else mM
-#define nJ swap(
-#define nK ::max()
-#define nL ;const
-#define nM ae)
-#define nN kv struct
-#define nO while(
-#define nP kq unique_ptr<
-#define nQ kq ostream&out
-#define nR )kO true mt ab::
-#define nS mr second
-#define nT kC kZ
-#define nU lx 1e-9,bw?bw mz:1e-9)kR kp
-#define nV ::b6 lq ae ku{kp size=bj.lu kX ks kO nf b5?size-2:size;
-#define nW nA e8 g0 lc dC=[&]lq r,bool all la mB second kS mp ae<0 kw;
-#define nX data.
-#define nY r:bP.aj)
-#define nZ mE aa,lM kT lu,data
-#define oa first)
-#define ob lU const aX>
-#define oc kT mj>=0
-#define od kX,lm as,lm
-#define oe ;an.lE an kG
-#define of ag.
-#define og nb ah
-#define oh aD.cx
-#define oi kq chrono::duration kP(
-#define oj bp(aI&af la mB end
-#define ok ld aa lp aa<lh mQ aa
-#define ol es.mg;dn.mg;h8.mg kB lv fN:dD)fN.mg;iz lp fZ
-#define om ;}}mM ah==lh||!kT gq(ah)my;aT kD ah ms aT;}kv
-#define on kS aV kw mQ dK kz(dK&63)==0&&kM>=a1){aV lF kO;}
-#define oo b1 mE r ni bi=kE ko>(mp lI(ah.nM kR kp a3=b1.a3(
-#define op false)
-#define oq lb else
-#define os [i]
-#define ot lB aS[
-#define ou .emplace_back(
-#define ov {kI kA
-#define ow .as.br
-#define ox ld i lp i
-#define oy );af.
-#define oz gy::now(
-#define oA <<kq setprecision(17)
-#define oB eh ks&&!aV mQ
-#define oC bz>=k+2*n&&bz<k+2*n+
-#define oD [d]])mM el(bP)){iR+=bP.bh;break;}mM iR<=
-#define oE an kX ks-(nf b5?2:0)||(ae!=b5&&!bJ)kQ nL dV
-#define oF assign(
-#define oG mv bool>
-#define oH [r]
-#define oI bL.eq(lg<
-#define oJ ll!
-#define oK aA()
-#define oL ld pos lp pos<=b6 mQ pos
-#define oM bool ij lF):fX(ij){}kq string_view hu(lw
-#define oN <am(ll a>b||b>an ks||(aK&&a!=b)lk lc ay=
-#define oO lV,nf bi,[&]{mn bw lc b6=an kX ks-(nf bi?2:
-#define oP (lA
-#define oQ bs.
-#define oR mw aa:
-#define oS [&]lq
-#define oT .bl()
-#define oU lv an=b3;an=lu
-#define oV kG,
-#define oW mv mv
-#define oX ab::
-#define oY ;}}
-#define oZ kq shuffle(
-#define pa lc&in=
-#define pb throw kq
-#define pc ma ag
-#define pd lq ae
-#define pe ai->
-#define pf inline double
-#define pg ;else
-#define ph ls struct
-#define pi 1e-9)
-#define pj .reset(
-#define pk loc nD ap
-#define pl aN.ah
-#define pm kq istream&in
-#define pn lw;ls mutable
-#define po an.ay mD
-#define pp bz-k-2*
-#define pq bT[aa*ec+ae]
-#define pr kJ aT;aT mm count);nO aT ks<count){ko
-#define ps ;kH
-#define pt ls const
-#define pu bS.
-#define pv empty.
-#define pw mE aa
-#define px b0 lt
-#define py bB la a0
-#define pz kq abs(
-#define pA kT az()
-#define pB bj.ag(
-#define pC hV)bp(af,
-#define pD .bg()
-#define pE .cM()
-#define pF mv unsigned char>
-#define pG aa)bT lC aa+1);lv row=bT ny kz row
-#define pH lh){aU lC lh);kq iota(aU oV aU kY,
-#define pI nA bool a8 lG;nO kp ah=dX(ac)kS!kT
-#define pJ second)
-#define pK ah.
-template<class T,class P>void g7(mv T>&fY,P i1){fY me kq remove_if(fY oV fY kY,i1),fY kY lb inline ko gX lq value)kA value?lz<unsigned long long>::digits-__builtin_clzll(kE unsigned long long>(value)):0;}mH{struct hI nF br=0 kN db lp}lY kg nF ba lp}lY iI nF aH lp hI as kN co lp}lY jI nF aH=0 kN ci lp hI as;hI ar kN co lp}lY av{mv kg>bk;mv iI>au;mv jI>aS;kJ dt;kr kP cK;kr kP c0;mO dS oP nG+2*(nH+aS ks lb mO gZ lq bz lA dt li?bz+1:dt.at(bz lb mO cu lq i lA nG+i;}mO aP lq i lA nG+nH+i;}mO dd lq j lA nG+2*nH+j;}mO bb lq j lA nG+2*nH+aS ks+j;}kt]double hZ lq u la v lA cK.at(u*dS()+v lb kt]double cM lq u la v lA c0.at(u*dS()+v md hE(ku;};}mH{nd void cm(double x kL char*hu kS!mS x)||x<0)pb invalid_argument(hu md eZ(hI w){cm(w.br,"negative or nonfinite window start");cm(w.db,"negative or nonfinite window end" ll w.br>w.db kK lb mA av::hE(mb bk li kK ni v=dS(oJ dt li kS dt ks!=v kK);oG jT(v,op mw id:dt kS id==0||id>v||jT[id-1]kK);jT[id-1]lF oY mM v>lz<ko>nK/v||cK ks!=v*v||c0 ks!=v*v kK)mw&ae:bk)cm(ae.ba,"invalid taxi capacity")mw&p:au){cm(p.aH,"invalid passenger revenue");cm(p.co,"invalid passenger service duration");eZ(p.as lb mV&p:aS){cm(p.aH,"invalid parcel revenue" oJ mS p.ci)||p.ci<=0 kK);cm(p.co,"invalid parcel service duration");eZ(p.as);eZ(p.ar lb for(double x:cK)cm(x,"invalid travel time")kB double x:c0)cm(x,"invalid travel cost" lb}mH{struct g9{bool bg lG kN bY lp kq string iU;}lY cL{oW ko>>cS;kt]g9 ex pc ku;};}mH{g9 cL::ex pc mb cS ks!=of nG lJ"route count differs from taxi count"}lc n=of nH lc m=of aS ks lc cO=of nG lc jD=of dS();mv int>cg(n+m,-1);mv int>en(n+m,-1)kN bY lp constexpr double eps=1e-8 ld k lp k<cO mQ k){ko bd=k kN b9=0 kN load=0 lc&an=cS[k]ld pos lp pos<an lN pos ln bz=an ng kz bz<cO||bz>=jD lJ"route contains invalid service node"}ps bX=b9+of hZ(bd,bz oJ mS bX)lJ"nonfinite route time"};bY-=of cM(bd,bz ll bz<cO+n ln i=bz-cO kz cg os!=-1 lJ"passenger picked up more than once"}lc&p=of au os kz bX>p.as.db+eps lJ"passenger pickup is late"}kz pos+1==an ks||an[pos+1]!=of aP(i)lJ"passenger drop-off must immediately follow pickup"};cg os=mi k);b9=lx bX,p ow)+p.co;}nI bz<cO+2*n ln i=bz-cO-n kz cg os!=mi k)||en os!=-1 lJ"invalid passenger drop-off"};en os=mi k);b9=bX+of au os.co;}nI bz<cO+2*n+m ln j=bz-cO-2*n lc id=n+j kz cg[id]!=-1 lJ"parcel picked up more than once"}lc&p=of aS[j]kz bX>p.as.db+eps lJ"parcel pickup is late"};load+=p.ci kz load>of bk[k].ba+eps lJ"parcel capacity exceeded"};cg[id]=mi k);b9=lx bX,p ow)+p.co;}else{kp j=bz-cO-2*n-m lc id=n+j kz cg[id]!=mi k)||en[id]!=-1 lJ"invalid parcel drop-off"}lc&p=of aS[j]kz bX>p.ar.db+eps lJ"parcel delivery is late"};load-=p.ci;en[id]=mi k);b9=lx bX,p.ar.br)+p.co;}bd=bz oY mY i lp i<n+m mQ i kS cg os!=en os lJ"partially served request"}kz cg os!=-1)bY+=i<n?of au os.aH:of aS[i-n].aH;lZ{true,bY,{}}oY mH{av fS(pm)lW ja(nQ kL av&ag lb mH{nd template<typename T>void read(pm,T&value kL char*j4 kS!(in>>value))pb runtime_error(kq string("cannot read ")+j4 lb}av fS(pm){ko k=0,n=0,m lp read mD k,"taxi count" lR n,"passenger count" lR m,"parcel count" ll k==0||k>100000||n>20000||m>20000||n+m>20000 lr)nL ko v=k+2*(n+m ll v>50000 lr);av ag;of bk lC k);of au lC n);of aS lC m);of dt lC v);oG jT(v,false ni h0=oS bz){lv id=of dt[bz];read mD id,"vertex ID" ll id==0||id>v||jT[id-1]lr);jT[id-1]lF;}mF<k mQ nM{h0(ae lR of bk lt.ba,"taxi capacity" lb mY i lp i<n mQ i){lv p=of au os;h0(of cu(i));h0(of aP(i)lR p ow,"passenger earliest" lR p.as.db,"passenger latest" lR p.co,"passenger service" lR p.aH,"passenger revenue" lb mY j lp j<m mQ j){lv p=of aS[j];h0(of dd(j));h0(of bb(j)lR p.ci,"parcel weight" lR p ow,"parcel pickup earliest" lR p.as.db,"parcel pickup latest" lR p.ar.br,"parcel delivery earliest" lR p.ar.db,"parcel delivery latest" lR p.co,"parcel service" lR p.aH,"parcel revenue" lb kJ hq(v)ld bz lp bz<v mQ bz)hq[of gZ(bz)-1]=bz mR*jn:{&of cK,&of c0}){jn->resize(v*v)ld u lp u<v mQ u)mY w lp w<v mQ w)read mD(*jn)[hq[u]*v+hq[w]],"matrix entry" lb kq string j3 kz in>>j3 lr);of hE()kO ag oY mH{cL jf(pm kL av&ag)lW ei(nQ kL cL&b7 kL av&ag lb mH{void ei(nQ kL cL&b7 kL av&ag){of hE(ni dp=b7.ex(ag oJ dp.bg lr+dp.iU);out oA<<dp.bY<<'\n' mw&an:b7.cS){out<<an ks mw bz:an)out<<' '<<of gZ(bz);out<<'\n';}mM!out lr lb nN bR{ko first=0,g4=0 kN duration=0 kN gS=-ky)kN bA=ky)kN cM=0 kN bE=0,dP=0,dO lp bool bg lF;};bR b4 pc la bz);bR jR pc kL bR&kn kL bR&kk)nj ak lD ak()=default;ak pc la ae mf an)lW fy pc la ae mf an)lW mg lW dY kC ak&bS);kt]bR dh pc la mB g4 nz bool ay pc la aW nz double cM oP iz;}kt]kV bl oP fZ;}ml kJ&aw oP dK;}ml kr kP&bX oP es;}ml kr kP&b9 oP dn;}ml kr kP&load oP h8;}ls kJ dK;mv bR>cD;oW bR>>dD;kr kP es,dn,h8 kN iz lp kV fZ lp}nj aL lD aL pc la lP bn)lW cF lq mB end)lW fg kC bR&d4)lW e0 lq bz);kt]nk aY(nz double g2(ku;pt av&ai;ko hC nL ak&fb;kx<bR>cE;};kv nd kq atomic<kV>fP{1}kN co nm bz ln k mJ kz bz<k||bz>=lB dS()kF ll bz<k+2*n kw lB au[(bz-k)%n].co kO ot(pp n)%m].co nw iB nm bz ln k mJ kz bz<k+2*n kw 0 lc j=(pp n)%m kO bz<k+2*n+m?ot j].ci:-ot j].ci oY bR b4 nm bz){bR s;s.first=s.g4=bz;s mx=co mD bz ni k mJ nL hI*hk=nullptr kz bz<k+n)hk=&lB au[bz-k].as;nI oC m)hk=&ot pp n].as;nI bz>=k+2*n+m)hk=&ot pp n-m].ar kz hk){s.gS=hk->br+s mx;s.bA=hk->db;}s.bE=iB mD bz);s.dP=lO 0.0,s.bE);s.dO=lx 0.0,s.bE)kO s;}bR jR ma in kL bR&a kL bR&b){kH eE=lB hZ(a.g4,b.oa;bR s;s.first=a.first;s.g4=b.g4;s mx=a mx+eE+b mx;s.gS=lx a.gS+eE+b mx,b.gS);s.bA=lO a.bA,b.bA-eE-a mx);s.bg=a.bg&&b.bg&&a.gS+eE<=b.bA;s.cM=a.cM+mh a.g4,b.oa+b.cM;s.bE=a.bE+b.bE;s.dP=lO a.dP,a.bE+b.dP);s.dO=lx a.dO,a.bE+b.dO)kO s;}ak::ak nm ae mf an){fy mD nl md ak::mg{dK.mg;cD.mg;ol lp mA ak::dY kC ak&bS kS this==&bS kw;dK=pu dK;cD=pu cD;es=pu es;dn=pu dn;h8=pu h8 kz dD ks<pu dD ks)dD lC pu dD ks)ox<pu dD lN i)dD os=pu dD os ld i=pu dD ks;i<dD lN i)dD os.mg;iz=pu iz;fZ=pu fZ;mA ak::fy nm ae mf an kS&an!=&dK)dK=an;cD.mg;ol=fP.fetch_add(1,kq memory_order_relaxed ni size=an ks;cD mm size);es mm size);dn mm size);h8 mm size);ko bd=ae kN b9=0,load=0 mw bz:an){cD kD b4 mD bz))ps bX=b9+lB hZ(bd,bz);b9=lx bX+cD.back()mx,cD.back().gS);load+=cD.back().bE;iz+=mh bd,bz);es kD bX);dn kD b9);h8 kD load);bd=bz;}ko fq=0 ld jQ=1;jQ<size;jQ*=2,++fq kS fq==dD ks)dD ou);lv fN=dD[fq];fN lC size)nL ko jM=jQ*2 ld hA lp hA<size;hA+=jM ln mid=lO hA+jQ,size ni end=lO hA+jM,size ll mid>hA){fN[mid-1]=cD[mid-1]mR i=mid-1;i>hA;--i)fN[i-1]=jR mD cD[i-1],fN os lb mM mid<end){fN[mid]=cD[mid]mR i=mid+1;i<end mQ i)fN os=jR mD fN[i-1],cD os lb}mM jQ>size/2 my oY bR ak::dh nm mB g4 mb first>g4||g4>=dK ks)pb out_of_range("invalid route range" ll first==g4 kw cD[first]lc fN=gX(first^g4)-1 kO jR mD dD.at(fN)[first],dD.at(fN)[g4]lb bool ak::ay nm pos mb pos>dK ks lk kz pos==0 kw true lc eS=dK[pos-1],k=lB nG kO eS<k||eS>=k+lB nH;}aL::aL nm lP bn):ai(in),hC(nM,fb(bn){mA aL::cF lq mB end kS first==end kw;fg(fb.dh(ai,mr end-1)md aL::fg kC bR&d4){cE=cE?jR(ai,*cE,d4):d4;mA aL::e0 lq bz){fg(b4(ai,bz)lb nk aL::aY(mb!cE kw 0.0 lc&s=*cE ps bX=ai.hZ(hC,s.first oJ s.bg||bX>s.bA||s.dP<-1e-8||s.dO>ai.bk[hC].ba nu kQ kO ai.cM(hC,s.oa+s.cM nw aL::g2(mb!cE kw 0.0 kO ai.cM(hC,cE->oa+cE->cM;}kv class aX nj bc lY eI{int ae=-1;ko as=0,bv lp}nj ab lD ab pc,cL b7,lU bc>aO={})lW dY nx bS)lW nJ ab&bS)noexcept;kt]cL b7(ku;ml ak&bn pd ku;ml kJ&bo oP ax;}kt]bool cb pd lA ae<aE ks&&!aE lt kX.empty(lb mO aA oP pe nG;}ml eI&ap ne lA a6.at(aa lb mO ad oP a6 ks;}mO am oP pe nH;}mO eY(nz double bY oP cV;}kt]bc&aO oP*bD;}ml lU bc>&ep oP bD;}kt]double aH ne ku;ml av&ag oP*ai;}mO aC ne ku;ml ob&az oP bM;mA dM(ob dH){bM=mC dH lb kt]nk aQ ne nz nk fd ne la ae la py ku lT gq ne)lT d1 pd mf aj)lT insert ne la ae la py)lT cH ne la py)lT eV lq a2 la aF la py)lT fW lq mB pJ lT c9 lq bV la fk la bW la fl)lW hK(ku;pt av*ai;lU bc>bD;mv ak>aE;kJ ax;mv eI>a6 lY hH{kV by lp nk a3;}lX mv hH>cz;ob bM kN cV lp kJ b3;ak bf lW df pd mf an)lW cB lq lM ak&dg lH a3)lW dm lq bV,ak gt la bW,ak gu lH a3);mO cf ne ku;ly bc lD struct jx nF*as kN*ar kN*jb kN*jV;};explicit bc lq aj):aU(aj),gb(g1(aj)),hB(4*gb){}mO ad oP aU;}mO gN oP gb-2;}mO ki oP hB ks*sizeof(double lb kt]jx f3 lq ig kS ig>gN())pb out_of_range("insertion route exceeds fixed scratch capacity");auto*data=hB.data()kO{data,data+gb,data+2*gb,data+3*gb};}ls static ko g1 lq aj){constexpr auto ht=lz<ko>nK/sizeof(double)/4 kz aj>(ht-2)/2)pb length_error("insertion scratch size overflow")kO 2*aj+2;}ko aU,gb;kr kP hB;ly aI lD aI nm lP an):in_(in),hC(nM,jt(an){mA dh lq mB end kS first<end)iM(jt.dh(in_,mr end-1)md bz lq id){iM(b4(in_,id)md d4 kC bR&gO){iM(gO lb kt]bool bg(mb!cE kw true lc&s=*cE kO s.bg&&in_.hZ(hC,s.oa<=s.bA&&s.dP>=-1e-8&&s.dO<=in_.bk[hC].ba nu;}ls void iM kC bR&gO kS!cE){cE=gO kO;}lv s=*cE ps eE=in_.hZ(s.g4,gO.oa ps f6=s.bE ps go=s mx ps hP=s.gS;s.bg=s.bg&&gO.bg&&hP+eE<=gO.bA;s.bA=lO s.bA,gO.bA-eE-go);s mx=go+eE+gO mx;s.gS=lx hP+eE+gO mx,gO.gS);s.dP=lO s.dP,f6+gO.dP);s.dO=lx s.dO,f6+gO.dO);s.bE=f6+gO.bE;s.g4=gO.g4;}const av&in_;ko hC nL ak&jt;kx<bR>cE;};nN dV{const kJ&aw;ko g5=0,gs lp bool aT lG;mO size oP aw ks-(aT?2:0 lb mO bz lq aW mb!aT kw aw[aW]kz aW<g5 kw aw[aW]kz aW<gs-1 kw aw[aW+1]kO aw[aW+2]oY;pf bH nm ae mf aw la de la b2 ln as=aw[de],ar=aw[b2]lc dN=de?aw[de-1]:ae kz b2==de+1)nF hW=mh dN,as)+mh as,ar ll b2+1<aw ks ln jJ=aw[b2+1];hW+=mh ar,jJ)-mh dN,jJ ms hW;}kp gf=aw[de+1]lc eK=aw[b2-1]kN hW=mh dN,as)+mh as,gf)-mh dN,gf)+mh eK,ar ll b2+1<aw ks ln e9=aw[b2+1];hW+=mh ar,e9)-mh eK,e9 ms hW;}pf bU nm ae kL dV&an la at la bz ln bd=at?an.bz(at-1):ae kN em=mh bd,bz ll at<an ks ln gO=an.bz(at);em+=mh bz,gO)-mh bd,gO ms em;}pf bI nm ae kL dV&an la at la as la ar ln bd=at?an.bz(at-1):ae kN em=mh bd,as)+mh as,ar ll at<an ks ln gO=an.bz(at);em+=mh ar,gO)-mh bd,gO ms em;}pf c4 nm ae kL dV&an la de la b2 la as la ar kS de==b2 kw bI mD nl,de,as,ar)kO bU mD nl,de,as)+bU mD nl,b2,ar lb kv oX ab ma in,cL b7,lU bc>aO):ai(&in),bD(aO?mC aO):kq make_shared<bc>(lB nH+lB aS ks)),aE(lB nG),a6(lB nH+lB aS ks),cz(a6 ks kS bD->ad()!=a6 ks kF);ax mm lB nG ni dp=b7.ex(in oJ dp.bg kF+dp.iU);cV=dp.bY ld k lp k<b7.cS lN k)mM!b7.cS[k]li)df(k,b7.cS[k]md oX dY nx bS kS this==&bS kw kz ai!=pu ai kF)mF<aE lN nM mM aE lt oT!=pu aE lt oT)aE lt.dY(pu aE lt);ax mm oK);ax=pu ax;a6=pu a6;cz=pu cz;bM=pu bM;cV=pu cV;mA oX nJ ab&bS)noexcept{using kq swap;nJ ai,pu ai);bD.nJ pu bD);aE.nJ pu aE);ax.nJ pu ax);a6.nJ pu a6);cz.nJ pu cz);bM.nJ pu bM);nJ cV,pu cV);b3.nJ pu b3);nJ bf,pu bf lb cL oX b7(ku{cL aD;aD.cS lC pe nG)mw ae:ax)aD.cS lt=lu kX kO aD;}const ak&oX bn pd ku{static const ak empty kO ae<aE ks?aE lt:empty;}ko oX eY oP kq count_if(a6 oV a6 kY,[](kp&ap)kA ap.ae>=0;}lb double oX aH nB->au.at lj.aH:pe aS.at(aa-n).aH;}ko oX aC nB->cu lj:pe dd(aa-n lb ko oX cf nB->aP lj:pe bb(aa-n md oX df pd mf an ln&in=*ai lc n=lB nH,m=lB aS ks,cO=lB nG mw bz:lu kX ln aa=bz<cO+2*n?(bz-cO)%n:n+(bz-cO-2*n)%m;a6 ny={};}lv jh=aE.at(nM;kW e5=cb(ae ll an li kS e5){jh.mg;ax me mT,nM lb}else{jh.fy mD nl oJ e5)ax.lE mT,nM,ae lb mY p lp p<an lN p ln bz=an[p];kW aK=bz<cO+2*n lc aa=aK?(bz-cO)%n:n+(bz-cO-2*n)%m lK p oY nk oX aQ ne ku{kp loc=ap lj kz lm ae<0 kQ lc ae mX lc&eQ=lu;lv a9=cz ny kz nb by==eQ oT kw nb a3 lc size=eQ kX ks;aI af nc lM eQ);mG 0,lm as);mG lm as+1,lm bv);mG lm bv+1,size);nb by=eQ oT;nb a3=af pD?nk(bH nc lM eQ od bv)-aH lj):kq nullopt kO nb a3;}nk oX fd ne la ae la a la b mb aa>=ad()||mj>=0||ae>=oK kQ lc&d3=lu lc size=d3 kX ks;kW aK=aa<pe nH kz a>b||b>size||(aK&&a!=b)||!d3.ay nc a)||!d3.ay nc b)kQ kz!aK&&pe aS[aa-pe nH].ci>pe bk lt.ba nu kQ;aI af nc lM d3);mG 0,a oy bz(aC lj oJ aK)mG a,b oy bz(cf lj);mG b,size oJ af pD kQ nL dV i9{d3 kX}lc cM=aK?bI nc lM i9,a,aC lj,cf lj):c4 nc lM i9,a,b,aC lj,cf lj)kO aH lj-cM mt oX gq ne ln a3=aQ lj kz!a3 lk lc loc=ap lj lc ae mX;oU kX;no);cV+=*a3;df(nl nR d1 pd mf aj kS ae>=oK||aj li lk lc&old=lu;oG fJ(old kX ks,op kN gl=0 oR aj kS aa>=ad()lk lc loc=ap lj kz lm ae!=mi nM||fJ[lm as]lk;fJ[lm as]=fJ[lm bv]lF;gl+=aH(aa lb aL af nc lM old);lv an=b3;an.mg ld first lp first<old kX ks;kS fJ[first]){++first;continue;}auto end=first+1;nO end<old kX ks&&!fJ[end])++end;af.cF(mr end);an.lE an kY,old kX kG+mr old kX kG+end);first=end;}kp it=af.aY(oJ it lk;cV+=old pE-*it-gl;df(nl nR insert ne la ae la a la b ln a3=fd(aa,lM a,b oJ a3 lk;oU kX oe+b,cf lj)oe+a,aC lj);cV+=*a3;df(nl nR cH ne la a la b kS aa>=ad()||mj<0 lk lc ae=kE ko>(mj ni hv=lu pE;oU kX lc loc=ap lj;no);kW aK=aa oN oS aW kS!aW kw true lc eS=an[aW-1],k=pe nG kO eS<k||eS>=k+am(lb kz!ay(a)||!ay(b)lk kz!aK&&pe aS[aa-am()].ci>pe bk lt.ba nu lk oe+b,cf lj)oe+a,aC lj);ns lk;cB(lM bf,hv-*cM nR eV lq a2 la aF la a la b kS a2>=ad()||aF>=ad()||ap(a2).ae<0||ap(aF).ae>=0 lk lc loc=ap(a2 ni ae mX lc hv=lu pE;oU kX;no);kW aK=aF oN oS aW)kA!aW||an[aW-1]>=oK+am(lb kz!ay(a)||!ay(b)lk oe+b,cf(aF))oe+a,aC(aF));ns lk ps a3=aH(aF)-aH(a2)+hv-*cM kz a3<=1e-9 lk;cB(lM bf,a3)kO true;mA oX cB lq lM ak&dg lH a3 ln k=oK,n=am(),m=pe aS ks lc hg=oS bz)kA bz<k+2*n?(bz-k)%n:n+(pp n)%m;};lv jh=aE.at(nM mw bz:jh kX)a6[hg(bz)]={};kW e5=!jh kX li;kW ha=!dg kX li kz e5!=ha ln il=mT,ae ll ha)ax.lE il,nM pg ax me il lb kq nJ jh,dg oJ ha)jh.mg ld p lp p<jh kX lN p ln bz=jh kX[p],aa=hg(bz)lK p;}cV+=a3 mt oX fW lq mB second kS first>=ad()||second>=ad()lk kz second<oa kq nJ nS ni a=ap(oa,b=ap(second ll a.ae<0||b.ae<0||a.nf b.ae lk lc hd=oS a2 la aF ln loc=ap(a2);auto aw=bn(lm nM kX;np ni a0=aF<am()?lm as:lm bv-1;aw.lE aw kG+a0,cf(aF));aw.lE aw kG+lm as,aC(aF))kO aw;}lc fs=hd(nS),ft=hd(second,oa;ak gt nc a.lM fs),gu nc b.lM ft);aL eL nc a.lM gt),eM nc b.lM mL bn(a.nM pE+bn(b.nM pE-*gi-*gj kz a3<=1e-9 lk;dm(a.lM mC gt),b.lM mC gu),a3 nR c9 lq bV la fk la bW la fl kS bV==bW||bV>=oK||bW>=oK lk lc&iD=bn(bV ni&iE=bn(bW ll fk>iD kX ks||fl>iE kX ks lk mw&loc:a6 kS(lm nf mi bV)&&lm as<fk&&lm bv>=fk)||(lm nf mi bW)&&lm as<fl&&lm bv>=fl)lk;}kJ fs(iD kX oV iD kX kG+fk);fs.lE fs kY,iE kX kG+fl,iE kX kY);kJ ft(iE kX oV iE kX kG+fl);ft.lE ft kY,iD kX kG+fk,iD kX kY);ak gt nc bV,fs),gu nc bW,ft);aL eL nc bV,gt),eM nc bW,mL iD pE+iE pE-*gi-*gj kz a3<=1e-9 lk;dm(bV,mC gt),bW,mC gu),a3)kO true;mA oX dm lq bV,ak gt la bW,ak gu lH a3){for(lv loc:a6)mM lm nf mi bV)||lm nf mi bW))loc={}lc assign=oS lM ak dg){auto il=mT,nM;kW ha=il!=ax kY&&*il==ae kz dg kX li kS ha)ax me il);aE lt.clear(oq{mM!ha)ax.lE il,nM;aE lt=mC dg lb kp k=pe nG,n=am(),m=pe aS ks lc&aw=lu kX ld p lp p<aw lN p ln bz=aw[p]lc aa=bz<k+2*n?(bz-k)%n:n+(pp n)%m lK p oY;oF bV,mC gt));oF bW,mC gu));cV+=a3;mA oX hK(ku{kp aD=b7().ex(*ai oJ aD.bg||pz aD.bY-cV)>1e-6*lx 1.0,pz aD.bY))kF+aD.iU lb nN hF{ko eN=0,ga=0,fT lp}nj ff lD ff lq ee la aj,bool gx);hF jv(kU rng la c5)lW jw(hF ah lH eW);ml kr kP&ka oP fz;}ml kJ&j2 oP hc;}ph Arm nF ci=1,sum=0,hi lp ko count lp}lT hY;mv Arm>ho;oW Arm>>ix;kJ gR;kr kP fz;kJ hc;ko iS kC mv Arm>&jd,kU rng ku;};kv ff::ff lq ee la aj,bool gx):hY(gx),ho(ee),ix(ee),fz(ee,0),hc(ee,0 kS ee==0 kK)ld p=1;p<=aj;p*=2){gR kD p ll p>aj/2 my;}mM gR li)gR kD 1)kB lv jd:ix)jd lC gR ks lb ko ff::iS kC mv Arm>&jd,kU rng mb!hY)nF jW=0 mw&arm:jd)jW+=arm.ci;nh kj(0,jW)kN dk=kj(rng)ox<jd lN i){dk-=jd os.ci kz dk<=0 kw i;lZ jd ks-1;}constexpr double mu0=0,h7=0.01,jK=1,j1=100;ko ah=0 kN cx=-ky)ox<jd lN i ln&a=jd os ps count=kE double>(a.count)ps iX=h7+count ps j7=(h7*mu0+a.sum)/iX ps jZ=jK+count/2 ps kh=j1+0.5*(a.hi+h7*mu0*mu0-iX*j7*j7);kq gamma_distribution kP j5(jZ,1.0/lx kh,1e-12))ps i0=j5(rng);kq normal_distribution kP jS(j7,1.0/kq sqrt(lx iX*i0,1e-12)))ps ju=jS(rng ll ju>cx){cx=ju;ah=i;}lZ ah;}hF ff::jv(kU rng la c5){hF ah;pK eN=iS(ho,rng);pK ga=iS(ix[pK eN],rng);pK fT=lO c5,gR[pK ga])kO ah;mA ff::jw(hF ah lH eW){eW=lx 0.0,eW);auto hj=[eW](Arm&a){++a.count;a.sum+=eW;a.hi+=eW*eW;a.ci=0.9*a.ci+0.1*(0.01+eW lb;hj(ho[pK eN]);hj(ix[pK eN][pK ga]);fz[pK eN]+=eW mQ hc[pK eN];}nN iH{kV kd=1 kN dU=59.0 kN cJ=200.0 kN jz=kq exp(kq log(1e-4)/6000.0)lT hK lG lT bL lF lT fj lF lT fh lF lT hw lF lT hy lF lT fv lF lT dr lF lT gP lF lT cy lG;ko f7=50000;ko eD=200;ko gQ=48;ko gL=1 lT gx lG;kq string je;};nN iJ{cL b7 kN bY lp ko dR=0 kN i3 lp bool d8 lG lT cy lG;};iJ jU pc kL iH&bs);kv class bO lD virtual~bO(mq kJ mU ku lp ly fA lo bO ov"random";mI e7 lo bO ov"related";mI ge lo bO ov"worst";mI gd lo bO ov"route";mI d7 lo bO ov"opportunity";mI i8 lD virtual~i8(mq bool cC(kZ ku lp ly gz lD void eq(nP i8>move){fO kD mC move)lb bool hh(kZ ku;ls mv nP i8>>fO;ly cR lD virtual~cR(mq void ek(ab&mf aT,kU ku lp};kv using cU=kq chrono::steady_clock::time_point lY al{ko aa=0,ae=0,as=0,ar=0 kN a3 lp}lY aB{mn cx kN bQ=-ky lb lY eF{ko ae=0 kN a3 lp}lY b8{bool aK;bR as,ar kN aH,ci;}nj aX lD explicit aX pc)lT gH ne,cU a1=cU nK nz bool jX ne lA fE.at(aa lb ml mv eF>&dF ne lA e1.at(aa lb ml b8&bq ne lA cd.at(aa lb mO hU oP cd ks*sizeof(b8 lb pt av*ai lX oW eF>>e1 lX kJ hf lX oG fE;mv b8>cd;};ob di nx fn,cU a1);aB eo mu);mn dv mu);mn cj mu la lP an lH gn=-ky))nj c6 lD mn cx mu);ph hl{kV by=0 kN bu=-ky);mn cx;};oW hl>>bT;}nj a5 lD void ib nx mf aj)lW c2 nx la ae mf aj);ml mn&cx ne lA bT.at(aU*ec+aa).ah;}mO ji oP bT ks*sizeof(hl lb ph hl{kV bl=lz<kV>nK;mn ah;};ob jm;ko ec=0,aU lp mv hl>bT lW eA nx la aa la nM lW eB ne lb nj aJ lD kt]static bool h5 nT);explicit aJ nT);aJ nT mf aj);kt]aB cn ne ku lW c2 lq nM;pt ab&bj;using gB=kq pair<ko,aB>;oW gB>>cA;kJ aU;ly hG lD template<class kf>mn get ne la ae la aA,kV aG,kV cT lH cq,bool ds,kf&&kl kS bT ks<=pG ks<aA)row lC aA);lv a9=row lt;kW gM=nb gc&&nb cT==cT&&nb ds==ds;kW j9=gM&&(ds?nb aG==aG:(og.has_value()||cq<=nb cq)oJ j9){og=kl();nb aG=aG;nb cT=cT;nb cq=cq;nb ds=ds;nb gc lF;}mM og&&!ds){auto io=*og;io.a3+=cq-nb cq kO io;lZ og;}ph hl{mn ah;kV aG=0,cT=0 kN cq lp bool ds lG lT gc lG;};oW hl>>bT;};nN dJ{al ah;ko bi;}nj e8 lD void add(mn ah la bi kS ah&&ah mz>pi fO kD{*ah,bi}lb kt]kx<dJ>cx(mb fO li kQ kO*kq max_element(fO oV fO mk pK a3<b.pK a3;}md fc lq mB pJ{g7(fO,[&](kp&move)kA move.bi==first||move.bi==second||move.pK nf first||move.pK nf second;}md mg{fO.clear(lb ls mv dJ>fO;ly ao lD ao mc pd la py nz nk a3 mP py nz nk bm mP py nz kx<aI>ey mP bB nz nk dG mP py kL aI&ea ku;pt ab&bj;ko dy,b5,dT,c1 lT gW lG;nk bJ kN bF lp bR iZ,hL;mO cc lq aW nz bool cp kC ak&an la bx ku lW oj ku;}nj ed lo i8 ov"parcel_relocate" mt cC(ab&pn hG fb;kt]mn cG nx kL ao&la aa la lP,kV aG ku;ly aq lD aq mc pd la bx nz nk a3 mP bx nz nk bm mP bx ku;pt ab&bj;ko dy,b5,cZ lT gW lG;nk bJ kN bF lp mO cc lq aW ku lW oj ku;}nj dl lo i8 ov"passenger_relocate" mt cC(ab&pn hG fb;kt]mn cG nx kL aq&la aa la lP,kV aG ku;ly g8 lo i8 ov"add-request" mt cC(kZ pn a5 fb lX c6 dZ lX kJ aU;ly fB lo i8 ov"remove-request" mt cC(kZ lw;ly dE lo i8 ov"clean-cut-2opt-star" mt cC(kZ lw;mO j2 oP hc;}mO jc oP fa;}kt]double jG oP gY;}ls mutable ko hc=0,fa lp mutable double gY lp};nN aM{ko a2;al bt kN a3;}nj a7 lo i8 lD explicit a7(oM kA"replace-request" mt cC(ab&lw;kt]kx<aM>dX nx ku;ls bool fX;kt]kx<aM>dz nx ku lY hl{bool gc lG kN bu lp kx<aM>ah;}lY Row{kV by lp mv hl>h6;kV eU lp ak ez kN aQ lp}lX mv Row>jg lY ej{kV ca lp kx<aM>ah;}lY be{aM ah;kV by mK,c7>lX const av*fV=nullptr lX mv kV>ce lX oG d6 lX oW ej>>bK lX h1 dB lW cY nx la ae mf a2 mf aF ku lW d5 nx ku lW fI(ku lW fo pd la aF ku lW fD(ku;};nN aZ{ko nS kN a3;};nk dq nx la mB pJ nj cW lo i8 lD explicit cW(oM kA"swap-request" mt cC(ab&lw;kt]kx<aZ>dX nx ku;ph ej{kV ca lp kx<aZ>ah;}lY be{aZ ah;ko bV,bW;kV i6,i7 mK,c7>lT fX lX const av*ai=nullptr lX mv kV>cv lX oW ej>>bK lX h1 dB lW d5 nx ku lW fo lq bV la bW ku;ly eG lo cR ov"greedy";mA ek(ab&mf,kU lw;ly eH lo cR ov"profit";mA ek(ab&mf,kU pn a5 d0 lX c6 dZ;ly aR lD explicit aR pc la ht=200)lW hx nT)lW ip(cU a1 la eT=50000)lW hX lq ht);ko fK oP cl;}ko gG oP cr mt e6 oP cr==fx ks mt cC(kZ,cU a1);ko b0 oP et;}ko aw oP dK mt i5 oP aV;mA write(nQ ku;ph im{kJ aj,an kN bh lp}nL av&ai;ko is,et=0,dK lp bool aV lG;ko cl=0,cr lp mv kq map<kJ,im>>fx;mv kV>cv lW add nx la lM bool c8)lW f0 pd mf aj mf an lH bh,bool c8 lb;kv iJ jU pc kL iH&bs){using gy=kq chrono::steady_clock kz!oQ gL kK ll oQ cy&&!oQ dr kK ni hA=oz ni a1=hA+le oQ dU));kq mt19937_64 rng(oQ kd)ps g6=oQ dr?1.0:0.0 lc eX=a1-le lO g6,oQ dU*0.05)));mv nP bO>>ew;ew kD lg<fA>());ew kD lg<ge>());ew kD lg<e7>()ll oQ hy)ew kD lg<gd>()ll oQ fv)ew kD lg<d7>());mv nP cR>>gT;gT kD lg<eG>()ll oQ hw)gT kD lg<eH>())lY jH{ko jA,js;};mv jH>ee ld d lp d<ew lN d)mY r lp r<gT lN r)ee kD{d,r});ff iO(ee ks,of nH+of aS ks,oQ gx);gz bL;oI fB>());oI g8>());oI dl>());oI ed>());dE*iT=nullptr kz oQ fj){auto move=lg<dE>();iT=move.get();bL.eq(mC move)lb oI cW>());oI a7>());cL empty;pv cS lC of nG);ab ck(ag,mC empty)ni g3=lO a1,oz)+le lO 1.0,oQ dU*0.05))));ck.dM(di(ck,g3));nP aR>bN lT cy=oQ cy kz oQ dr){bN=lg<aR>(ag,oQ eD ll oQ gP||oQ cy ln eC=oz ni fp=lO eX,eC+le lO 2.0,oQ dU*0.2))));bN->ip(fp,oQ f7 ll bN->e6()){cy lF;bN->hX(lO oQ eD,oQ gQ)lb kq cerr<<"path_prefixes="<<bN->fK()<<" path_completed_taxis="<<bN->gG()<<" path_seconds="<<oi oz)-eC).count()<<'\n' oY mM!cy){kJ da(ck.ad());kq iota(da oV da kY,0);oZ da oV da kY,rng)oR da kS oz)>=a1 my lc ah=dv(ck,aa ll ah&&ah mz>pi ck.lE na lb}mM oQ hK)ck.hK();ab cx=ck;ab af=ck kz bN)bN->hx(ck)kN cJ=oQ cJ ps cX=oQ cJ*1e-4;ko dR lp nO!cy&&cJ>cX ln gK=oz ll gK>=eX my lc gV=iO.jv(rng,ck.eY()ni eN=ee[gV.eN];af.dY(ck ni aT=ew[eN.jA]->ek(af,gV.fT,rng ll oQ fh){kJ g0 ld r lp r<af.ad()mQ r)mM af.ap(r).ae<0)g0 kD r);oZ g0 oV g0 kY,rng);gT[eN.js]->ek(af,g0,rng oq gT[eN.js]->ek(af,aT,rng ll oQ bL&&dR%oQ gL==0)bL.hh(af ll oQ hK)af.hK(ll bN)bN->hx(af)ps em=af.bY()-ck.bY()ps eW=lx 0.0,em/lx 1.0,pz ck.bY())))lT iL=em>=0 kz!iL){nh ii(0,1);iL=ii(rng)<kq exp(em/cJ lb mM iL){ck.nJ af ll ck.bY()>cx.bY()+pi{cx.dY(ck lb}iO.jw(gV,eW)mQ dR;cJ=lx cX,cJ*oQ jz lb mM bN){bN->cC(cx,a1 lb mM oQ hK)cx.hK();iJ aD;aD.b7=cx.b7();aD.bY=cx.bY();aD.dR=dR;aD.i3=oi oz)-hA).count();aD.d8=cJ<=cX;aD.cy=cy&&!bN->i5()kO aD;}kv kJ fA::mU ku{kJ aj(lh);kq iota(aj oV aj kY,0);oZ aj oV aj kY,rng);kJ aT;aT mm count)oR aj kS aT ks>=count my kz kT gq lj)aT kD aa ms aT;}kv kJ ge::ek(kZ la count,kU ku{pr ah=lh kN bG=-ky)mZ ln a3 nD aQ(r ll a3&&*a3>bG){ah=r;bG=*a3 om kJ e7::mU ku{kJ c5 mZ)mM mp ae>=0)c5 kD r ll c5 li kw{}lc gg=c5[rng()%c5 ks]pa mo lc gD nD aC(gg ni br=oS r)kA r<lB nH?lB au oH ow:ot r-lB nH]ow;}ps h2=br(gg);pr ah=lh kN fC=ky)mZ kS mp ae<0||!kT aQ(r)kR kp bz nD aC(r)ps gv=lB hZ(gD,bz)+lB hZ(bz,gD)+pz h2-br(r)ll gv<fC){fC=gv;ah=r om kJ gd::mU ku{auto bk nD bo();oZ bk oV bk kY,rng);kJ aT mw ae:bk kS aT ks>=count my;kJ aj mZ)mM mp nf mi nM)aj kD r ni hT=count-aT ks kz aj ks<=hT kS kT d1(lM aj))aT.lE aT kY,aj oV aj kY oq{for(int iN lp iN<4 mQ iN){oZ aj oV aj kY,rng)nL kJ i4(aj oV aj kG+hT ll kT d1(lM i4)){aT.lE aT kY,i4 oV i4 kY);break oY}lZ aT;}kv kJ d7::mU mb!count kw{}pa mo lc&dH nD az();kJ ih,c5;kr kP ik mZ kS mp ae>=0){c5 kD r);continue nw fu nD aH(r ll dH){dH->gH(r ni&dF=dH->dF(r);fu=dF li?0:lx 0.0,dF.front().a3 lb mM fu>pi{ih kD r);ik kD fu lb}mM c5 li kw{};ko gg kz ih li)gg=c5[rng()%c5 ks]pg gg=ih[kq discrete_distribution<ko>(ik oV ik kY)(rng)]lc bv=oS r)kA r<mW?lB aP(r):lB bb(r-mW lb lc br=oS r)kA r<mW?lB au oH ow:ot r-mW]ow;}lc iu nD aC(gg),jl=bv(gg);mv kq pair<double la>>fR mR r:c5 ln as nD aC(r),kc=bv(r)ps gv=0.5*(lB hZ(iu,as)+lB hZ(as,iu)+lB hZ(jl,kc)+lB hZ(kc,jl))+pz br(gg)-br(r));fR ou gv,r lb kq sort(fR oV fR kY);nh ii(0,1);kJ aT;nO!fR li&&aT ks<count ln aW=lO fR ks-1,kE ko>(kq pow(ii(rng),3)*fR ks)ni r=fR[aW].second;fR me fR kG+aW ll kT gq(r))aT kD r ms aT;}kv nd b8 eP nm aa ln n=lB nH;kW aK=aa<n lc as=aK?lB cu lj:lB dd(aa-n ni ar=aK?lB aP lj:lB bb(aa-n)kO{aK,b4 mD as),b4 mD ar),aK?lB au ny.aH:ot aa-n].aH,aK?0:ot aa-n].ci}oY aX::aX pc):ai(&ag),e1(of nH+of aS ks),hf(e1 ks,0),fE(e1 ks,op,cd(e1 ks){mY aa lp aa<cd lN aa)cd ny=eP(ag,aa lb bool aX::gH ne,cU a1 mb fE.at lj kw true pa*ai lc n=lB nH lc as=aa<n?lB cu lj:lB dd(aa-n ni ar=aa<n?lB aP lj:lB bb(aa-n ni aH=aa<n?lB au ny.aH:ot aa-n].aH nL ak empty;lv dF=e1 ny kB lv ae=hf ny;ae<lB bk lN ae kS a1!=cU nK&&kM>=a1 lk;aL af mD lM empty oy e0(as oy e0(ar ni cM=af.aY(ll cM)dF kD{lM aH-*cM}lb kq sort(dF oV dF mk a3>b.a3||(a.a3==b.a3&&a.ae<b.ae lb);fE ny lF kO true;}ob di nx fn,cU a1){auto dH=kq make_shared<aX>(fn.ag())ld aa lp aa<fn.ad()mQ aa kS!dH->gH(aa,a1)my;lZ dH;}nd void fF(aB&aD,al ah kS!oh||pK a3>oh mz||(pK a3==oh mz&&pK ae<oh->nM kS oh)aD.bQ=lx aD.bQ,oh mz);oh=ah;}else aD.bQ=lx aD.bQ,pK a3 md h3(aB&aD kL aB&an kS an.cx)fF(aD,*an.cx);aD.bQ=lx aD.bQ,an.bQ lb bool dW(aB&aD kL kZ la aa ln&dH nD az();kW cN=dH&&dH->gH lj kz cN){ko hp=0 mw&empty:dH->dF lj kS kT cb(pv nM kR fF(aD,{aa,pv lM 0,0,pv a3}ll++hp==2 my;}lZ cN;}b8 bq mu ln&in=mo lc am=mW;kW aK=aa<am kO{aK,b4 mD kT aC lj),b4 mD aK?lB aP lj:lB bb(aa-am)),kT aH lj,aK?0:ot aa-am].ci};}aB c3 mu la lP an kL b8&data,bc&f9 lH fL=-ky),bool iP lG){aB aD lc&in nD ag(ll nX ci>lB bk lt.ba nu kw aD lc b6=an kX ks lc as=nX as.mr ar=nX ar.first lc&aw=an kX lc f3=f9.f3(b6);auto*d9=f3.as;auto*dw=f3.ar;auto*cw=f3.jb oL ln bd=pos?aw[pos-1]:ae lc h9=pos<b6?mh bd,aw ng):0.0;d9 ng=mh bd,as)-h9+(pos<b6?mh as,aw ng):0.0);dw ng=mh bd,ar)-h9+(pos<b6?mh ar,aw ng):0.0);cw ng=mh bd,as)+mh as,ar)-h9+(pos<b6?mh ar,aw ng):0.0 lb kp f4=fL kN dc=ky)kN ef=ky)oL){dc=lO dc,cw ng oJ nX aK){dc=lO dc,ef+dw ng);ef=lO ef,d9 ng lb}mM nX aH-dc nu<f4 kw aD;auto*bC=f3.jV kz!nX aK){bC[b6+1]=ky)ld pos=b6+1;pos-->0;)bC ng=lO dw ng,bC[pos+1]lb mY a lp a<=b6 mQ a kS!po a)kR kp bu=[&]kA lx fL,iP&&oh?oh mz:aD.bQ lb lc f1=nX aK?cw[a]:lO cw[a],d9[a]+bC[a+1]ll nX aH-f1 nu<bu()kR aI ea mD nl);ea.dh(0,a);ea.d4(nX as oJ ea pD)continue kz nX aK){auto af=ea;af.d4(nX ar);mG a,b6 ll af pD)fF(aD,{aa,lM a,a,nX aH-cw[a]}oq{kp ex=oS b lH em){auto af=ea;mG a,b oy d4(nX ar);mG b,b6 ll af pD)fF(aD,{aa,lM a,b,nX aH-em}lb ld b=a;b<=b6 mQ b kS!po b)kR kp em=b==a?cw[a]:d9[a]+dw[b]kz nX aH-em nu<bu()kR ex(b,em lb}lZ aD oY mn cj mu la lP an lH gn kS aa>=lh||ae>=kT oK||oc kQ kO c3 pw,nl,bq pw),kT aO(),gn,true).cx;}nd aB dj mu,bool fr){aB aD kz oc kw aD;kW cN=dW(aD,ac,aa ni data=bq pw);lv f9 nD aO(ni bu=[&]kA fr?aD.bQ:(oh?oh mz:-ky)lb kz cN){mV ae:kT bo())h3(aD,c3 nZ,f9,bu(),!fr)oq{mY ae lp ae<kT oK mQ nM h3(aD,c3 nZ,f9,bu(),!fr)ms aD oY aB eo mu)kA dj pw,true lb mn dv mu)kA dj pw,op.cx;}mn c6::cx mu kS oc kQ;aB aD kz!dW(aD,ac,aa)kw dv pw ll bT ks<=pG ks<kT oK)row lC kT oK ni&data nD az()->bq lj;lv f9 nD aO(nn ln&an nD lu;lv a9=row lt lc bu=oh?oh mz:-ky ll nb by!=an oT||bu<nb bu){nb cx=c3 pw,nl,data,f9,bu,true).cx;nb by=an oT;nb bu=bu;}mM nb cx)fF(aD,*nb cx ms oh;mA a5::eA mu la nM{lv a9=pq lc&an nD lu;og pj ll kT cb(nM){og=c3 pw,nl,pA->bq lj,kT aO(),1e-9,true).cx kz og&&og mz<=pi og pj oq{mV&empty:pA->dF lj)mM pv nf ae kS pv a3>pi og=al{aa,lM 0,0,pv a3};break oY nb bl=an.bl(md a5::eB ne){lv iy=bT[aU*ec+aa].ah;iy pj)mF<ec mQ ae ln&ah=pq.ah kz ah&&(!iy||ah mz>iy mz))iy=ah;}mA a5::ib nT mf aj ln&dH nD az(oJ dH kF ll jm!=dH||ec!=kT oK||aU!=lh){jm=dH;ec nD oK;aU=lh kz ec==lz<ko>nK||aU>lz<ko>nK/(ec+1))pb length_error("positive insertion cache size overflow");bT.oF aU*(ec+1),hl{}lb mV aa:aj kS oc kR dH->gH lj mF<ec mQ nM mM pq.bl!=kT lu oT)eA pw,nM;eB(aa lb mA a5::c2 nT la ae mf aj){mV aa:aj kS oc kR kp bd=cx lj;eA pw,ae ni&dg=pq.ah kz bd&&bd->nf nM eB lj;nI dg&&(!bd||dg mz>bd mz||(dg mz==bd mz&&ae<bd->nM))bT[aU*ec+aa].ah=dg oY bool aJ::h5 nT)kA pA&&lh-kT eY()>=4;}aJ::aJ nT):bj(ac),cA(pH 0 oJ pA kw oR aU kS oc kR kp data=bq pw);lv cn=cA ny;cn mm kT bo()ks nn)cn ou lM c3 nZ,kT aO())lb}aJ::aJ nT mf aj):bj(ac),cA(lh){oG ir(lh,op oR aj kS ir.at lj||oc kR ir ny lF;aU kD aa oJ pA kR kp data=bq pw nn)cA ny ou lM c3 nZ,kT aO())lb}aB aJ::cn ne ku{aB aD kz bj.mj>=0 kw aD kz!bj.az()kw eo(bj,aa);dW(aD,bj,aa)mw&[nl]:cA.at lj)h3(aD,an)kO aD;mA aJ::c2 pd kS!bj.az()kw lc&an=bj.lu oR aU kS bj.mj>=0 kR lv cn=cA ny lc hp=kq lower_bound(cn oV cn kY,lM[]kC gB&a9 la id)kA nb first<id;}ni data=bq(bj,aa);auto dg=c3(bj,aa,nl,data,bj.aO()ll hp==cn kY||hp->first!=nM cn.lE hp,{lM mC dg)})pg hp->second=mC dg lb}kv void eG::ek(kZ mf aT,kU ku{mV aa:aT ln ah=dv pw ll ah&&ah mz>pi kT lE na lb}kv class gA lo cR ov"regret2";mA ek(ab&mf,kU lw;};kv void gA::ek(kZ mf aT,kU ku{oG ia(lh,op oR aT)ia.at lj lF;aJ bn mE aT);nO true){mn ah kN fi=-1 oR aT kS!ia ny kR kp cn=bn.cn lj kz!cn.cx||cn.cx mz<=1e-9 kR kH i2=mS cn.bQ)?cn.cx mz-cn.bQ:cn.cx mz kz!ah||i2>fi||(i2==fi&&cn.cx mz>ah mz)){ah=cn.cx;fi=i2 oY mM!ah||!kT lE ah->na)kw;ia[ah->aa]lG;bn.c2(ah->ae lb}kv void eH::ek(kZ mf g0,kU ku{kW cN=bool(pA ll cN)d0.ib mE g0)kB;;){mn ah kN iW=0 oR g0 kS oc kR kp hR=cN?d0.cx lj:dZ.cx pw ll hR&&hR mz>1e-9&&hR mz>iW){ah=hR;iW=hR mz oY mM!ah kw kz!kT lE ah->na)kF ll cN)d0.c2 mE ah->lM g0 lb}kv aR::aR pc la ht):ai(ag),is(ht),fx(of nG),cv(fx ks,0 kS!ht kK md aR::add nT la lM bool c8 ln&aw nD lu kX kz aw li kw lc k nD oK,n=mW;kJ aj kN aH=0 mw bz:aw){ko aa kz bz<k+n)aa=bz-k;nI oC ai.aS ks)aa=n+pp n pg continue;aj kD aa);aH+=kT aH(aa lb kq sort(aj oV aj kY ni bh=aH-kT lu pE;f0(lM aj,aw,bh,c8 md aR::f0 pd mf aj mf aw lH bh,bool c8 kS!mS bh)||bh<=1e-9 kw;lv iG=fx lt lc hp=iG.find(aj ll hp!=iG kY&&hp->second.bh>=bh kw;iG[aj]=im{aj,aw,bh}kz c8&&iG ks>mN ip(cU a1 la eT kS!eT kK);cl=cr=0 kz kM>=a1 kw pa ai lc n=lB nH,nr=n+lB aS ks,nv=lB dS()lY jy{ko as,ar kN gS,db,iA,h4,co,aH,ci;};mv jy>aj ld r lp r<nr mQ r kS r<n ln&p=lB au oH;aj kD{lB cu(r),lB aP(r),p ow,p.as.db,0,ky),p.co,p.aH,0}oq{kp&p=ot r-n];aj kD{lB dd(r-n),lB bb(r-n),p ow,p.as.db,p.ar.br,p.ar.db,p.co,p.aH,p.ci}lb}struct Arc{ko aa kN ct;};oW Arc>>gO(nv)ld bz lp bz<nv mQ bz kS kM>=a1 kw;lv j0=gO[bz]ld r lp r<nr mQ r ln eE=lB cK[bz*nv+aj oH.as]lc j6=8*lz kP::epsilon()*lx{1.0,pz aj oH.db),pz eE)}ni db=aj oH.db-eE nu+j6 kz db>=-1e-8)j0 kD{r,db}lb kq sort(j0 oV j0 mk ct>b.ct||(a.ct==b.ct&&a.aa<b.aa lb lb cl=cr lp pF iY(nr,0),hQ(nr,0);kJ an,c5;an mm 2*nr);c5 mm nr)mF<fx lN ae kS kM>=a1 my lc now=kM lc hD=a1==cU nK?a1:now+(a1-now)/kE cU::duration::rep>(fx ks-nM;ko gw lp bool eO lG lc iF=[&](auto&&jF la g4 lH hZ lH cM lH aH lH load la e3)->void{mM eO kw kz gw>=eT||((gw&63)==0&&kM>=hD)){eO lF kO;}++gw kz!e3&&aH-cM>pi{auto key=c5;kq sort(key oV key kY);f0(lM key,an,aH-cM,true lb mM!mS hZ)kw ox<c5 lN i ln r=c5 os kz!hQ oH kR kp&q=aj oH ps bX=hZ+lB cK[g4*nv+q.ar]kz!mS bX)||bX>q.h4 nu kR hQ oH lp an kD q.ar);jF(jF,q.ar,lx bX,q.iA)+q.co,cM+lB c0[g4*nv+q.ar],aH,load-q.ci,e3-1);an.pop_back();hQ oH=1 kz eO kw;}mV&arc:gO[g4]kS hZ>arc.ct my lc r=arc.aa kz iY oH kR kp&q=aj oH kz load+q.ci>lB bk lt.ba nu kR kH bX=hZ+lB cK[g4*nv+q.as]kz bX>q.db nu kR kH b9=lx bX,q.gS)+q.co ps iV=cM+lB c0[g4*nv+q.as];iY oH=1;c5 kD r);an kD q.as ll r<n){an kD q.ar ni gk=b9+lB cK[q.as*nv+q.ar]kz mS gk))jF(jF,q.ar,gk+q.co,iV+lB c0[q.as*nv+q.ar],aH+q.aH,load,e3);an.pop_back(oq{hQ oH=1;jF(jF,q.as,b9,iV,aH+q.aH,load+q.ci,e3+1);hQ oH lp}an.pop_back();c5.pop_back();iY oH=0 kz eO kw oY;iF(iF,lM 0,0,0,0,0);cl+=gw;cr+=!eO;}mA aR::hx nT kS&mo!=&ai kF nn kS cv lt==kT lu oT kR cv lt nD lu oT;add mE lM true lb mA aR::hX lq ht kS!ht kK);is=ht kB lv iG:fx)nO iG ks>mN write(nQ ku{out<<"taxi,benefit,route\n" oA mF<fx lN nM mV&[key,bP]:fx lt){out<<ae+1<<','<<bP.bh<<",\"" ox<bP.an lN i kS i)out<<' ';out<<ai.gZ(bP.an os lb out<<"\"\n" oY bool aR::cC(kZ,cU a1 kS&mo!=&ai kF nn)add mE lM op;oW im>>b0(fx ks);mv int>hz(fx ks,-1),cs(fx ks,-1);pF dx(lh,0);kJ hN(lh,0),eh;et=0 kN bZ=0 mF<fx lN nM{lv row=px mw&[key,bP]:fx lt)row kD bP);kq sort(row oV row mk bh>b.bh||(a.bh==b.bh&&a.aj<b.aj lb);et+=row ks;pF ic(lh,0)ox<row lN i){for(auto r:row os.aj)ic oH=1 lT ck=!row os.aj li mR r:row os.aj)ck&=mp nf mi ae ll ck){ko count=0 mZ)count+=mp nf mi ae ll count==row os.aj ks){cs lt=mi i);bZ+=row os.bh oY}mY r lp r<ic lN r)hN oH+=ic oH;}kJ hn(fx ks,0)mF<b0 lN nM mV&bP:px)for(auto nY hn lt+=hN oH-1 mF<b0 lN nM mM!px li)eh kD nM;kq stable_sort(eh oV eh kY,[&](auto a,auto b)kA hn[a]>hn[b];}ni el=[&]kC im&bP){for(auto nY mM dx oH lk kO true;};dK lp aV lG lc fe=[&]kC kJ&gI){kq fill(dx oV dx kY,0)mF<cs lN ae kS cs lt<0||kq find(gI oV gI kY,nM!=gI kY)continue mR r:px[cs lt].aj)dx oH=1 nw e2 lp mv int>gF(gI ks,-1),f2 mR ae:gI){f2 kD cs lt ll cs lt>=0)e2+=px[cs lt].bh nw dA=e2;kq function<void lq lH)>iF=oS fH lH bh on mM fH==gI ks kS bh>dA+pi{dA=bh;f2=gF;lZ nw iR=bh ld d=fH;d<gI lN d)mV&bP:b0[gI oD dA+1e-9 kw lc ae=gI[fH]ox<px lN i ln&bP=px os kz!el(bP)kR gF[fH]=mi i)mR nY dx oH=1;iF(fH+1,bh+bP.bh)mR nY dx oH=0 kz aV my;}gF[fH]=-1 kz!aV)iF(fH+1,bh lb kz kM<a1)iF(0,0)pg aV lF kz dA<=e2+1e-9 lk ox<gI lN i)cs[gI os]=f2 os;bZ+=dA-e2 kO true;}lT a8 lF;nO a8&&!aV){a8 lG ld a lp a<oB a)mY b=a+1;b<oB b)a8=fe({eh[a],eh[b]})||a8;}mY a lp a<oB a)mY b=a+1;b<oB b)mY c=b+1;c<oB c)fe({eh[a],eh[b],eh[c]});kr kP dL(lh,0),gE=dL kN hJ=ky);oW double>>ez(b0 ks);oW ko>>hm(b0 ks)ld hO lp hO<192&&!aV mQ hO kS kM>=a1){aV lF;break nw jP=kq accumulate(dL oV dL kY,0.0);kJ jY(dL ks,0)mR ae:eh)nF f5 lp int gF=-1 ox<px lN i ln&bP=px os kN value=bP.bh mR nY value-=dL oH kz value>f5){f5=value;gF=mi i lb}jP+=f5 kz gF>=0)for(auto r:px[gF].aj)++jY oH;}mM jP<hJ){hJ=jP;gE=dL nw j8=0 ld r lp r<dL lN r)mM dL oH>0||jY oH>1){kH iq=kE double>(jY oH)-1;j8+=iq*iq;}mM!j8||jP<=bZ+1e-7 my ps km=0.9*(jP-bZ)/j8 ld r lp r<dL lN r)dL oH=lx 0.0,dL oH+km*(kE double>(jY oH)-1)lb dL=mC gE)ps ie=kq accumulate(dL oV dL kY,0.0)mR ae:eh){lv fY=ez lt mw&bP:px)nF value=bP.bh mR nY value-=dL oH;fY kD value lb lv gJ=hm lt;gJ lC fY ks);kq iota(gJ oV gJ kY,0);kq stable_sort(gJ oV gJ kY,[&](auto a,auto b)kA fY[a]>fY[b];}lb kq fill(dx oV dx kY,0);kq function<void lq lH lH)>hh=oS fH lH bh lH f8 on mM fH==eh ks kS bh>bZ+pi{bZ=bh;cs=hz;lZ nw iR=bh ld d=fH;d<eh lN d)mV&bP:b0[eh oD bZ+1e-9 kw kN gp=bh+ie-f8 ld d=fH;d<eh lN d ln ae=eh[d]kN f5=0 mR i:hm lt kS ez lt os<=0 my kz el(px os)){f5=ez lt os;break oY gp+=f5;}mM gp<bZ-1e-7 kw lc ae=eh[fH]mR i:hm lt ln&bP=px os kz!el(bP)kR hz lt=mi i)kN ke=f8 mR nY{dx oH=1;ke+=dL oH;}hh(fH+1,bh+bP.bh,ke)mR nY dx oH=0 kz aV my;}hz lt=-1 kz!aV)hh(fH+1,bh,f8 lb kz kM<a1)hh(0,0,0)pg aV lF kz bZ<=kT bY()+1e-9 lk;cL af;af.cS lC kT oK)mF<cs lN nM mM cs lt>=0)af.cS lt=px[cs lt].an lc hM=af.ex(ai oJ hM.bg||pz hM.bY-bZ)>1e-6 kF);ab iw(ai,mC af),kT ep());iw.dM(pA);kT dY(iw)kO true;}kv bool gz::hh(kZ ku{bool a8 lG kB int jN lp jN<2 mQ jN){bool eu lG mw&move:fO){eu=move->cC(ac)||eu;}mM!eu my;a8 lF;lZ a8;}kv bool g8 nA kW cN=bool(pA ll aU ks!=pH 0 lb mM cN)fb.ib mE aU)lT a8 lG kB;;){mn cx oR aU kS oc kR kp move=cN?fb.cx lj:dZ.cx pw ll move&&move mz>1e-9&&(!cx||move mz>cx mz))cx=move;}mM!cx my kz!kT lE cx->aa,cx->lM cx->as,cx->ar)kF);a8 lF kz cN)fb.c2 mE cx->lM aU ms a8;}kv bool fB nA mv kx<double>>iC(lh)ok)iC ny nD aQ lj lT a8 lG kB;;){kx<ko>cx kN bG=1e-9 ok kS iC ny&&*iC ny>bG){cx=aa;bG=*iC ny oY mM!cx my lc ae=kE ko>(kT ap(*cx).ae oJ kT gq(*cx)kF);a8 lF;iC[*cx]pj)ok)mM kT mj==mi nM)iC ny nD aQ(aa ms a8;}kv aq::aq mu):bj(ac),dy lj,b5(0),cZ(0 kS aa>=mW||kT mj<0 kw lc&pk lj;b5 mX;cZ=lm as;gW lF;bJ nD aQ lj lc&an nD bn(b5);bF=bH(mo,b5,an od bv lb ko aq nV}ko aq::cc lq aW lA aW<cZ?aW:aW+2;mA aq::oj ku{kp fM=lO end,cZ ll first<fM)mG mr fM ni d2=lx mr cZ ll d2<end)mG d2+2,end+2 lb nk aq::a3 pd la bx mb ae>=bj.oK kQ kO a3(lM bj.lu,bx lb nk aq::bm mP bx nq)||bx>oE i9{an kX,cZ,cZ+1,nf b5}lc em=bI(pB),lM i9,bx,bj.aC(dy),pB).aP(dy))kO bF-em;}nk aq::a3 mP bx nq)||bx>an kX ks-(nf b5?2:0)kQ pa pB);nC:0 ll hV kS bx&&!po cc(bx-1)+1)kQ;}nI!bJ||!po bx)kQ;aI af mD nl ll pC 0,bx)pg mG 0,bx oy bz(bj.aC(dy)oy bz(lB aP(dy)ll pC bx,ch)pg mG bx,ch oJ af pD kQ kO bm(nl,bx lb mn dl::cG nT kL aq oO 0)ld a lp a<=b6 mQ a ln fQ=b1.bm(nl,a oJ fQ||*fQ nu<nU a3=b1.a3(nl,a ll a3&&(!bw||*a3>bw mz))bw=al{r,lM a,a,*a3};lZ bw;}lb bool dl nW aq oo pK lM fm,0 ll a3)g0.add(al{r,pK lM 0,0 lS r lp r<mW nE):(lQ)ld r lp r<mW nt,dk lb lZ a8;}kv ao::ao mu):bj(ac),dy lj,b5(0),dT(0),c1(0 kS aa<mW||aa>=lh||kT mj<0 kw lc&pk lj;b5 mX;dT=lm as;c1=lm bv;gW lF;bJ nD aQ lj;iZ=b4(mo,kT aC lj);hL=b4(mo,mo.bb(aa-mW)ni&an nD bn(b5);bF=bH(mo,b5,an od bv lb ko ao nV}ko ao::cc lq aW mb aW<dT kw aW kz aW<c1-1 kw aW+1 kO aW+2 mt ao::cp kC ak&an la bx lA!bx||an.ay(pB),cc(bx-1)+1 md ao::oj ku{kp fM=lO end,dT ll first<fM)mG mr fM ni gm=lx mr dT ni he=lO end,c1-1 ll gm<he)mG gm+1,he+1 ni d2=lx mr c1-1 ll d2<end)mG d2+2,end+2 lb nk ao::a3 pd la a la b mb ae>=bj.oK kQ kO a3(lM bj.lu,a,b lb nk ao::bm mP a la b nq)||a>b||b>oE i9{an kX,dT,c1,nf b5}lc em=c4(pB),lM i9,a,b,bj.aC(dy),pB).bb(dy-bj.am()))kO bF-em;}nk ao::a3 mP a la b ku{kp ea=ey(nl,a)kO ea?dG(nl,a,b,*ea):kq nullopt;}kx<aI>ao::ey mP a nq)kQ;nC:0 ll a>ch kQ pa pB ni ci=ot dy-bj.am()].ci kz ci>lB bk lt.ba nu kQ kz hV kS!cp(an,a)kQ;}nI!bJ||!po a)kQ;aI af mD nl ll pC 0,a)pg mG 0,a oy d4(iZ oJ af pD kQ kO af;}nk ao::dG mP a la b kL aI&ea ku{nC:0 ll a>b||b>ch kQ pa pB ll hV kS!cp(an,b)kQ;}nI!po b)kQ;auto af=ea kz pC a,b)pg mG a,b oy d4(hL ll pC b,ch)pg mG b,ch oJ af pD kQ kO bm(nl,a,b lb mn ed::cG nT kL ao oO 0 ni&in=mo lc pk(r)nL dV i9{an od bv,nf bi}lc aC nD aC(r ni fG=lB bb(r-mW);kr kP fw(b6+1),ev(b6+1),er(b6+1),bC(b6+2,ky))oL){fw ng=bU mD lM i9,pos,aC);ev ng=bU mD lM i9,pos,fG);er ng=bI mD lM i9,pos,aC,fG lb mY pos=b6+1;pos-->0;)bC ng=lO ev ng,bC[pos+1])ld a lp a<=b6 mQ a ln f1=lO er[a],fw[a]+bC[a+1]ll b1.cI()-f1 nu<nU ea=b1.ey(nl,a oJ ea)continue ld b=a;b<=b6 mQ b ln em=b==a?er[a]:fw[a]+ev[b]lc fQ=b1.cI()-em kz fQ nu<nU a3=b1.dG(nl,a,b,*ea ll a3&&(!bw||*a3>bw mz))bw=al{r,lM a,b,*a3};}lZ bw;}lb bool ed nW ao oo pK lM fm,0,0 ll a3)g0.add(al{r,pK lM 0,0 lS r=mW;r<lh nE):(lQ)ld r=mW;r<lh nt,dk lb lZ a8;}kv nd struct iK{ko ae;kJ hb;};kJ gr nT la ae ln&in=mo lc&an nD lu lc k mJ;ko eR lp kJ kb{0}ld pos lp pos<an kX lN pos ln bz=an kX ng kz oC m)++eR;nI bz>=k+2*n+m)--eR kz!eR&&po pos+1))kb kD pos+1 ms kb oY bool dE nA++hc pa mo lT a8 lG kB;;){mv iK>cS;cS mm kT bo()ks nn)cS kD{lM gr mE nM})lT eJ lG ox<cS ks&&!eJ mQ i){mY j=i+1;j<cS ks&&!eJ mQ j ln bV=cS os.lM bW=cS[j].ae lc&a nD bn(bV ni&b nD bn(bW ni hr=a kX ks,hs=b kX ks kN bG=1e-9;ko jj=0,jk=0 mw fk:cS os.hb){mV fl:cS[j].hb ln jq=fk?a kX[fk-1]:bV lc jr=fl?b kX[fl-1]:bW kN a3=0 kz fk<hr ln jo=a kX[fk];a3+=mh jq,jo)-mh jr,jo lb mM fl<hs ln jp=b kX[fl];a3+=mh jr,jp)-mh jq,jp lb mM a3<=bG nu kR aI gt mD bV,a);gt.dh(0,fk ll fl<hs)gt.d4(b.dh mD fl,hs-1)oJ gt pD kR aI gu mD bW,b);gu.dh(0,fl ll fk<hr)gu.d4(a.dh mD fk,hr-1)oJ gu pD kR bG=a3;jj=fk;jk=fl oY mM bG>pi{kH jL nD bY(oJ kT c9(bV,jj,bW,jk)kF)mQ fa;gY+=kT bY()-jL;a8=eJ lF oY}mM!eJ kw a8 oY kv kx<aM>a7::dX nT mb!fX kw dz(ac);d5(ac);fI()kO dB li?kq nullopt:kx(dB.top().ah md a7::fI(ku{nO!dB li ln&a9=dB.top(ni ae=og.bt.ae lc aF=og.bt.aa kz d6[aF]&&nb by==ce lt&&nb ca==bK lt[aF].ca my;dB.pop(lb}bool a7::c7::operator()kC be&a kL be&b mb a.pK a3!=b.pK a3 kw a.pK a3<b.pK a3 lc key=[]kC aM&c)kA kq tuple(c.a2,c.bt.aa,c.bt.as,c.bt.ar lb kO key(a.ah)>key(b.ah md a7::cY nT la ae mf a2 mf aF mb aF li kw;lv row=bK lt oR aF){++row ny.ca;row ny.ah pj lb kp&dQ nD lu;kJ aw oR a2 ln pk lj;lv gh=jg ny kz gh.eU!=dQ oT){aw=dQ kX;np);gh.ez.fy(mo,lM aw);gh.aQ=bH(mo,lM dQ od bv)-kT aH lj;gh.eU=dQ.bl(lb mV gU:aF){lv aN=row[gU]ps bu=pl?pl mz:1e-9 lc bt=cj mE gU,lM gh.ez,bu-gh.aQ ll bt&&bt mz+gh.aQ>bu)pl=aM{aa,*bt,bt mz+gh.aQ}oY mV aa:aF)fo(lM aa md a7::fo pd la aF ku{kp&aN=bK lt[aF]kz pl){dB.push({*pl,ce lt,aN.ca}lb mA a7::d5 nT ku{kp bk nD oK,aj=lh kz fV!=&mo||ce ks!=bk||d6 ks!=aj){fV=&mo;ce.oF bk,lz<kV>nK);d6.oF aj,op;bK.oF bk,mv ej>(aj));dB=h1{};jg lC aj lb oW ko>>a2(bk);kJ aF,eg ld aa lp aa<aj mQ aa ln pk lj;kW e4=lm ae<0 kz e4){aF kD aa oJ d6 ny)eg kD aa oq a2[lm ae]kD aa);d6 ny=e4;}mY ae lp ae<bk mQ ae ln bl nD lu.bl(ll ce lt!=bl){ce lt=bl;cY mE lM a2 lt,aF lb nI!eg li){cY mE lM a2 lt,eg lb}mM dB ks>2*bk*aj+32)fD(md a7::fD(ku{dB=h1{}mF<bK lN nM mY aF lp aF<d6 lN aF kS d6[aF])fo(lM aF lb}kx<aM>a7::dz nT ku{kJ e4 mZ)mM mp ae<0)e4 kD r ll e4 li kQ;jg lC lh);kx<aM>cx kN bG=1e-9;kJ aw;ak ez ld a2 lp a2<lh mQ a2 ln pk(a2 ll lm ae<0 kR kp ae mX lc&dQ nD lu;lv row=jg[a2]kz row.by!=dQ oT){row.by=dQ oT;row.h6.mg;row.h6 lC lh lb kH aQ=bH(mo,lM dQ od bv)-kT aH(a2)lT iv lG mw aF:e4){lv a9=row.h6[aF]kz!nb gc||(!og&&bG<nb bu)kS!iv){aw=dQ kX;np);ez.fy(mo,lM aw);iv lF;}nb gc lF;nb bu=bG;og pj ni bt=cj mE aF,lM ez,bG-aQ ll bt&&bt mz+aQ>bG)og=aM{a2,*bt,bt mz+aQ};}mM og&&og mz>bG){cx=og;bG=cx mz oY lZ cx mt a7 pI eV(ah->a2,ah->bt.aa,ah->bt.as,ah->bt.ar)kF);a8 lF;lZ a8;}kv nd bool iQ kC aZ&a kL aZ&b)kA a.a3>b.a3||(a.a3==b.a3&&kq tie(a.mr a.pJ<kq tie(b.mr b.pJ lb nk eb nT la a2 la aF ln pk(a2 ni ae mX lc&an nD lu pa mo;kW aK=aF<mW lc ar=aK?lB aP(aF):lB bb(aF-mW);aL af mD nl oy cF(0,lm as oy e0(kT aC(aF)ll aK)af.e0(ar oy cF(lm as+1,lm bv oJ aK)af.e0(ar oy cF(lm bv+1,an kX ks)kO af.aY(lb}nk dq nT la mB second kS first>=lh||second>=lh kQ kz second<oa kq nJ nS ni a nD ap(oa,b nD ap(second ll a.ae<0||b.ae<0||a.nf b.ae kQ lc gi=eb mE nS oJ gi kQ lc gj=eb mE second,first oJ gj kQ kO kT bn(a.nM pE+kT bn(b.nM pE-*gi-*gj mt cW::c7::operator()kC be&a kL be&b lA iQ(b.ah,a.ah md cW::fo lq bV la bW ku{kp&aN=bK[bV][bW]kz pl)dB.push({*pl,bV,bW,cv[bV],cv[bW],aN.ca}md cW::d5 nT ku{kp bk nD aA(ll ai!=&mo||cv ks!=bk){ai=&mo;cv.oF bk,lz<kV>nK);bK.oF bk,mv ej>(bk));dB=h1{};}kJ a8;oG jO(bk,op mF<bk mQ ae ln bl nD lu.bl(ll cv lt!=bl){cv lt=bl;a8 kD nM;jO lt lF oY mM a8 li kw;oW ko>>aj(bk)ok ln ae nD mj kz ae>=0)aj lt kD aa lb mV ae:a8){mY bS lp bS<bk mQ bS kS bS==ae||(jO[bS]&&bS<nM kR kp bV=lO lM bS),bW=lx lM bS);lv aN=bK[bV][bW]mQ aN.ca;pl pj)mw first:aj[bV]){mV second:aj[bW]ln a3=dq mE nS oJ a3||*a3<=1e-9 kR const aZ ah{lO nS),lx nS),*a3}kz!pl||iQ(ah,*pl))pl=ah oY fo(bV,bW lb}mM dB ks>2*bk*bk+32){dB=h1{}ld a lp a<bk mQ a)mY b=a+1;b<bk mQ b)fo(a,b lb}kx<aZ>cW::dX nT mb!fX){kx<aZ>cx ld a lp a<lh mQ a kS kT ap(a).ae<0)continue ld b=a+1;b<lh mQ b ln a3=dq mE a,b oJ a3||*a3<=1e-9 kR const aZ ah{a,b,*a3}kz!cx||iQ(ah,*cx))cx=ah;}lZ cx;}d5(ac);nO!dB li ln&a9=dB.top(ll nb i6==cv[nb bV]&&nb i7==cv[nb bW]&&nb ca==bK[nb bV][nb bW].ca kw og;dB.pop(ms kq nullopt mt cW pI fW(ah->mr ah->pJ kF);a8 lF;lZ a8 oY int main(ln jC=kM;try{kq ios::sync_with_stdio(op;kq cin.tie(nullptr ni ag=a4::fS(kq cin);a4::du::iH bs;oQ kd=1ULL ps jB=oi kM-jC).count()ps gC=300 ps reserve=gC>2?1.0:gC*0.1;oQ dU=gC-jB-reserve kz oQ dU<=0){a4::cL empty;pv cS lC of nG);a4::ei(kq cout,empty,ag oq{kp aD=a4::du::jU(ag,bs);a4::ei(kq cout,aD.b7,ag);kq cerr oA<<"iterations="<<aD.dR<<" seconds="<<aD.i3<<" stop="<<(aD.d8?"temperature":"time_limit")<<'\n';lZ 0;}catch kC kq exception&iU){kq cerr<<"error: "<<iU.what()<<'\n' kO 1 oY
+#define nx (in,
+#define ny lF r:
+#define nz ls true;}
+#define nA Q mB C H
+#define nB {double
+#define nC lc lu
+#define nD .clear(
+#define nE M ah()
+#define nF G lower_bound(aD lq,aD lH
+#define nG lr mf H f)mh hK(mL hz;}bool dP(mL bI.has_value(B double cF(mL bB;}la b8 Q h
+#define nH namespace bs
+#define nI li lb
+#define nJ ;else
+#define nK while(
+#define nL .first
+#define nM R lB
+#define nN ->K
+#define nO ));
+#define nP mp r)nn
+#define nQ [&](auto a,auto
+#define nR (ac,
+#define nS +1e-8<mo 1e-9,bo?bo nN:1e-9))lw lb
+#define nT aA.
+#define nU (*ag,
+#define nV lc G pair<double lv fF*>>eh nI&[key,c]:dh lS)nB e0=c.Z ny key)e0-=
+#define V )e
+#define nX .reserve(
+#define nY G accumulate(
+#define nZ )==0&&lf>=
+#define oa lk{
+#define ob }void
+#define oc aV S
+#define od lk override;
+#define oe oa mk!hK()||h>=ci.aH
+#define of value=
+#define og mJ in H
+#define oh lr ab&
+#define oi lr mf H
+#define oj C mO C lq+mc bH);C mO C lq+mc ax
+#define ok W mO W lq+mc bH);W mO W lq+mc ax
+#define ol [pos]
+#define om i o i<
+#define on ,eh A);G partial_sort(eh lq,eh lq+count,eh lY first>b nL;}
+#define oo for(
+#define op Q f
+#define oq .E)
+#define os Y lS.bd+1e-8
+#define ot op oa lb n=ag->aw A ls f<n?ag->
+#define ou lG iB=h==b6 e ch=C lJ A-(iB?
+#define ov bP.gJ nU O C);aQ af nU O bP);af.cC(0,C A V cH=af.a0(D!
+#define ow U r F nP<0)lw lb iy=ng nP);dI(r,iy==bg||iy==eq,bg,eq B no
+#define ox namespace{
+#define oy ,bool
+#define oz 1e-9)
+#define oA [f]
+#define oB !M mz J->f,J->O J->ax,J->au nO add nR J->O false
+#define oC lD>
+#define oD Y A
+#define oE lj struct
+#define oF O C
+#define oG mZ second
+#define oH aS am
+#define oI jN+0x9e3779b97f4a7c15ULL*
+#define oJ ;}}
+#define oK ::b8 Q h oa lb size=ci.mj lJ A ls h==b6?size-2:size;
+#define oL .J
+#define oM ::cb(mf oa fH jn e dI=[&]Q r oy all H mV second F nP<0
+#define oN data.
+#define oO ;}mk
+#define oP ,0)
+#define oQ +lU milliseconds(
+#define oR .Z
+#define oS [i]
+#define oT ;class
+#define oU .second
+#define oV ){auto
+#define oW .reset(
+#define oX mp f)nn
+#define oY lE j o j
+#define oZ lJ,mc ax,mc
+#define pa C.mz C lq+
+#define pb cx[f*er+h]
+#define pc lq,
+#define pd aw A
+#define pe G shared_ptr<a9
+#define pf bi(aI&af H mV end
+#define pg lE f o f<mq U f
+#define ph h)
+#define pi ab::
+#define pj )/ll aS::duration::rep
+#define pk ;lc
+#define pl ;la
+#define pm mJ ah
+#define pn const c2 eU(al,Y,E);e3 kg(eU);kg.kd(am);
+#define po ;hm.i0(am);nT fk+=hm.fk z hm.bU){nT bU lW ls
+#define pp h==b6?2:0)||(h!=b6&&!bI)nM nt d6 jQ{C lJ
+#define pq false)
+#define pr mS aX
+#define ps ;auto
+#define pt B else
+#define pu al A
+#define pv ::max(
+#define pw )lw lb
+#define px lf>=am
+#define py [&]Q
+#define pz );af.
+#define pA oo auto r:
+#define pB dd A&&!aZ U
+#define pC L>=k+2*n&&L<k+2*n+
+#define pD b3 nR r V bg=ng mp r).mt(J nn)pw K=b3.K(J
+#define pE assign(
+#define pF [j]
+#define pG G unique_ptr<
+#define pH G sort(
+#define pI M ao(
+#define pJ [c nn]
+#define pK bv.eN(lR<
+#define pL mT C=cP;C=mj
+#define pM lE pos o pos<=b8 U pos
+#define pN <ao(D a>b||b>C A||(aJ&&a!=b)lN e aB=
+#define pO &mF==bg,[&]{nk bo e b8=C lJ A-(h==bg?2
+#define pP U r)dI(r,mG M co(eq)!=cN){gr();lw}jn
+#define pQ D!
+#define pR cv->
+#define pS G istream&
+#define pT ()=default
+#define pU G min<la>(
+#define pV ah.
+#define pW )mk
+#define pX h nd
+#define pY +1e-8
+#define pZ ag->
+#define qa inline double
+#define qb dh A
+#define qc value-=
+#define qd al lS
+#define qe ;}const
+#define qf .data()
+#define qg e1::now(
+#define qh );G iota
+#define qi C.aB nx
+#define qj nl<nr U
+#define qk cK X lR<
+#define ql L-k-2*
+#define qm cx[bT*er+f]
+#define qn lE u o u<nv U u
+#define qo ll lu(jZ S)-1
+#define qp oC bC;bC nX count);nK bC A<count){la
+#define qq >=0
+#define qr =lT
+#define qs bK.
+#define qt =M
+#define qu )continue
+#define qv ;break
+#define qw ;}la
+#define qx bw H a2
+#define qy )nz bool pi
+#define qz ;G mt19937_64 rng
+#define qA ci.ah(
+#define qB (G ostream&out lv
+#define qC iB)bi(af,
+#define qD lE bD o bD<10000 U bD F(bD&7 nZ am)
+#define qE ::cb(mf oa bool aR mi;nK lb J=d7(ac
+#define qF lH,
+#define qG oa lb
+#define qH lE om
+#define qI oa mk
+#define qJ B bool
+#define qK )||
+#define qL ny c oq
+#define qM .bA()
+#define qN .cH()
+#define qO ->hQ nb mR<er U ph mk pb.bp!=M mj.
+#define qP loc=
+#define qQ lJ A
+#define qR bX oL
+#define qS G function<void
+#define qT =nY aV pc aV qF 0.0)
+#define qU z second<first)G swap(oG V a=
+#define qV second D a nn<0||b nn<0||a nn==b
+#define qW oJ mk J==mq||!M g2(J)mm;bC X
+#define qX lF id:aU pW id qq)nT Z+=al[id]oR
+#define qY bX.
+#define qZ mb 0
+#define ra ;};
+#define rb [first]
+#define rc =mo 0.0,
+#define rd mX ab&od mu mutable ic fJ;nk cD oh
+#define re ]pW ds(a8)){hB+=a8 oR qv oO hB<=
+#define rf qI h>=ci.aH()nM ls K(O ci.mj
+#define rg L<k+2*n?(L-k)%n:n+(ql n)%m
+#define rh }bool
+#define ri mV second
+#define rj mu struct
+#define rk oo lb
+#define rl ->second
+#define rm count=
+#define rn br S
+#define ro mn be,
+#define rp .pop_back(
+#define rq G stable_sort(
+#define rr op H h H
+#define rs ;lG aJ=
+#define rt e&in=
+#define ru mb(!M
+#define rv mS aW nb:mS a1(f
+#define rw .h1 nR bC,rng)nJ
+#define rx ::c1::operator()lr bb&a lv bb
+#define ry dj nD)lF&gk:dJ)gk nD);jh o gv
+#define rz D at<C A I fE=C.L(at);fC
+#define rA -iO+(pos<b8?mn au,W ol):0.0
+#define rB hO A>gT I kx ne oR;});hO mO kx)
+#define rC oX<0 R e&qP mp f);b6=ng mc ph
+#define rD b6);bB=bE(nE,b6,C oZ bH B la
+#define rE *0xbf58476d1ce4e5b9ULL;j6
+#define rF D K&&(!bo||*K>bo nN))bo=
+#define rG ,0 D K)jn.add(an{r,J nn mD
+#define rH .ax
+#define rI mc ax
+#define rJ z!
+#define rK lU duration<lu
+#define rL z K<=1e-9 lN;
+#define rM r pW nP qq)b9 X r
+#define rN G min_element(bS pc bS qF kP
+#define rO >nT Z+oz{nT Z
+#define rP I be=at?C.L(at-1):h N
+#define rQ ,b8 D af qM)iZ(aA,{f,O a,
+#define rR z cX[a8]qq I r=ng cX[a8]);
+#define rS lk;nf
+#define rT [a]
+#define rU ax)+mn ax,
+#define rV h:M cB()
+#define rW lk;mu const ab&ci pl dE,b6,
+#define rX oi f):ci(ac),dE nb,b6(0)
+#define rY append(
+#define rZ lg)
+#define sa o bool
+#define sb I&
+#define sc mc h
+#define sd n_ U
+#define se nT bf
+#define sf aO oL
+#define sg =0,
+#define sh =de.
+#define si .bp(
+#define sj Q h H
+#define sk ;}else
+#define sl pk int>
+#define sm ny a8 oq
+#define sn >=aj(qK
+#define so rng()%
+#define sp aR;}lj
+#define sq mh aR mi li;;){
+#define sr dr Q b0,ak g8 H b1,ak g9 mr
+#define ss nC em lr lc bu>&al H Y H E
+#define st (nO
+#define su .K
+#define sv G shuffle(E pc E qF rng
+#define sw qL mk iz S qq&&!hR[iz S]
+#define sx ;oC
+#define sy )mI
+#define sz =nullptr
+#define sA aM lS
+#define sB ==md
+#define sC lr mf
+#define sD bQ->
+#define sE )lw
+#define sF aL::
+#define sG aU lS
+#define sH o}mK
+#define sI ;s.
+#define sJ (ag,
+#define sK O jQ,
+#define sL pk ml>
+#define sM <al mW
+#define sN <count U
+#define sO <Y U
+#define sP pQ af qM nM
+#define sQ *nv+q
+#define sR +lU seconds(
+#define sS (oF,a
+#define sT og h lv d6&C
+#define sU ,qs dx*0.05)
+#define sV >K){K=
+#define sW (gc+1,Z
+#define sX bz empty;empty.cf mv pV
+#define sY nK cq<iS&&ll ml>(hk[cq
+#define sZ mS cp nb:mS df(f-n V au
+#define ta ;lz jM[]={1.0,0.8,1.2
+#define tb D ek<end)ni ek+2,end+
+#define tc ?(L-dt)%n:n+(L-dt-
+#define td B}
+#define te [t]
+#define tf mC p rH.cS mC p rH.ee mC p
+#define tg ]lF&ks:aV)ks*=jp;qZ
+#define th a<pB a)mP b=a+1;b<pB b
+#define ti fj[b]ls x!=y?x>y:a<b
+#define tj value)
+#define tk (mL
+#define tl aX A
+#define tm nx oF
+#define tn B mk
+#define to mS pd
+#define tp mN lc
+#define tq mc bH
+#define tr B lb
+#define ts nT dp
+#define tt qt mj
+#define tu 1e-9 R
+#define tv lW ls
+#define tw aq::
+#define tx =0 N
+#define ty -1)
+#define tz f H mB
+#define tA ,true)
+#define tB G abs(
+#define tC <=b8 U
+#define tD pk lD>>
+#define tE +2*n
+#define tF fE[g7]
+#define tG [Y pF]
+#define tH sE bool j4 lW
+#define tI sb c=al
+#define tJ G max<la>(
+#define tK a3(fe.aT st
+#define tL db[row*n_+
+#define tM :pr[f-n].
+#define tN =W[b4+1];iC+=mn au
+#define tO pa b,cg nb);pa a,aE nb
+#define tP +ao(B rJ aB(a qK!aB(
+#define tQ pos=b8+1;pos-->0;)
+#define tR ;no nw hB=Z lE d=gc;d
+#define tS mm;
+#define tT L)
+#define tU .au
+#define tV F first
+#define tW nI L:
+#define tX e h=
+#define tY nI f:
+#define tZ lJ lq+
+#define ua cb(mf
+#define ub (nr oP
+#define uc mS b7[
+#define ud 1e-9&&(
+#define ue qF nQ b
+#define uf add nR O
+#define ug G fill(
+#define uh aR lW;
+#define ui unsigned long long>
+#define uj pV oD>48
+#define uk nl<mq U
+#define ul nc=pR pu
+#define um *my<lu::epsilon()
+#define un D first<gj)ni mZ gj
+#define uo bk(b nn)qN-*gQ-*gR
+#define up template<
+#define uq )ls
+#define ur pm H
+#define us ;lz
+#define ut (f
+#define uu J nN
+#define uv N of
+#define uw mu const az
+#define ux a H b
+#define uy aH()
+#define uz c7 Q b0 H fT H b1 H
+#define uA tp lc eF>>bL mN iK dH
+#define uB a8 qG ul z a8>=nc R
+#define uC ,n=ao(),m=pZ tl e
+#define uD ),p rH.cS,p rH.ee,
+#define uE .aF
+#define uF lm<
+#define uG =mo
+#define uH )lx
+#define uI -1]
+#define uJ =1;
+#define uK cu Q O ak&eu mr K
+#define uL mh hz mi;nf bI N bB
+#define uM H tz,ly aG lk ra na
+#define uN 31 nZ bt mm e J=bG
+#define uO F aZ R U ef z(ef
+#define uP oJ mk cJ==nc+n_ R
+#define uQ dH lV sb bX=dH.top
+#define uR );bs::eE(G cout
+up class T,class P>void hJ(lc T>&fq,P jI){fq mO G remove_if(fq pc fq qF jI),fq lH B inline la hA Q tj lx value?my<ui::digits-__builtin_clzll(ll ui(tj):0;}nH{struct iX nB cS tx ee sH kX nB bd sH ju nB aF o iX ax N dw sH kz nB aF tx dq o iX ax;iX au N dw sH az{lc kX>Y pk ju>aw pk kz>aX sx fA;nC b7;nC es pl gG tk oD+2*(pd+tl B la iH Q L mL fA lV?L+1:fA[L]qw cp Q i mL oD+i qw aW Q i mL oD+pd+i qw df Q j mL oD+2*pd+j qw a1 Q j mL oD+2*pd+tl+j nw jq Q u H v mL b7[u*gG()+v]nw cH Q u H v mL es[u*gG()+v]oJ;}nH{struct hM{bool bA mi N c3 o G string kY;}mK bz{lc lD>>cf;hM fw pm lk ra}nH{hM bz::fw pm qG n=pV pd,m=pV tl e dt=pV oD pk bool>b9(n+m,pq N c3=0 lE k o k<dt U k){la be=k tW cf[k]){c3-=pV cH(be,L D L<dt+n)b9[L-dt]lW nJ mk L>=dt tE&&L<dt tE+m)b9[n+L-dt-2*n]lW;be=L oJ mP om n+m U i pW b9 oS)c3+=i<n?pV aw oS uE:pV aX[i-n]uE ls{true,c3,{}}oJ nH{az gq(pS in sy jR qB az&ah B nH{ox class dU{pS j7;G array<char,65536>hk{}pl cq sg iS o G string d3 mh ke(){iS=ng j7.rdbuf()->sgetn(hk qf,hk A nO cq=0 ls iS!=0;}public:explicit dU(pS ed):j7(ed){}G string_view fE(){d3 nD)li;;F cq==iS&&!ke()R{};sY])<=' ')++cq z cq<iS tS}oo;;I ha=cq;sY])>' ')++cq nt G string_view jH(hk qf+ha,cq-ha D cq<iS F d3 lV R jH;d3.rY jH qf,jH A uq d3;}d3.rY jH qf,jH A pQ ke()R d3 oJ};up typename T>void read(dU&ed,T&value oV jr=ed.fE(pQ jr lV&&jr.front()=='+')jr.remove_prefix(1);G from_chars(jr qf,jr qf+jr A,value mM read(dU&ed mr&tj{of G strtod(G string(ed.fE()).c_str(),nullptr td az gq(pS in){dU ed(in)pl k sg n sg m o read(ed,k mC n mC m)nt la v=k+2*(n+m);az ah;pV Y mv k);pV aw mv n);pV aX mv m);pV fA mv v V iG=py tT{mT id=pV fA[L];read(ed,id B mR<k U ph{iG(h mC pV Y lS.bd B mP om n U i){mT p=pV aw oS;iG(pV cp(i nO iG(pV aW(i)tf.dw mC p uE B mP j o j<m U j){mT p=pV aX pF;iG(pV df(j nO iG(pV a1(j)mC p.dq tf tU.cS mC p tU.ee mC p.dw mC p uE B oC h6(v)lE L o L<v U tT h6[pV iH(tT uI=L lF*eU:{&pV b7,&pV es}){eU->resize(v*v)lE u o u<v U u)mP w o w<v U w)read(ed,(*eU)[h6[u]*v+h6[w]]mU ah oJ nH{bz jX(pS in lv az&ah sy eE qB bz&bZ lv az&ah B nH{void eE qB bz&bZ lv az&ah I gC=bZ.fw(ah);out<<G setprecision(17)<<gC.c3<<'\n' nI&C:bZ.cf){out<<C A tW C)out<<' '<<pV iH(tT;out<<'\n' oJ oE bV{la first sg g7 tx duration tx hI=-rZ N bj=rZ N cH tx bR sg dZ sg dY sa bA lW ra bV b5 ur tT;bV kG pm lv bV&k2 lv bV&k0)oT ak lX ak pT;ak ur pX C sy gJ ur pX C sy clear(sy cO lr ak&de);bV dn ur mV g7 lk mh aB ur ba lk N cH tk jh;}ly bp tk gv qe oC&W tk ef;}mu oC ef pk bV>dj pk lc bV>>dJ N jh o ly gv o}oT aQ lX aQ ur mB bk sy cC Q mV end sy fQ lr bV&eo sy ft Q tT;nf a0(lk;uw&ag pl iF nt ak&fJ;uF bV>dl ra lj ox G atomic<ly>gn{1}N dw og L I k nq z L<k tE R mS aw[(L-k)%n].dw ls pr[(ql n)%m].dw nw jj og L I k nq z L<k tE R 0 e j=(ql n)%m ls L<k tE+m?pr pF.dq:-pr pF.dq oJ bV b5 og tT{bV s sI bj=my<lu pv);s nL=s.g7=L;s nm=dw nx L V k nq nt iX*h0 sz z L<k+n)h0=&mS aw[L-k]rH nJ mk pC m)h0=&pr[ql n]rH nJ mk L>=k tE+m)h0=&pr[ql n-m]tU z h0){s.hI=h0->cS+s nm sI bj=h0->ee;}s.bR=jj nx tT sI dZ qr 0.0,s.bR)sI dY rc s.bR uq s;}bV kG mJ in lv bV&a lv bV&b){lz eY=mS jq(a.g7,b nL);bV s;s nL=a nL sI g7=b.g7;s nm=a nm+eY+b nm sI hI uG a.hI+eY+b nm,b.hI)sI bj qr a.bj,b.bj-eY-a nm)sI bA=a.bA&&b.bA&&a.hI+eY<=b.bj sI cH=a.cH+mn a.g7,b nL)+b.cH sI bR=a.bR+b.bR sI dZ qr a.dZ,a.bR+b.dZ)sI dY uG a.dY,a.bR+b.dY uq s;}ak::ak og pX C){gJ tm mM ak::clear(){ef nD);ry o ob ak::cO lr ak&de F this==&de R;ef sh ef;dj sh dj z dJ A<de.dJ A)dJ mv de.dJ A)qH de.dJ mW i)dJ oS sh dJ oS lE i sh dJ A;i<dJ mW i)dJ oS nD);jh sh jh;gv sh gv;ob ak::gJ og pX C F&C!=&ef)ef=C;ry=gn.fetch_add(1,G memory_order_relaxed V size=C A;dj nX size)pl be=h tW C){dj X b5 nx L nO jh+=ro tT;be=L qw f1=0 lE kF uJ kF<size;kF*=2,++f1 F f1==dJ A)dJ.emplace_back();mT gk=dJ[f1];gk mv size)nt la kB=kF*2 lE ha o ha<size;ha+=kB I mid qr ha+kF,size V end qr ha+kB,size D mid>ha){gk[mid uI=dj[mid uI lF i=mid-1;i>ha;--i)gk[i uI=kG nx dj[i uI,gk oS tn mid<end){gk[mid]=dj[mid]lF i=mid+1;i<end U i)gk oS=kG nx gk[i uI,dj oS td mk kF>size/2 mm oJ bV ak::dn og mV g7 qI first==g7 R dj rb e gk=hA(first^g7)-1 ls kG nx dJ[gk]rb,dJ[gk][g7]qJ ak::aB og pos qI pos>ef A lN z pos==0 R true e fl=ef[pos uI,k=mS oD ls fl<k||fl>=k+to;}aQ::aQ og mB bk):ag(in),iF(ph,fJ(bk){ob aQ::cC Q mV end tV==end R;fQ(fJ.dn sJ mZ end ty mM aQ::fQ lr bV&eo){dl=dl?kG sJ*dl,eo):eo;ob aQ::ft Q tT{fQ(b5 sJ tT B nf aQ::a0(qI!dl R 0.0 e&s=*dl us e5=ag.jq(iF,s nL pQ s.bA||e5>s.bj||s.dZ<-1e-8||s.dY>ag.Y[iF].bd pY nM ls ag.cH(iF,s nL)+s.cH;}na aP oT a9 mK e4{int h=-1 pl ax sg bH o}oT ab lX ab pm,bz bZ,pe>bO={}sy cO oh de);bz bZ(lk nt ak&bk Q h lk nt oC&cB tk aD;rh co Q h mL h<aM A&&!sA lJ.empty(B la aH tk pZ oD qe e4&av op mL bm oA qw aj tk bm A qw ao tk pZ pd qw g3(lk N c3 tk dW;}a9&bO tk*da qe pe>&bc tk da nw aF op lk nt az&ah tk*ag qw aE op lk nt me&aT tk cI;ob a3(me dm){cI=mA dm B nf a6 op rS fL rr qx lk mh g2 op)mh ej Q pX E)mh insert rr qx)mh cE op H qx)mh fn Q a5 H aC H qx)mh gt Q ri)mh uz fU);uw*ag;pe>da pk ak>aM sx aD pk e4>bm mK ie{ly d1 o nf K;}tp ie>dD;me cI N dW o oC cP;ak bP mI di Q pX C sy uK sy sr K)pl cg op lk ra na a9 lX struct kk nB*ax N*au N*jT N*kM ra explicit a9 Q E):gM(hC(E)),jd(4*gM){}la jD tk gM-2;}kk gA Q kt oV*data=jd qf ls{data,data+gM,data+2*gM,data+3*gM};}mu static la hC Q E uH 2*E+2 qw gM;nC jd ra na aI lX aI og mB C):in_(in),iF(ph,kh(C){ob dn Q mV end tV<end)rY kh.dn(in_,mZ end ty mM L Q id){rY b5(in_,id)mM eo lr bV&fE){rY fE qJ bA(qI!dl R true e&s=*dl ls s.bA&&in_.jq(iF,s nL)<=s.bj&&s.dZ>=-1e-8&&s.dY<=in_.Y[iF].bd pY;}mu void append lr bV&fE F!dl){dl=fE ls;}mT s=*dl us eY=in_.jq(s.g7,fE nL)us gH=s.bR us gX=s nm us ix=s.hI sI bA=s.bA&&fE.bA&&ix+eY<=fE.bj sI bj qr s.bj,fE.bj-eY-gX);s nm=gX+eY+fE nm sI hI uG ix+eY+fE nm,fE.hI)sI dZ qr s.dZ,gH+fE.dZ)sI dY uG s.dY,gH+fE.dY)sI bR=gH+fE.bR sI g7=fE.g7 qe az&in_ pl iF nt ak&kh;uF bV>dl ra oE d6{const oC&W pl hF sg g5 sa bC mi pl size tk W A-(bC?2:0 B la L Q ba qI!bC R W[ba]z ba<hF R W[ba]z ba<g5-1 R W[ba+1]ls W[ba+2]oJ;qa bE og pX W H dg H b4 I ax=W[dg],au=W[b4]e dV=dg?W[dg uI:h z b4==dg+1)nB iC=mn dV,rU au D b4+1<W A I kA tN,kA)-mn dV,kA mU iC;}lb gO=W[dg+1]e e8=W[b4 uI N iC=mn dV,rU gO)-mn dV,gO)+mn e8,au D b4+1<W A I fI tN,fI)-mn e8,fI mU iC;}qa bY sT H at H L rP fC=ro L rz+=mn L,fE)-ro fE mU fC;}qa bF sT H at H ax H au rP fC=ro rU au rz+=mn au,fE)-ro fE mU fC;}qa cZ sT H dg H b4 H ax H au F dg==b4 R bF tm,dg,ax,au uq bY tm,dg,ax)+bY tm,b4,au B lj pi ab mJ in,bz bZ,pe>bO):ag(&in),da(bO?mA bO):G make_shared<a9>(to+pr A)),aM(mS oD),bm(to+pr A),dD(bm A){aD nX mS oD V gC=bZ.fw(in);dW=gC.c3 lE k o k<bZ.cf mW k pW!bZ.cf[k]lV)di(k,bZ.cf[k]mM pi cO oh de F this==&de R mR<aM mW ph mk sA si)!=de.sA si))sA.cO(de.sA);aD nX aH st aD sh aD;bm sh bm;dD sh dD;cI sh cI;dW sh dW;}bz pi bZ(oa bz aA;nT cf mv pZ oD)nI h:aD)nT cf lS=mj lJ ls aA qe ak&pi bk Q h oa static const ak empty ls h<aM A?sA:empty qw pi g3 tk G count_if(bm pc bm qF[](lb&av uH av nn qq;}B double pi aF ot aw oA uE:pZ aX[f-n]uE qw pi aE ot cp nb:pZ df ut-n B la pi cg ot aW nb:pZ a1 ut-n mM pi di Q pX C sb in=*ag e n=to,m=pr A,dt=mS oD tW mj lJ I f=L<dt tE tc 2*n)%m;bm oA={};}mT jY=sA;lG fB=co(h D C lV F fB){jY nD);aD mO nF,ph td else{jY.gJ tm pQ fB)aD.mz nF,ph,h B mP p o p<C mW p I L=C[p]rs L<dt tE e f=aJ tc 2*n)%m mw p oJ nf pi a6 op qG qP av ut D sc<0 nM tX ng sc V&fh=mj;mT bX=dD oA z qY d1==fh si)R qY K e size=fh qQ;aI af nU O fh);ni 0,rI);ni rI+1,tq);ni tq+1,size);qY d1=fh si);qY K=af qM?nf(bE nU O fh oZ bH)-aF nb):lB ls qY K;}nf pi fL rr ux qI f sn av nb nn qq||h>=uy nM e&el=mj e size=el qQ rs f<pZ pd z a>b||b>size||(aJ&&a!=b qK!el.aB nU a qK!el.aB nU b)nM rJ aJ&&pZ aX[f-pZ pd].dq>pZ os nM;aI af nU O el);ni 0,a pz L(aE nb pQ aJ)ni a,b pz L(cg nb);ni b,size sP nt d6 jQ{el lJ}e cH=aJ?bF nU sK a,aE nb,cg nb):cZ nU sK a,b,aE nb,cg nb uq aF nb-cH;rh pi g2 op I K=a6 ut pQ K lN e qP av nb tX ng mc ph;pL lJ;oj);dW+=*K;di(oF qy ej Q pX E F h>=aH(qK E lV lN e&old=mj pk bool>ge(old qQ,pq N gU=0 tY E F f>=aj()lN e qP av ut D sc!=md ph||ge[rI]lN;ge[rI]=ge[tq]lW;gU+=aF ut B aQ af nU O old);mT C=cP;C nD)lE first o first<old qQ;F ge rb){++first;lw}auto end=first+1;nK end<old qQ&&!ge[end])++end;af.cC(mZ end);C.mz C qF old tZ mZ old tZ end);first=end;}lb i7=af.a0(pQ i7 lN;dW+=old qN-*i7-gU;di(oF qy insert rr ux I K=fL ut,O a,b pQ K lN;pL lJ;tO);dW+=*K;di(oF qy cE op H ux F f sn av nb nn<0 lN tX ng av nb nn V h9=mj qN;pL lJ e qP av nb;oj)rs f pN py ba F!ba R true e fl=C[ba uI,k=pZ oD ls fl<k||fl>=k tP b)lN rJ aJ&&pZ aX[f-ao()].dq>pZ os lN;tO);ov cH lN;cu(O bP,h9-*cH qy fn Q a5 H aC H ux F a5 sn aC sn av(a5)nn<0||av(aC)nn qq lN e qP av(a5 V h=ng sc V h9=mj qN;pL lJ;oj)rs aC pN py ba uH!ba||C[ba uI>=uy tP b)lN;pa b,cg(aC nO pa a,aE(aC nO ov cH lN us K=aF(aC)-aF(a5)+h9-*cH rL cu(O bP,K)nz void pi uK I k=uy uC hW=py tT lx rg ra mT jY=sA tW jY lJ)bm[hW(tT]={};lG fB=!jY lJ lV;lG hN=!eu lJ lV z fB!=hN I iW=nF,h D hN)aD.mz iW,ph nJ aD mO iW B G swap(jY,eu pQ hN)jY nD)lE p o p<jY lJ mW p I L=jY lJ[p],f=hW(tT mw p;}dW+=K;rh pi gt Q ri tV sn second>=aj()lN qU av(first),b=av(qV nn lN e hS=py a5 H aC I qP av(a5)ps W=bk(mc ph lJ;ok V a2=aC<ao()?rI:tq-1;W.mz W lq+a2,cg(aC nO W.mz W lq+rI,aE(aC)uq W;}e f2=hS(oG),f3=hS(second,first);ak g8 nU a.O f2),g9 nU b.O f3);aQ fa nU a.O g8),fb nU b.O ns bk(a nn)qN+uo rL dr(a.O mA g8),b.O mA g9),K qy uz fU F b0==b1||b0>=aH(qK b1>=uy lN e&jl=bk(b0 V&jm=bk(b1 D fT>jl qQ||fU>jm qQ lN nI&loc:bm F(sc sB b0)&&rI<fT&&tq>=fT qK(sc sB b1)&&rI<fU&&tq>=fU)lN;}oC f2(jl lJ pc jl tZ fT);f2.mz f2 qF jm tZ fU,jm lJ lH)sx f3(jm lJ pc jm tZ fU);f3.mz f3 qF jl tZ fT,jl lJ lH);ak g8 nU b0,f2),g9 nU b1,f3);aQ fa nU b0,g8),fb nU b1,ns jl qN+jm qN-*gQ-*gR rL dr(b0,mA g8),b1,mA g9),K)nz void pi sr K){oo mT loc:bm pW sc sB b0 qK sc sB b1))qP{}e assign=py O ak eu oV iW=nF,ph;lG hN=iW!=aD lH&&*iW==h z eu lJ lV F hN)aD mO iW);sA nD pt{mk!hN)aD.mz iW,ph;sA=mA eu tr k=pZ oD uC&W=mj lJ lE p o p<W mW p I L=W[p]e f=rg mw p oJ;pE b0,mA g8 nO pE b1,mA g9 nO dW+=K;}oE js{ly ki=1 N dx=59.0 mh bv lW mh d8 lW mh eK lW mh hs lW mh d4 mi pl eH=1000000 pl eX=400 pl ht=400 mh f8 lW N fY=2 N gg=140 pl eB=2 pl eR=3 mh eZ lW ra oE jv{bz bZ ra jv kL pm lv js&bK);na c0 lX virtual~c0 pT;virtual oC np&rng lk o};na jt lX virtual~jt pT;virtual bool ua lk o};na hf lX void eN(pG jt>move){gm X mA move)qJ hZ(mf,nj am=nj pv)lk;mu lc pG jt>>gm ra lj using aS=nj mK an{la f sg h sg ax sg au tx K sH dL{nk dp N en=-lg B mK e2{la h tx K sH cz{bool aJ;bV ax,au N aF,dq;}oT aP lX explicit aP pm)mh hQ op,oH=aS pv)lk mh fv op mL ga oA qe lc e2>&fR op mL fu oA qe cz&dQ op mL cL oA;}uw*ag tp lc e2>>fu mN oC hU tp bool>ga pk cz>cL ra me ct oh fW,oH);nk bG oi tz C mr gW=-lg nO class aN lX const nk&dp oh H f sy jJ oh nd E sy g1 oh H pX E)nt nk&dp op mL qm oL;}rj jS{ly bp=my<ly>pv);nk J ra me i4 pl er sg bT o lc jS>cx mI gF oh sy d0 oh H f H ph mI d2 op B;na ic lX up class kW>nk get rr aH,ly aG,ly cQ mr cn oy dv,kW&&k1 F cx A<=f)cx mv f+1);mT row=cx oA z row A<aH)row mv aH);mT bX=row lS;lG hr=qY hK&&qY cQ==cQ&&qY dv==dv;lG kT=hr&&(dv?qY aG==aG:(qR.has_value(qK cn<=qY cn)pQ kT){qR=k1();qY aG=aG;qY cQ=cQ;qY cn=cn;qY dv=dv;qY hK lW oO qR&&!dv oV iY=*qR;iY su+=cn-qY cn ls iY;no qR;}rj jS{nk J;ly aG sg cQ tx cn sa dv mi mh hK mi;}pk lc jS>>cx ra oE dR{an J pl bg;}oT fH lX void add(nk J H bg F J&&uu>oz gm X{*J,bg}B uF dR>dp(qI gm lV nM ls*G max_element(gm pc gm lY J su<b oL su;}mM fK Q ri){hJ(gm,[&](lb&move uH move.bg==first||move.bg==second||move oL nn==first||move oL nn==second;}mM clear(){gm nD B mu lc dR>gm ra na aq lX aq nG rS K sj qx rS K nA qx rS bh nA qx lk;uF aI>eS nA bw rS dM nA qx lv aI&ew rW d5,cY uL o bV jG,il pl cd Q ba lk mh cm lr ak&C H bq lk mI pf lk;}oT dy rd lv aq&uM as lX as nG rS K sj bq rS K nA bq rS bh nA bq rW cV uL o la cd Q ba lk mI pf lk;}oT cG rd lv as&uM gw mX mf od mu mutable aN fJ mN oC bT ra na eM mX mf od};na dK mX mf od mu};oE bN{la a5;an aY N K;}oT a7 final:public jt lX a7 pT mh cb(ab&od uF bN>d7 oh lk;rj Row{ly fm o ak dO N a6 o}tp Row>kK mK eF{ly ca o uF bN>J;}mK bb{bN J;ly d1,ca;}mK nh az*gs sz tp ly>ce tp bool>et uA mI cU oh H pX a5 nd aC lk mI ep oh lk mI gd(lk mI fX sj aC lk mI f9(lk ra oE bl{la oG N K ra nf eJ oh H ri)oT cA final:public jt lX cA pT mh cb(ab&od uF bl>d7 oh lk;rj eF{ly ca o uF bl>J;}mK bb{bl J pl b0,b1;ly jO,jP,ca;}mK nh az*ag sz tp ly>cr uA mI ep oh lk mI fX Q b0 H b1 lk ra na aL lX explicit aL ur jC=200,ly ki=1 sy ia sC sy h5(oH H ex=50000 oy gY mi);bz ff(oH,me dm={}lv bz*cc sz oy kf lW oy ij lW H ei=2 oy dN lW H eI=3 sy dF(oH lv ab&fe sy iD Q jC)mh fD tk cR==qb;rh ua,oH);rj fF{oC E,C N Z sH Arc{la f N bW;}nt az&ag pl gT,eP sg ef sa aZ mi pl cR o nC fZ;ly jN uJ ly ip o ly fP o ly eG o lc G map<oC,fF>>dh pk ly>cr pk lc Arc>>kH;nC fc mh c9 mi;ly dz o mutable ly eW=my<ly>pv)mN nC eA mI add oh H O bool ck sy fs Q pX E nd C mr Z oy ck);nC c6(oH=aS::min()lk ra lj jv kL pm lv js&bK){using e1=lU steady_clock e ha=qg V am=ha+lA(qs dx nO lz hG=qs eK?1.0:0.0 e fo=am-lA(lT hG sU nO hf bv;pK eM>st pK gw>st pK cG>st pK dy>()D qs d8 oV move=lR<dK>();bv.eN(mA move)B pK cA>st pK a7>st sX oD);ab c5(ah,mA empty)V hD qr am,qg)+lA(lT 1.0 sU)nO c5.a3(ct(c5,hD nO pG aL>bQ mh d4=qs d4 z qs eK){bQ=lR<aL>(ah,qs eX,qs ki D qs hs||qs d4 I g6=qg V f0 qr fo,g6+lA(lT qs fY,qs dx*0.2))nO sD h5(f0,qs eH);lG cy=sD fD();lG jL=qs f8&&(!cy||uj D jL I jg=qg V gL=lA(lT 3.0 sU)V cj qr fo-gL,jg+lA(qs gg)nO la kr o do{lb hy=uj?lT cj,nu(6)):cj e cc=c5.bZ();ab ir(ah,sD ff(hy,c5.aT(),&cc,qs bv,qs d8,qs eB,qs eZ,qs eR),c5.bc st ir.a3(c5.aT st c5.cO(ir D uj&&nu(2)<cj I iv qr cj,nu(6 nO sD cb(c5,iv)U kr;qZ z nu(2)<cj I fO qr cj,nu(3)D kr%2)sD dF(fO,c5)nJ sD h5(fO,qs eH tA;qZ rJ(kr%2))qZ;qZ oJ}nK uj&&qg)<cj);d4 lW oO cy){d4 lW rJ jL)sD iD(lT qs eX,qs ht)B qZ oJ ab dp=c5 z bQ)sD ia(c5 D bQ){sD cb(dp,am);qZ z d4&&qs bv&&qg)oQ 500)<am I h2=dp.c3();bv.hZ(dp,am D dp.c3()>h2+oz sD ia(dp);qZ oJ jv aA;nT bZ=dp.bZ(uq aA;}na f5 ms f5::np&rng oa oC E(mq qh(E pc E lH oP;sv)sx bC;bC nX count)tY E F bC A>=count mm z M g2 nb)bC X f mU bC;}na gN ms gN::np&oa qp J=mq N c4=-rZ uk r I K qt a6(r D K&&*K>c4){J=r;c4=*K qW J mU bC;}na fG ms fG::np&rng oa oC b9 uk rM D b9 lV R{}e j0=b9[so b9 A]rt nE e hh qt aE(j0 V cS=py r uH r<to?mS aw S rH.cS:pr[r-to]rH.cS ra lz iL=cS(j0);qp J=mq N f7=rZ uk r F nP<0||!M a6(r)pw L qt aE(r)us dC=mS jq(hh,tT+mS jq(L,hh)+tB iL-cS(r)D dC<f7){f7=dC;J=r qW J mU bC;}lj ox cz fg og f I n=to rs f<n e ax=aJ?sZ=aJ?rv-n uq{aJ,b5 nx ax),b5 nx au),aJ?mS aw oA uE tM aF,aJ?0 tM dq}oJ aP::aP pm):ag(&ah),fu(pV pd+pV tl),hU(fu A oP,ga(fu A,pq,cL(fu A){mP f o f<cL mW f)cL oA=fg(ah,f qJ aP::hQ op,oH qI ga oA R true rt*ag e n=to e ax=f<n?sZ=f<n?rv-n V aF=f<n?mS aw oA uE tM aF nt ak empty;mT fR=fu oA lF&h=hU oA;h<mS Y mW h F am!=aS pv)&&px lN;aQ af nx O empty pz ft(ax pz ft(au V cH=af.a0(D cH)fR X{O aF-*cH}B pH fR pc fR lY K>b su||(a su==b su&&a nn<b nn B);ga oA lW nz me ct oh fW,oH oV dm=G make_shared<aP>(fW.ah())lE f o f<fW.aj()U f F!dm->hQ ut,am)tS no dm;}ox void iZ(dL&aA,an J F!ts||J su>ts nN||(J su==ts nN&&J nn<ts->ph F ts)nT en uG nT en,ts nN);ts=J sk nT en uG nT en,J su B cz dQ oi f sb in=nE e ao=pI)rs f<ao ls{aJ,b5 nx M aE nb),b5 nx aJ?rv-ao)),M aF nb,aJ?0:pr[f-ao].dq};}dL hY oi tz C lv cz&data,a9&ku mr gh=-rZ oy jx mi){dL aA e&in qt ah(D oN dq>mS os R aA e b8=C qQ e ax=oN ax.mZ au=oN au nL e&W=C lJ e gA=ku.gA(b8)ps*ev=gA rH ps*dA=gA tU ps*cs=gA.jT pM I be=pos?W[pos uI:h e iO=pos<b8?ro W ol):0.0;ev ol=ro ax)-iO+(pos<b8?mn ax,W ol):0.0);dA ol=ro au)rA);cs ol=ro rU au)rA tr gE=gh N dc=rZ N eC=rZ pM){dc qr dc,cs ol pQ oN aJ){dc qr dc,eC+dA ol);eC qr eC,ev ol td mk oN aF-dc pY<gE R aA ps*bx=gA.kM rJ oN aJ){bx[b8+1]=rZ lE tQ bx ol qr dA ol,bx[pos+1]B mP a o a tC a F!qi a)pw fp=[&]lx mo gh,jx&&ts?ts nN:nT en B e gy=oN aJ?cs rT:lT cs rT,ev rT+bx[a+1]D oN aF-gy pY<fp()sE aI ew tm);ew.dn(0,a);ew.eo(oN ax pQ ew qM qu z oN aJ oV af=ew;af.eo(oN au);ni a rQ a,oN aF-cs rT}pt{lb fw=py b mr fC oV af=ew;ni a,b pz eo(oN au);ni b rQ b,oN aF-fC}B lE b=a;b tC b F!qi b)pw fC=b==a?cs rT:ev rT+dA[b]z oN aF-fC pY<fp()sE fw(b,fC td no aA oJ nk bG oi tz C mr gW F f>=mq||h>=M aH(qK oX qq nM ls hY nR f,oF,dQ nR f),M bO(),gW tA.dp;ob aN::d0 oi f H ph{mT bX=pb e&C tt;qR oW D M co(ph){qR=hY nR f,oF,M aT()->dQ nb,M bO(),1e-9 tA.dp z qR&&qR nN<=oz qR oW pt{rk&empty:M aT()->fR nb pW empty nn==h F empty su>oz qR=an{f,O 0,0,empty su}qv oJ qY bp=C si mM aN::d2 op){mT jf=qm oL;jf oW)mR<er U h sb J=pb oL z J&&(!jf||uu>jf nN))jf=J;}ob aN::gF sC sb dm qt aT(D i4!=dm||er!=M aH(qK bT!=mq){i4=dm;er qt uy;bT=mq;cx.pE bT*(er+1),jS{}td const nk&aN::dp oi f){gF(ac D oX qq){qm oL oW uq dp ut B i4 qO bp()){d0 nR f,h B d2 nb ls dp ut mM aN::jJ sC nd E){gF(ac V&dm=i4 tY E F oX qq sE dm qO bp())d0 nR f,ph;d2 ut B ob aN::g1 oi pX E){rk f:E F oX qq pw be=dp nb;d0 nR f,h V&eu=pb oL z be&&be->h==ph d2 nb nJ mk eu&&(!be||eu nN>be nN||(eu nN==be nN&&h<be->ph))qm oL=eu oJ oE bu{la h sx E N Z;}mK cW{lc int>bf;nC bM N Z sg hX o la W sg fk sa bU mi mh fv mi ra ss,oH)mh bJ();cW dk mY,oH oy iU lW);cW dT mY,oH,ly ki=1 lv nC&bM={});lj sF aL ur jC,ly ki):ag(ah),gT(jC),fZ(pV oD,-rZ),jN(ki),dh(pV oD),cr(qb oP{ob sF add oi O bool ck sb W tt lJ z W lV R e k qt uy,n=pI)sx E N aF=0 tW W){la f z L<k+n)f=L-k nJ mk pC ag.tl)f=n+ql n nJ lw E X f);aF+=M aF ut B pH E pc E lH V Z=aF-M mj qN;fs(O E,W,Z,ck mM sF fs Q pX E nd W mr Z oy ck F!mQ Z qK Z<=tu;mT hO=dh lS z ck&&hO A>=gT&&Z<fZ lS R e jB=hO.find(E D jB!=hO lH&&jB rl oR>=Z R;hO[E]=fF{E,W,Z}U dz rJ ck)fZ lS=-lg D ck&&rB;fZ lS ne oR;})rl oR;}ob sF h5(oH H ex oy gY){cR=0 z px R rt ag e n=to,nr=n+pr A,nv=mS gG()ps aV=gY?c6(am):nC ub ta}z gY I jp=jM[eG%3 tg;}lb hp=oI eG++mK kl{la ax,au N hI,ee,ji,hn,dw,aF,dq;}pk kl>E qj r F r<n sb p=mS aw S;E X{mS cp(r),mS aW(r uD 0,rZ,p.dw,p uE-oc,0}pt{lb&p=pr[r-n];E X{mS df(r-n),mS a1(r-n uD p tU.cS,p tU.ee,p.dw,p uE-oc,p.dq}td lb m=pr A rJ c9 I eV=lf e gp qr 0.6,0.25*rK(am-eV).count()V eg=eV+lU duration_cast<aS::duration>(rK(mo 0.0,gp)nO lc lc double>>is;nC jc(nv,lg nO lc ml>gu(nv oP pl gi=0 lE l o l<pU 8,nv)U l F lf>=eg tS nC dC(mS b7 lq+gi*nv,mS b7 lq+(gi+1)*nv);dC[gi]o lc ml>iV(nv oP mh fv lW lE iJ o iJ<nv U iJ F(iJ&63 nZ eg){fv mi qv qw v=nv uv rZ qn pW!iV[u]&&dC[u]<tj{v=u;of dC[u]oO v==nv tS iV[v]=1 qn pW!iV[u])dC[u]qr dC[u],value+uc v*nv+u]tn!fv tS gu[gi]=1 qn)jc[u]qr jc[u],dC[u]);is X mA dC))N i2=-1 qn pW!gu[u]&&jc[u]>i2){i2=jc[u];gi=u oJ nC dB(nv*m oP lE L o L<nv U tT mP r o r<m U r){mT jk=dB[L*m+r]e kQ=mS a1(r)nI&d:is){lz kp=1e-8+64 um*nv*mo{1.0,d[kQ],d[L]});jk uG jk,d[kQ]-d[L]-kp td qZ pk lc Arc>>fE(nv)lE L o L<nv U L F px R;mT kS=fE[L]qj r I eY=uc L*nv+E S rH]e kp=8 um*mo{1.0,tB E S.ee),tB eY)}V ee=E S.ee-eY pY+kp z ee>=-1e-8)kS X{r,ee}B pH kS pc kS lY bW>b.bW||(a.bW==b.bW&&a.f<b.f B B kH=mA fE);fc=mA dB);c9 lW;qZ;}lb&fE=kH e&dB=fc;cR o lc ml>jF ub,hV ub sx C,b9;C nX 2*nr);b9 nX nr)mR<dh mW h F px mm e now=lf e bt=am==aS pv)?am:now+(am-now pj>(qb-ph pl fz o G map<oC,G pair<double,fF>>bS N g0=-rZ pl fN=ex ps e9=bt mh ea mi,gD mi pl c8=0 nI&arc:fE lS sb q=E[arc.f]z q.dq<=mS os&&uc h sQ rH]<=q.ee pY)++c8;}lb hL=[&](auto&&ky H g7 mr jq mr cH mr aF mr load H fy)->void{mk ea R z fz>=fN||((fz&63 nZ e9)){ea tv;}++fz ny b9 pW hV S&&jq+dB[g7*m+r-n]>E S.hn pY R rJ fy&&aF-cH>ud gY?(bS A<gT||aF-cH>=g0):(dh lS A<gT||aF-cH>=fZ lS))oV key=b9;pH key pc key lH pQ gY)fs(O key,C,aF-cH tA nJ{lb e0=aF-cH ps jB=bS.find(key D jB==bS lH||jB rl nL<e0)nB Z=-cH ny key)Z+=r<n?mS aw S uE:pr[r-n]uE;bS[key]={e0,fF{key,C,Z}}z bS A>gT I kP=[](lb&a,lb&b uH a oU nL<b oU nL ra bS mO rN nO g0=rN)rl nL oJ}}mk!mQ jq)R ps rm tF A;ly j6=0 z gY I jU=G partition_point(tF pc tF qF[&](lb&arc uH jq<=arc.bW;});rm ng jU-tF lq);j6=hp+h*0x94d049bb133111ebULL+g7 rE=(j6^(j6>>30))rE^=j6>>27;}lb d9=b9 A,i1=d9+count e ka=i1&&(j6&1)?ng j6%i1):0 qH i1 U i I ko=ka?(i+ka)%i1:i z ko<d9 I r=b9[ko]rJ hV S pw&q=E S us e5=jq+uc g7 sQ tU]rJ mQ e5 qK e5>q.hn pY sE hV S o C X q tU);ky(ky,q tU,mo e5,q.ji)+q.dw,cH+mS es[g7 sQ tU],aF,load-q.dq,fy ty;C rp);hV S=1 z ea R;lw}lb&arc=tF[ko-d9]rJ gY&&jq>arc.bW mm e r=arc.f z jF S pw&q=E S z load+q.dq>mS os sE lz e5=jq+uc g7 sQ rH]z e5>q.ee pY sE lG first=gY&&b9 lV z first I gK=lf z fz>=ex||gK>=bt){gD tv;}fN=fz+tJ 1,(ex-fz)/c8);e9=bt==aS pv)?bt:gK+(bt-gK pj>(c8 B lz im uG e5,q.hI)+q.dw us jA=cH+mS es[g7 sQ rH];jF S uJ b9 X r);C X q rH D r<n){C X q tU V gS=im+uc q rH sQ tU]z mQ gS))ky(ky,q tU,gS+q.dw,jA+mS es[q rH sQ tU],aF+q uE,load,fy);C rp pt{hV S uJ ky(ky,q rH,im,jA,aF+q uE,load+q.dq,fy+1);hV S o}C rp);b9 rp);jF S=0 z first){gD|=ea;ea mi;--c8 sk mk ea R oJ;hL(hL,O 0,0,0,0 oP;cR+=!ea&&!gD nI&[key,c]:bS)fs(O key,c oU.C,c oU oR,false td nC sF c6(oH qG nr=ag.pd+ag.tl z eW==dz&&eA A==nr){qZ ls eA;}lc const fF*>al sx Y lE t o t<dh mW t)rk&[key,c]:dh te){al X&c);Y X t B oC dd(pu qh(dd pc dd lH oP;pH dd pc dd ue uH al rT->Z>al[b]->Z;})sL br ub,f6(qb oP N jk=0 lF j:dd F f6 tG tH ny al pF->E)j4&=!rn rJ j4 sE f6 tG=1 ny al pF->E)rn uJ jk+=al pF->Z;}nC aV ub,cT=aV N dp=rZ lE bD o bD<192 U bD){nC cw(qb oP pk const fF*>dS(qb,nullptr)oY sM j sb c=*al pF uv c oR qL qc oc z value>cw tG){cw tG=value;dS tG=&c oJ lb i0 qT+nY cw pc cw qF 0.0 D i0<dp){dp=i0;cT=aV;}oC jZ ub nI c:dS pW c)pA c->E)++jZ S N kq=0 qj r pW oc>0||jZ S>1 I g=qo;kq+=g*g oO kq==0||i0<=jk+1e-7||!mQ i0)mm e iJ=0.7*(i0-jk)/kq qj r)oc rc oc+iJ*(qo)tn(bJ(qK qb<=96)&&lf oQ 250)<am){lc bu>kj mR<dh mW ph{nV cT S;eh X{e0,&c}tr rm bJ()?eh A:pU 64 on)oY sN j)kj X{O eh pF oU->E,eh pF oU->Z}tr iN qr am,lf sR 2 nO auto hd=em(kj,qb,nr,iN)uv nY hd pc hd qF 0.0)nI&hO:dh)nB cw=0 nI&[key,c]:hO)nB e0=c oR ny key)e0-=hd S;cw uG cw,e0 B value+=cw;}qZ z value<dp)cT=mA hd mU cT;}bz sF ff(oH,me dm lv bz*cc oy kf oy ij H ei oy dN H eI I nr=ag.pd+ag.tl;bz km z cc)km=*cc nJ km.cf mv qb);ab empty sJ km pQ dm)dm=ct(empty,lT am,lf sR 1)nO empty.a3(mA dm nO oC E(nr qh(E pc E lH oP qz(oI ip++)pl hl o ab ac=empty,dp=empty;aN bk;f5 hH;fG hu;gN ib pk pG jt>>cK;qk eM>st qk gw>()pQ dN){qk cG>st qk dy>()tn ij)qk dK>()pQ dN)qk cA>st qk a7>st nK lf<am F hl F hl%8==0||M c3()<dp.c3()*0.995)M cO(dp V bC=tJ 4,M g3()/12 D hl%4==1)hH rw mk hl%4==2)hu rw mk hl%4==3)ib rw mP i sg rm 2+so tJ 2,qb/12);i sN i I h=so qb sx bC ny E pW nP sB ph)bC X r);mb(!bC lV&&!M ej(O bC)td sv)ny E F px mm z nP qq pw J=bk.dp nR r pQ J||uu<=oz lw mb(oB B oo;;F px tS nk J ny E pW nP<0 sb i8=bk.dp nR r D i8&&i8 nN>ud!J||i8 nN>uu))J=i8 oO!J tS mb(oB tn kf&&hl%ei==0&&lf oQ 250)<am){mP jy o jy<eI U jy){bool aR mi oY<cK mW j){aR=cK pF->cb(ac qK aR oO!aR tS}oo auto rV)uf false tn M c3()>dp.c3()+oz{dp.cO(ac);qZ;}++hl;}qZ ls dp.bZ(mM sF dF(oH lv ab&fe oV aV=c6(am)ta}e jp=jM[fP%3 tg e nr=fe.aj(),n=fe.ao(),k=qb qz(oI fP++)pl iw=0 mR<k U h I now=lf z now>=am mm e bt=now+(am-now pj>(k-ph;bz cc;cc.cf mv k);cc.cf lS=fe.mj lJ;nV oc;eh X{e0,&c}tr rm pU 3 on)tD kv{cc.cf lS}oY sN j)kv X eh pF oU->C);ab ac sJ cc,fe.bc st M tK la jb=0 lE bD o bD<48&&lf<bt U bD)nB K=1e-8;nk aY;uF la>a5 sx bn qj r pW nP<0 F(r&uN nR r,O M mj,K+oc D J&&uu-oc sV uu-oc;aY=J;a5 oW td oC b9 qj rM)ny b9 I iR qt a6(r D iR&&*iR+oc sV*iR+oc;a5=r;aY oW);bn nD tn lf>=bt mm e qP mp r)ps W tt lJ;ok);ak dO sJ O W V hi=bE sJ O M mj oZ bH)-M aF(r)lE aC o aC<nr U aC pW mp aC)nn<0 F(aC&uN nR aC,O dO,K-hi-oc+aV[aC]D J&&uu+hi+oc-aV[aC]sV uu+hi+oc-aV[aC];a5=r;aY=J;bn=W oJ}mk K<=1e-8 F++jb>8 tS cc.cf lS=kv[jb%kv A];ab jK sJ cc,fe.bc st jK.tK M cO(jK);b9 nD)qj rM pQ b9 lV){G shuffle(b9 pc b9 qF rng);b9 mv lT b9 A,ng 1+so 3)nO M ej(O b9 B lw}mk a5&&aY I r=aY->f e kQ=r<n?ag.aW(r):ag.a1(r-n);bn.mz bn lq+aY->au,kQ);bn.mz bn lq+aY->ax,M aE(r nO bz af;af.cf mv k pz cf lS=bn;ab aR sJ af,fe.bc st aR.tK M cO(aR pt mk a5){ru g2(*a5)pt ru mz aY->f,O aY->ax,aY->au nO uf pq U iw oJ qZ;ob sF ia sC){rk rV F cr lS==M mj si)sE cr lS tt si);uf true B ob sF iD Q jC){gT=jC;ug fZ pc fZ qF-rZ)lF&hO:dh)nK rB U dz oJ bool sF ua,oH){rk rV)uf pq pk lc fF>>al(qb)sl bf(qb,ty,aU(qb,ty sL br(mq oP sx iq(mq oP,dd;eP tx b2=0 mR<dh mW ph{mT row=qd nI&[key,a8]:dh lS)row X a8);pH row pc row lY Z>b oR||(a oR==b oR&&a.E<b.E B);eP+=row A sL iP(mq oP qH row mW i){pA row oS oq iP S=1 mh c5=!row oS.E lV ny row oS oq c5&=nP sB h D c5){la rm 0 uk r)count+=nP sB h D count==row oS.E A){sG=md i);b2+=row oS oR oJ}mP r o r<iP mW r)iq S+=iP S;}oC h4(qb oP mR sM ph rk&a8:qd)pA a8 oq h4 lS+=iq S-1 mR sM ph mk!qd lV)dd X ph;rq dd pc dd ue uH h4 rT>h4[b];}V ds=[&]lr fF&a8){pA a8 oq mk rn lN nz;ef o aZ mi e iI=lf e fr=dd A>48?lT am,iI sR 2)):am e fM=[&]lr oC&eb){ug br pc br lH oP mR<aU mW h F sG<0||G find(eb pc eb qF ph!=eb lH qu ny qd[sG]oq rn=1 nw fx o lc int>dS(eb A,ty,gz lF h:eb){gz X sG D sG qq)fx+=qd[sG]oR nw dG=fx;qS Q mr)>hL=py gc mr Z uO&63 nZ fr){aZ tv oO gc==eb A F Z>dG+oz{dG=Z;gz=dS tR<eb mW d)rk&a8:al[eb[d]re dG+tu tX eb[gc]qH qd mW i sb a8=qd oS rJ ds(a8)sE dS[gc]=md i)sm rn uJ hL sW+a8 oR)sm rn=0 z aZ tS}dS[gc]=-1 rJ aZ)hL sW B z lf<fr)hL(0 oP nJ aZ lW z dG<=fx+1e-9 lN qH eb mW i)aU[eb oS]=gz oS;b2+=dG-fx nz mh uh nK aR&&!aZ){aR mi lE a o th)aR=fM({dd rT,dd[b]}qK aR;}qZ lE a o dd A<=48&&th)mP c=b+1;c<pB c)fM({dd rT,dd[b],dd[c]});qZ z eP>2000){lc bu>i6 pk G pair<la H>>iu sl cc(aU A,ty mR sM ph mP om qd mW i F sG sB i))cc lS=md i6 A V&c=qd oS;i6 X{O c.E,c oR});iu.emplace_back(O i tr kE=pu>48&&!bJ()?c6():nC{}e eL=pu>48?dT(i6,pu,mq,cc,am,jN,kE):dk(i6,pu,mq,cc,am D eL.bM A==mq){eA=eL.bM;eW=dz;}b2=eL oR;aZ=eL.bU;ef+=eL.W;ug aU pc aU qF ty lF id:eL.bf pW id qq I[O dm]=iu[id];sG=md dm B qZ sk{nC aV(mq oP,cT=aV N ii=rZ pk lc double>>dO(pu)tD h3(pu)lE bD o bD<192&&!aZ U bD F px){aZ lW qv nw i0 qT sx jZ(aV A oP lF h:dd)nB cw o int dS=-1 qH qd mW i sb a8=qd oS uv a8 oR sm qc oc z value>cw){cw=value;dS=md i td i0+=cw z dS qq)pA qd[dS]oq++jZ S oO i0<ii){ii=i0;cT=aV nw kq=0 nl<aV mW r pW oc>0||jZ S>1){lz i3=qo;kq+=i3*i3 oO!kq||i0<=b2+1e-7 tS lz iJ=0.9*(i0-b2)/kq nl<aV mW r)oc rc oc+iJ*(qo)B qZ;aV=mA cT)us iQ qT lF h:dd){mT fq=dO lS nI&a8:qd)nB of a8 oR sm qc oc;fq X value B mT hq=h3 lS;hq mv fq A qh(hq pc hq lH oP;rq hq pc hq ue uH fq rT>fq[b];}B ug br pc br lH oP;qS Q mr mr)>hZ=py gc mr Z mr gI uO&63 nZ am){aZ tv oO gc==dd A F Z>b2+oz{b2=Z;aU=bf tR<dd mW d)rk&a8:al[dd[d]re b2+tu N gZ=Z+iQ-gI lE d=gc;d<dd mW d I h=dd[d]N cw=0 lF i:h3 lS F dO lS oS<=0 mm z ds(qd oS)){cw=dO lS oS qv oJ gZ+=cw oO gZ<b2-1e-7 R tX dd[gc]lF i:h3 lS sb a8=qd oS rJ ds(a8)sE bf lS=md i)N kN=gI sm{rn uJ kN+=oc;}hZ sW+a8 oR,kN)sm rn=0 z aZ tS}bf lS=-1 rJ aZ)hZ sW,gI B z lf<am)hZ(0,0 oP nJ aZ lW oO b2<=M c3()+1e-9 lN;bz af;af.cf mv M uy)mR<aU mW ph mk sG qq)af.cf lS=qd[sG].C e kD=af.fw(ag);ab i9 sJ mA af),M bc st i9.a3(M aT st M cO(i9)nz lj ox struct c2{const lc bu>&al tD kJ sx hw pl io sg Y;c2 lr lc bu>&c H k H E):al(c),kJ(c A),Y(k){lc int>dm(k+E,ty oY<c mW j I add=py r F dm S<0){dm S=md io++);hw X r B kJ pF X dm S B;add(c pF nn)ny c pF oq add(k+r td}oT e3{const c2*cv pl n_;nC db,e6,eT,kR,iE sx e7 sL ec sl cX N fS Q row H uB tL a8-nc]uv 0 ny pR kJ[a8])value+=tL r]rR value+=iE S*tL r];no value nw dO Q uB-eT[a8-nc]uv pR al[a8]oR ny pR kJ[a8])qc eT S rR qc iE S*eT S;no value;ob kI Q cl H cJ){nC fd(n_),row(n_)qH sd i)fd oS=fS(i,cJ V jz=fd[cl]us iJ=e6[cl]/jz,K=dO(cJ)nl<sd r){row S=db[cl*n_+r]/jz;eT S+=K*row S;}mP om sd i pW i!=cl){e6 oS-=iJ*fd oS z fd oS==0 qu nl<sd r)db[i*n_+r]-=fd oS*row S;}G copy(row pc row qF db lq+cl*n_);e6[cl]=iJ;ec[e7[cl]]o e7[cl]=cJ;ec[cJ]=1 U fk;}public:la fk sa bU mi;explicit e3 lr c2&eU):cv(&eU),n_(eU.io),db(n_*n_ oP,e6(n_,1),eT(n_ oP,kR(n_,1),iE(n_ oP,e7(n_),ec(eU.pu+n_ oP,cX(eU.pu,ty{mP om sd i){db[i*n_+i]uJ e7 oS=eU.pu+i;ec[e7 oS]uJ}ob kd(oH I ul pl gB=0 qD{bU tv qw cJ=nc+n_ N K=1e-8 oY<nc+sd j F ec pF sE lz of dO(j D value sV value;cJ=j z gB>n_ mm uP pl cl=n_ N iJ=rZ qH sd i I d=fS(i,cJ D d<=oz lw lb jo rc e6 oS)/d z jo<iJ-1e-9||(tB jo-iJ)<=ud cl==n_||e7 oS<e7[cl]))){cl=i;iJ=jo oJ mk cl==n_||!mQ iJ)R;gB=iJ<1e-9?gB+1:0;kI(cl,cJ B ob ik Q a8 oy include){lz kU=include?-1:1,rhs=include?-1:0 e old=n_++;nC hb(n_*n_ oP qH old U i)G copy_n(db lq+i*old,old,hb lq+i*n_)uv 0 qH old U i pW e7 oS==a8){of e6 oS nl<old U r)hb[old*n_+r]=-kU*db[i*old+r]qv;}hb[old*n_+old]uJ db=mA hb);e6 X rhs-kU*tj;eT X 0);kR X rhs);iE X kU);e7 X pR pu+old);ec X 1);cX[a8]=md old);fk o ob i0(oH I ul qD{bU tv qw cl=n_ N jE=-1e-7 qH sd i pW e6 oS<jE){jE=e6 oS;cl=i oO cl==n_ R pl cJ=nc+n_ N jo=rZ oY<nc+sd j F ec pF pw d=fS(cl,j D d>=-oz lw lz af=dO(j)/d z af<jo-oz{cJ=j;jo=af uP;kI(cl,cJ td nC fq(oa nC x(pR pu oP qH sd i pW e7 oS<x A&&mQ e6 oS))x[e7 oS]=G clamp(e6 oS,0.0,1.0 uq x nw iT(oa auto aV=eT N hB sg gl=0 nl<sd r F!mQ oc)R rZ;oc rc oc);hB+=oc*kR S;gl+=tB oc*kR S B nC he(pR Y oP oY<pR al mW j sb c=pR al pF uv c oR ny pR kJ pF)qc oc z cX pF qq I r=ng cX pF);qc iE S*oc;}he pJ uG he pJ,value tr iA=nY he pc he qF 0.0);hB+=iA;gl+=iA rJ mQ hB qK!mQ gl)R rZ ls hB+1e-7+1e-10*gl;}nC bM Q E oa nC aA(E oP lE row o row<pR hw mW row I ja=pR hw[row]z ja>=pR Y&&mQ eT[row]))aA[ja-pR Y]rc eT[row]mU aA oJ;}ss,oH){pn qZ ls kg.bM(E qJ bJ(uH false;}cW dk mY,oH oy iU){cW aA;se=aU qX z al lV){nT fv tv aA;}pn nT fk=kg.fk z kg.bU){nT bU tv aA;}nT hX=kg.iT(D iU)qZ mh i5 lW nI&c:al)i5&=c oR==G round(c oR)sL jV(Y oP,br(E oP,ho(pu oP sl bf(Y,-1 V ds=py id tI[id]z jV pJ||ho[id]lN qL mk rn lN nz;qS lr e3&mr)>hL=[&]lr e3&lp mr Z F nT bU R z px){nT bU tv;}++nT W N iT=lp.iT(D i5)iT=G floor(iT D iT<=nT Z+tu e x=lp.fq()sx du oY sM j pW ds(j))du X j D du lV F Z rO=Z;se=bf;no;}rq du pc du ue uH x rT!=x[b]?x rT>x[b]:al rT oR>al[b]oR;})ps kN=br,f6=jV ps fe=bf N af=Z lF id:du tI[id]z f6 pJ tH qL j4&=!kN S rJ j4 sE f6 pJ=1 qL kN S uJ fe pJ=md id);af+=c oR oO af rO=af;se=mA fe D iU)qZ oO iT<=nT Z+tu pl hj=du.front()N gf=-1 lF j:du F x pF<=1e-7||x pF>=1-1e-7 pw e0 qr x pF,1-x pF D e0>gf){gf=e0;hj=j oJ lb&c=al[hj];{auto hm=lp;hm.ik(hj tA po;}jV pJ=1 qL rn uJ bf pJ=md hj);hL(hm,Z+c oR);bf pJ=-1;jV pJ=0 qL rn o}mk!nT bU oV hm=lp;hm.ik(hj,pq po;}ho[hj]uJ hL(hm,Z);ho[hj]o}};hL(kg oP;nT fv=!nT bU ls aA;}cW dT mY,oH,ly ki lv nC&bM){cW aA;se=aU;nT hX=rZ qX tD ih(Y)oY sM j)ih[al pF nn]X j);nC fj(pu,0 pQ bM lV)mP j o j sM j)pA al pF oq fj pF+=bM S li lz jp:{0.0,0.5,1.0,1.5}){oC du(pu qh(du pc du lH oP;pH du pc du ue I x=al rT oR-jp*fj rT,y=al[b]oR-jp*ti;})sL br(E oP sl fe(Y,ty N Z=0 lF j:du tI pF z fe pJ qq tH qL j4&=!rn rJ j4 sE fe pJ=md j)qL rn uJ Z+=c oR oO Z rO=Z;se=mA fe);qZ oJ oo mT hO:ih)pH hO pc hO ue I x=al rT oR-fj rT,y=al[b]oR-ti;})qz(ki V ha=lf pl hx sg it o nK lf<am){lc int>iz(E,ty lE t o t sO t pW se te qq)pA al[se te]oq iz S=md t)nt la kO qr Y,ng 8+4*((hx/Y)%4)nO oC eb sL hR(Y,0 V add=py t F!hR te){eb X t);hR te=1 oJ e first=hx%Y;add(first pQ ih rb lV I kZ=hx%3==0?so pU 24,ih rb A):0 ny al[ih rb[kZ]]oq mk iz S qq&&eb A<kO)add(iz S B nK eb A<kO){nC e0(Y oP lF t:eb I old=se te qq?al[se te]oR:0 e rm pU 32,ih te A)oY sN j tI[ih te pF]e of mo 1.0,c oR-old)sw)e0[iz S]+=value oJ la dS=Y N cw=0 lE t o t sO t pW!hR te&&e0 te>cw){cw=e0 te;dS=t oO dS==Y||hx%5==4){do{dS=so Y;}nK hR[dS]B add(dS B lc bu>jW sx j5 sl cc(eb A,ty lE t o t<eb mW t)oo auto id:ih[eb te]tI[id]mh ig lW sw){ig mi qv oO!ig qu z se[eb te]sB id))cc te=md jW A);jW X{t,c.E,c oR});j5 X id tr now=lf e hE qr am,now oQ 150)V eL=dk(jW,eb A,E,cc,hE,pq;nT W+=eL.W;nT fk+=eL.fk N old=0 lF id:cc pW id qq)old+=jW[id]oR z eL oR>old+oz{mP t o t<eb mW t)se[eb te]=eL.bf te qq?md j5[eL.bf te]):-1;nT Z+=eL oR-old;it=hx;qZ;}++hx z hx-it>12*Y tS}qZ;nT bU=px ls aA;}lj bool hf::hZ(mf,nj am oa bool aR mi li int jy o jy<2 U jy){bool dX mi nI&move:gm F px R aR||dX;dX=move->cb(ac qK dX oO!dX tS uh no sp bool gw::ua qI bT A!=mq){bT mv mq qh(bT pc bT qF 0 B fJ.jJ nR bT)sq nk dp tY bT F oX qq pw move=fJ.dp ut D move&&move nN>ud!dp||move nN>dp nN))dp=move oO!dp tS ru mz dp->f,dp->O dp->ax,dp->au nO uh fJ.g1 nR dp->O bT mU sp bool eM::ua oa lc uF double>>iw(mq)pg)iw oA qt a6 nb sq uF la>dp N c4=1e-9 pg F iw oA&&*iw oA>c4){dp=f;c4=*iw oA oJ mk!dp mm tX ng mp*dp)nn);ru g2(*dp nO uh iw[*dp]oW)pg pW oX sB ph)iw oA qt a6 ut mU sp as::as rX,cV(0 F f>=pI qK rC;cV=rI;hz lW;bI qt a6 nb e&C qt bk(rD as oK}la as::cd Q ba mL ba<cV?ba:ba+2;ob as::pf qG gj qr end,cV un V ek uG mZ cV tb 2 B nf as::K sj bq rf,bq B nf as::bh nA bq oe(qK bq>C qQ-(pp,cV,cV+1,h==b6}e fC=bF(qA),sK bq,ci.aE(dE),qA).aW(dE)uq bB-fC;}nf as::K nA bq oe(qK bq>C qQ-(h==b6?2:0)nM rt qA);ou 2:0 D iB F bq&&!qi cd(bq ty+1)nM sk mk!bI||!qi bq)nM;aI af tm D qC 0,bq)nJ ni 0,bq pz L(ci.aE(dE nO af.L(mS aW(dE)D qC bq,ch)nJ ni bq,ch sP ls bh(oF,bq B nk cG::cD sC lv as pO:0)lE a o a tC a I go=b3.bh sS pQ go||*go nS K=b3 su sS rF an{r,O a,a,*K};no bo;}qJ cG oM R;as pD.O fV rG()nl<pI)pP.fK(bg,eq)nl<pI)ow sp tw aq rX,d5(0),cY(0 F f<pI qK f>=mq||rC;d5=rI;cY=tq;hz lW;bI qt a6 nb;jG=b5(nE,M aE nb);il=b5(nE,nE.a1 ut-pI))V&C qt bk(rD aq oK}la tw cd Q ba qI ba<d5 R ba z ba<cY-1 R ba+1 ls ba+2;rh tw cm lr ak&C H bq mL!bq||C.aB(qA),cd(bq ty+1 mM tw pf qG gj qr end,d5 un V gV uG mZ d5 V hT qr end,cY-1 D gV<hT)ni gV+1,hT+1 V ek uG mZ cY-1 tb 2 B nf tw K sj ux rf,a,b B nf tw bh nA ux oe(qK a>b||b>C qQ-(pp,d5,cY,h==b6}e fC=cZ(qA),sK a,b,ci.aE(dE),qA).a1(dE-ci.ao())uq bB-fC;}nf tw K nA ux qG ew=eS sS uq ew?dM sS,b,*ew):lB;}uF aI>tw eS nA a oe()nM;ou 2:0 D a>ch nM rt qA V dq=pr[dE-ci.ao()].dq z dq>mS os nM z iB F!cm(C,a)nM sk mk!bI||!qi a)nM;aI af tm D qC 0,a)nJ ni 0,a pz eo(jG sP ls af;}nf tw dM nA ux lv aI&ew oa ou 2:0 D a>b||b>ch nM rt qA D iB F!cm(C,b)nM sk mk!qi b)nM ps af=ew z qC a,b)nJ ni a,b pz eo(il D qC b,ch)nJ ni b,ch sP ls bh sS,b B nk dy::cD sC lv aq pO:0 V&in=nE e qP mp r)nt d6 jQ{C oZ bH,h==bg}e aE qt aE(r V gb=mS a1(r-pI nO nC f4(b8+1),eQ(b8+1),eO(b8+1),bx(b8+2,rZ)pM){f4 ol=bY nx sK pos,aE);eQ ol=bY nx sK pos,gb);eO ol=bF nx sK pos,aE,gb B mP tQ bx ol qr eQ ol,bx[pos+1])lE a o a tC a I gy qr eO rT,f4 rT+bx[a+1]D b3.cF()-gy nS ew=b3.eS sS pQ ew qu lE b=a;b tC b I fC=b==a?eO rT:f4 rT+eQ[b]e go=b3.cF()-fC z go nS K=b3.dM sS,b,*ew rF an{r,O a,b,*K};}no bo;}qJ dy oM R;aq pD.O fV,0 rG()lE r=pI);r<mq pP.fK(bg,eq)lE r=pI);r<mq ow sp ox struct jw{la h sx hP ra oC g4 oi h sb in=nE e&C tt e k nq pl fi o oC kV{0}lE pos o pos<C lJ mW pos I L=C lJ ol z pC m)++fi nJ mk L>=k tE+m)--fi rJ fi&&qi pos+1))kV X pos+1 mU kV oJ bool dK::ua qG&in=nE sq lc jw>cf;cf nX M cB()A)nI rV)cf X{O g4 nR ph})mh gx mi qH cf A&&!gx U i){mP j=i+1;j<cf A&&!gx U j I b0=cf oS.O b1=cf pF nn e&a qt bk(b0 V&b qt bk(b1 V h7=a qQ,h8=b qQ N c4=1e-9 pl j1 sg j2=0 nI fT:cf oS.hP){rk fU:cf pF.hP I kb=fT?a lJ[fT uI:b0 e kc=fU?b lJ[fU uI:b1 N K=0 z fT<h7 I j8=a lJ[fT];K+=mn kb,j8)-mn kc,j8 tn fU<h8 I j9=b lJ[fU];K+=mn kc,j9)-mn kb,j9 tn K<=c4 pY sE aI g8 nx b0,a);g8.dn(0,fT D fU<h8)g8.eo(b.dn nx fU,h8 ty pQ g8 qM sE aI g9 nx b1,b);g9.dn(0,fU D fT<h7)g9.eo(a.dn nx fT,h7 ty pQ g9 qM sE c4=K;j1=fT;j2=fU oJ mk c4>oz{ru c7(b0,j1,b1,j2 nO aR=gx lW oJ}mk!gx R aR oJ lj uF bN>a7::d7 sC oa ep(ac);gd(uq dH lV?lB:lm(dH.top()oL mM a7::gd(oa nK!uQ(V h=qR.aY nn e aC=qR.aY.f z et[aC]&&qY d1==ce lS&&qY ca==bL lS[aC].ca tS dH.pop(B rh a7 rx&b qI a oL su!=b oL su R a oL su<b oL su e key=[]lr bN&c uH G tuple(c.a5,c.aY.f,c.aY rH,c.aY tU B ls key(a oL)>key(b oL mM a7::cU oi pX a5 nd aC qI aC lV R;mT row=bL lS tY aC){++row oA.ca;row oA oL oW tr&hc tt sx W tY a5 I qP mp f);mT gP=kK oA z gP.fm!=hc si)){W=hc lJ;ok);gP.dO.gJ(nE,O W);gP.a6=bE(nE,O hc oZ bH)-M aF nb;gP.fm=hc si B rk hv:aC){mT aO=row[hv]us fp=sf?sf nN:1e-9 e aY=bG nR hv,O gP.dO,fp-gP.a6 D aY&&aY nN+gP.a6>fp)sf=bN{f,*aY,aY nN+gP.a6}oJ rk f:aC)fX(O f mM a7::fX sj aC qG&aO=bL lS[aC]z sf){dH.push({*sf,ce lS,aO.ca}B ob a7::ep sC qG Y qt uy,E qt aj(D gs!=&nE||ce A!=Y||et A!=E){gs=&nE;ce.pE Y,my<ly>pv nO et.pE E,pq;bL.pE Y,lc eF>(E nO dH=iK{};kK mv E B lc lD>>a5(Y)sx aC,eD lE f o f<E U f I qP mp f);lG je=sc<0 z je){aC X f pQ et oA)eD X f pt a5[sc]X f);et oA=je;}mP h o h sO h I bp tt si D ce lS!=bp){ce lS=bp;cU nR O a5 lS,aC pt mk!eD lV){cU nR O a5 lS,eD td mk dH A>2*Y*E+32)f9(mM a7::f9(oa dH=iK{}mR<bL mW ph mP aC o aC<et mW aC F et[aC])fX(O aC B rh a7 qE)){ru fn(J->a5,J->aY.f,J->aY rH,J->aY tU nO uh no sp ox bool j3 lr bl&a lv bl&b uH a su>b su||(a su==b su&&G tie(a.mZ a oU)<G tie(b.mZ b oU)B nf ey oi a5 H aC I qP mp a5 V h=ng sc V&C tt rt nE rs aC<pI V au=aJ?mS aW(aC):mS a1(aC-pI nO aQ af tm pz cC(0,rI pz ft(M aE(aC)D aJ)af.ft(au pz cC(rI+1,tq pQ aJ)af.ft(au pz cC(tq+1,C qQ uq af.a0(td nf eJ oi ri tV>=mq||second>=mq nM qU mp first),b=mp qV nn nM e gQ=ey nR oG pQ gQ nM e gR=ey nR second,first pQ gR nM ls M bk(a nn)qN+M uo;rh cA rx&b mL j3(b oL,a oL mM cA::fX Q b0 H b1 qG&aO=bL[b0][b1]z sf)dH.push({*sf,b0,b1,cr[b0],cr[b1],aO.ca}mM cA::ep sC qG Y qt aH(D ag!=&nE||cr A!=Y){ag=&nE;cr.pE Y,my<ly>pv nO bL.pE Y,lc eF>(Y nO dH=iK{};}oC aR pk bool>kC(Y,pq mR sO h I bp tt si D cr lS!=bp){cr lS=bp;aR X ph;kC lS lW oJ mk aR lV R tD E(Y)pg I h=oX z h qq)E lS X f B rk h:aR){mP de o de sO de F de==h||(kC[de]&&de<ph pw b0 qr O de),b1 uG O de);mT aO=bL[b0][b1]U aO.ca;sf oW)nI first:E[b0]){rk second:E[b1]I K=eJ nR oG pQ K||*K<=oz lw const bl J{lT oG),mo oG),*K}rJ sf||j3(J,*sf))sf=J oJ fX(b0,b1 td mk dH A>2*Y*Y+32){dH=iK{}lE a o a sO a)mP b=a+1;b sO b)fX(a,b td uF bl>cA::d7 sC oa ep(ac);nK!uQ(D qY jO==cr[qY b0]&&qY jP==cr[qY b1]&&qY ca==bL[qY b0][qY b1].ca R qR;dH.pop(mU lB;rh cA qE)){ru gt(J->mZ J rl nO uh no aR oJ int main(I kw=lf;G ios::sync_with_stdio(pq;G cin.tie(nullptr V ah=bs::gq(G cin);bs::ez::js bK;qs ki=1ULL us kn=rK(lf-kw).count()us hg=300 us reserve=hg>2?1.0:hg*0.1;qs dx=hg-kn-reserve z qs dx<=0){bs::sX oD uR,empty,ah pt{lb aA=bs::ez::kL(ah,bK uR,nT bZ,ah mU 0;}
