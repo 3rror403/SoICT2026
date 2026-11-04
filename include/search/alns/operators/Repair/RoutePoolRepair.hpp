@@ -36,9 +36,11 @@ public:
     void write(std::ostream& out) const;
 private:
     struct Column {
-        std::vector<std::size_t> requests, route;
+        // The bank key owns the served set; store only its route and profit here.
+        std::vector<std::size_t> route;
         double profit = 0;
     };
+    using Bank = std::map<std::vector<std::size_t>, Column>;
     struct Arc { std::size_t request; double latest_departure; };
     const Instance& instance_;
     std::size_t limit_, column_count_ = 0, nodes_ = 0;
@@ -51,7 +53,7 @@ private:
     std::uint64_t fleet_calls_ = 0;
     std::uint64_t pricing_calls_ = 0;
     std::uint64_t generation_calls_ = 0;
-    std::vector<std::map<std::vector<std::size_t>, Column>> pool_;
+    std::vector<Bank> pool_;
     std::vector<std::uint64_t> versions_;
     std::vector<std::vector<Arc>> next_;
     std::vector<double> delivery_lower_;
@@ -59,6 +61,7 @@ private:
     std::uint64_t bank_revision_ = 0;
     mutable std::uint64_t prices_revision_ = std::numeric_limits<std::uint64_t>::max();
     mutable std::vector<double> cached_prices_;
+    std::vector<std::size_t> request_scratch_;
     void add(const SearchState&, std::size_t taxi, bool enforce_limit);
     void add_column(std::size_t taxi, const std::vector<std::size_t>& requests,
                     const std::vector<std::size_t>& route, double profit, bool enforce_limit);

@@ -5,6 +5,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <ostream>
 #include <numeric>
 #include <stdexcept>
@@ -23,6 +24,26 @@
 #include "search/alns/MoveCost.hpp"
 
 namespace soict::alns {
+namespace {
+// Erase the first minimum in map order and return the surviving minimum.
+// The caller has exceeded a positive cap, so at least two entries exist.
+template<class Bank, class Score>
+double erase_worst(Bank& bank, Score score) {
+    auto worst = bank.begin(), second = bank.end();
+    for (auto it = std::next(worst); it != bank.end(); ++it) {
+        if (score(it->second) < score(worst->second)) {
+            second = worst;
+            worst = it;
+        } else if (second == bank.end() || score(it->second) < score(second->second)) {
+            second = it;
+        }
+    }
+    const auto floor = score(second->second);
+    bank.erase(worst);
+    return floor;
+}
+}
+
 RoutePoolRepair::RoutePoolRepair(const Instance& instance, std::size_t limit, std::uint64_t seed)
     : instance_(instance), limit_(limit), floors_(instance.taxis.size(),-std::numeric_limits<double>::infinity()), seed_(seed),
       pool_(instance.taxis.size()), versions_(pool_.size(), 0) {
@@ -33,7 +54,8 @@ void RoutePoolRepair::add(const SearchState& state, std::size_t taxi, bool enfor
     const auto& nodes = state.cache(taxi).nodes();
     if (nodes.empty()) return;
     const auto k = state.taxi_count(), n = state.passenger_count();
-    std::vector<std::size_t> requests;
+    auto& requests = request_scratch_;
+    requests.clear();
     double revenue = 0;
     for (const auto node : nodes) {
         std::size_t request;
@@ -54,19 +76,19 @@ void RoutePoolRepair::add_column(std::size_t taxi, const std::vector<std::size_t
     if (!std::isfinite(profit) || profit <= 1e-9) return;
     auto& bank = pool_[taxi];
     if (enforce_limit && bank.size() >= limit_ && profit < floors_[taxi]) return;
-    const auto found = bank.find(requests);
-    if (found != bank.end() && found->second.profit >= profit) return;
-    bank[requests] = Column{requests, nodes, profit};
+    const auto found = bank.lower_bound(requests);
+    if (found != bank.end() && found->first == requests) {
+        if (found->second.profit >= profit) return;
+        // Preserve the route buffer when a better sequence serves the same set.
+        found->second.route.assign(nodes.begin(), nodes.end());
+        found->second.profit = profit;
+    } else {
+        bank.emplace_hint(found, requests, Column{nodes, profit});
+    }
     ++bank_revision_;
     if (!enforce_limit) floors_[taxi] = -std::numeric_limits<double>::infinity();
     if (enforce_limit && bank.size() > limit_) {
-        const auto worst = std::min_element(bank.begin(), bank.end(), [](const auto& a, const auto& b) {
-            return a.second.profit < b.second.profit;
-        });
-        bank.erase(worst);
-        floors_[taxi] = std::min_element(bank.begin(),bank.end(),[](const auto& a,const auto& b) {
-            return a.second.profit < b.second.profit;
-        })->second.profit;
+        floors_[taxi] = erase_worst(bank, [](const auto& column) { return column.profit; });
     }
 }
 
@@ -88,6 +110,7 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
         double ready, latest, drop_ready, drop_latest, service, revenue, weight;
     };
     std::vector<Request> requests;
+    requests.reserve(nr);
     for (std::size_t r = 0; r < nr; ++r) {
         if (r < n) {
             const auto& p = in.passengers[r];
@@ -165,8 +188,8 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
     const auto& next=next_;const auto& delivery_lower=delivery_lower_;
     generated_prefixes_ = completed_taxis_ = 0;
     std::vector<unsigned char> picked(nr, 0), opened(nr, 0);
-    std::vector<std::size_t> route, served;
-    route.reserve(2*nr); served.reserve(nr);
+    std::vector<std::size_t> route, served, key;
+    route.reserve(2*nr); served.reserve(nr); key.reserve(nr);
     for (std::size_t taxi = 0; taxi < pool_.size(); ++taxi) {
         if (std::chrono::steady_clock::now() >= deadline) break;
         // Fairly divide a finite generation budget across the remaining taxis.
@@ -198,20 +221,23 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
             if (!open_count && revenue-cost > 1e-9 &&
                 (priced ? (priced_bank.size()<limit_ || revenue-cost>=priced_floor) :
                     (pool_[taxi].size()<limit_ || revenue-cost>=floors_[taxi]))) {
-                auto key = served;
+                key.assign(served.begin(), served.end());
                 std::sort(key.begin(), key.end());
                 if (!priced) add_column(taxi, key, route, revenue-cost, true);
                 else {
                     const auto score=revenue-cost;
-                    auto found=priced_bank.find(key);
-                    if (found==priced_bank.end() || found->second.first<score) {
+                    const auto found=priced_bank.lower_bound(key);
+                    const bool existing=found!=priced_bank.end() && found->first==key;
+                    if (!existing || found->second.first<score) {
                         double profit=-cost;for (auto r:key)
                             profit+=r<n?in.passengers[r].revenue:in.parcels[r-n].revenue;
-                        priced_bank[key]={score,Column{key,route,profit}};
+                        if (existing) {
+                            found->second.first=score;
+                            found->second.second.route.assign(route.begin(),route.end());
+                            found->second.second.profit=profit;
+                        } else priced_bank.emplace_hint(found,key,std::make_pair(score,Column{route,profit}));
                         if (priced_bank.size()>limit_) {
-                            const auto worse=[](const auto& a,const auto& b){return a.second.first<b.second.first;};
-                            priced_bank.erase(std::min_element(priced_bank.begin(),priced_bank.end(),worse));
-                            priced_floor=std::min_element(priced_bank.begin(),priced_bank.end(),worse)->second.first;
+                            priced_floor=erase_worst(priced_bank,[](const auto& entry){return entry.first;});
                         }
                     }
                 }
@@ -301,19 +327,23 @@ std::vector<double> RoutePoolRepair::estimate_prices(Deadline deadline) const {
         std::cerr<<"path_price_reused=1\n";
         return cached_prices_;
     }
-    std::vector<const Column*> columns;
+    struct PricedColumn {
+        const std::vector<std::size_t>& requests;
+        double profit;
+    };
+    std::vector<PricedColumn> columns;
     std::vector<std::size_t> taxis;
     for (std::size_t t = 0; t < pool_.size(); ++t) for (const auto& [key,c] : pool_[t]) {
-        columns.push_back(&c);taxis.push_back(t);
+        columns.push_back({key,c.profit});taxis.push_back(t);
     }
     if (route_master_uses_cplex() && std::chrono::steady_clock::now()<deadline) {
         std::vector<MasterColumn> master;master.reserve(columns.size());
-        for (std::size_t j=0;j<columns.size();++j) master.push_back({taxis[j],columns[j]->requests,columns[j]->profit});
+        for (std::size_t j=0;j<columns.size();++j) master.push_back({taxis[j],columns[j].requests,columns[j].profit});
         const auto lp_deadline=std::min(deadline,std::chrono::steady_clock::now()+std::chrono::seconds(2));
         auto prices=route_master_prices(master,pool_.size(),nr,lp_deadline);
         std::vector<double> maximum(pool_.size(),0);
         for (std::size_t j=0;j<columns.size();++j) {
-            double value=columns[j]->profit;for (auto r:columns[j]->requests) value-=prices[r];
+            double value=columns[j].profit;for (auto r:columns[j].requests) value-=prices[r];
             maximum[taxis[j]]=std::max(maximum[taxis[j]],value);
         }
         std::cerr<<"path_price_lp_checked="<<std::accumulate(prices.begin(),prices.end(),0.0)+
@@ -322,23 +352,23 @@ std::vector<double> RoutePoolRepair::estimate_prices(Deadline deadline) const {
         return prices;
     }
     std::vector<std::size_t> order(columns.size());std::iota(order.begin(),order.end(),0);
-    std::sort(order.begin(),order.end(),[&](auto a,auto b) { return columns[a]->profit > columns[b]->profit; });
+    std::sort(order.begin(),order.end(),[&](auto a,auto b) { return columns[a].profit > columns[b].profit; });
     std::vector<unsigned char> occupied(nr,0), assigned(pool_.size(),0);
     double lower = 0;
     for (auto j : order) {
         if (assigned[taxis[j]]) continue;
-        bool free = true;for (auto r : columns[j]->requests) free &= !occupied[r];
+        bool free = true;for (auto r : columns[j].requests) free &= !occupied[r];
         if (!free) continue;
-        assigned[taxis[j]] = 1;for (auto r : columns[j]->requests) occupied[r] = 1;
-        lower += columns[j]->profit;
+        assigned[taxis[j]] = 1;for (auto r : columns[j].requests) occupied[r] = 1;
+        lower += columns[j].profit;
     }
     std::vector<double> prices(nr,0), best_prices = prices;
     double best = std::numeric_limits<double>::infinity();
     for (std::size_t iteration = 0; iteration < 192; ++iteration) {
         std::vector<double> maximum(pool_.size(),0);
-        std::vector<const Column*> chosen(pool_.size(),nullptr);
+        std::vector<const PricedColumn*> chosen(pool_.size(),nullptr);
         for (std::size_t j = 0; j < columns.size(); ++j) {
-            const auto& c = *columns[j];double value = c.profit;
+            const auto& c = columns[j];double value = c.profit;
             for (auto r : c.requests) value -= prices[r];
             if (value > maximum[taxis[j]]) { maximum[taxis[j]] = value;chosen[taxis[j]] = &c; }
         }
@@ -360,13 +390,14 @@ std::vector<double> RoutePoolRepair::estimate_prices(Deadline deadline) const {
         std::chrono::steady_clock::now()+std::chrono::milliseconds(250)<deadline) {
         std::vector<MasterColumn> subset;
         for (std::size_t taxi=0;taxi<pool_.size();++taxi) {
-            std::vector<std::pair<double,const Column*>> ranked;
-            for (const auto& [key,c]:pool_[taxi]) {
-                double score=c.profit;for (auto r:key) score-=best_prices[r];ranked.push_back({score,&c});
+            std::vector<std::pair<double,const Bank::value_type*>> ranked;
+            for (const auto& entry:pool_[taxi]) {
+                const auto& [key,c]=entry;
+                double score=c.profit;for (auto r:key) score-=best_prices[r];ranked.push_back({score,&entry});
             }
             const auto count=route_master_uses_cplex()?ranked.size():std::min<std::size_t>(64,ranked.size());
             std::partial_sort(ranked.begin(),ranked.begin()+count,ranked.end(),[](const auto& a,const auto& b){return a.first>b.first;});
-            for (std::size_t j=0;j<count;++j) subset.push_back({taxi,ranked[j].second->requests,ranked[j].second->profit});
+            for (std::size_t j=0;j<count;++j) subset.push_back({taxi,ranked[j].second->first,ranked[j].second->second.profit});
         }
         const auto lp_deadline=std::min(deadline,std::chrono::steady_clock::now()+std::chrono::seconds(2));
         auto proposed=route_master_prices(subset,pool_.size(),nr,lp_deadline);
@@ -608,7 +639,11 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
     if (&state.instance() != &instance_) throw std::logic_error("route pool instance mismatch");
     // Restore every incumbent route even if the bank's size cap removed it.
     for (const auto taxi : state.active_taxis()) add(state, taxi, false);
-    std::vector<std::vector<Column>> columns(pool_.size());
+    struct SelectionColumn {
+        std::vector<std::size_t> requests, route;
+        double profit;
+    };
+    std::vector<std::vector<SelectionColumn>> columns(pool_.size());
     std::vector<int> selected(pool_.size(), -1), incumbent(pool_.size(), -1);
     std::vector<unsigned char> occupied(state.request_count(), 0);
     std::vector<std::size_t> frequency(state.request_count(), 0), order;
@@ -616,7 +651,8 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
     double best_profit = 0;
     for (std::size_t taxi = 0; taxi < pool_.size(); ++taxi) {
         auto& row = columns[taxi];
-        for (const auto& [key, column] : pool_[taxi]) row.push_back(column);
+        row.reserve(pool_[taxi].size());
+        for (const auto& [key, column] : pool_[taxi]) row.push_back({key,column.route,column.profit});
         std::sort(row.begin(), row.end(), [](const auto& a, const auto& b) {
             return a.profit > b.profit || (a.profit == b.profit && a.requests < b.requests);
         });
@@ -644,7 +680,7 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
     for (std::size_t taxi = 0; taxi < columns.size(); ++taxi)
         if (!columns[taxi].empty()) order.push_back(taxi);
     std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) { return conflict[a] > conflict[b]; });
-    const auto compatible = [&](const Column& column) {
+    const auto compatible = [&](const SelectionColumn& column) {
         for (auto r : column.requests) if (occupied[r]) return false;
         return true;
     };
