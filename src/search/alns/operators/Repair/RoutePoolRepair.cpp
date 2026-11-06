@@ -1,6 +1,7 @@
 #include "search/alns/operators/Repair/RoutePoolRepair.hpp"
 #include "search/alns/operators/Repair/RoutePoolMaster.hpp"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <functional>
 #include <iomanip>
@@ -176,6 +177,10 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
     const auto& next=next_;const auto& delivery_lower=delivery_lower_;
     generated_prefixes_ = completed_taxis_ = 0;
     std::vector<unsigned char> picked(nr, 0), opened(nr, 0);
+    // Keep the served-request signature incrementally during DFS.  The bank
+    // still receives a sorted vector, but we avoid sorting the active prefix
+    // every time a complete route is stored.
+    std::vector<std::uint64_t> served_mask((nr + 63) / 64, 0);
     std::vector<std::size_t> route, served, key;
     route.reserve(2*nr); served.reserve(nr); key.reserve(nr);
     for (std::size_t taxi = 0; taxi < pool_.size(); ++taxi) {
@@ -209,8 +214,15 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
             if (!open_count && revenue-cost > 1e-9 &&
                 (priced ? (priced_bank.size()<limit_ || revenue-cost>=priced_floor) :
                     (pool_[taxi].size()<limit_ || revenue-cost>=floors_[taxi]))) {
-                key.assign(served.begin(), served.end());
-                std::sort(key.begin(), key.end());
+                key.clear();
+                for (std::size_t word = 0; word < served_mask.size(); ++word) {
+                    auto bits = served_mask[word];
+                    while (bits) {
+                        const auto bit = static_cast<std::size_t>(std::countr_zero(bits));
+                        key.push_back(word * 64 + bit);
+                        bits &= bits - 1;
+                    }
+                }
                 if (!priced) add_column(taxi, key, route, revenue-cost, true);
                 else {
                     const auto score=revenue-cost;
@@ -283,7 +295,8 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
                 }
                 const double departure = std::max(arrival,q.ready)+q.service;
                 const double expense = cost+in.travel_cost[last*nv+q.pickup];
-                picked[r] = 1; served.push_back(r); route.push_back(q.pickup);
+                picked[r] = 1; served.push_back(r); served_mask[r >> 6] |= std::uint64_t{1} << (r & 63);
+                route.push_back(q.pickup);
                 if (r < n) {
                     route.push_back(q.delivery);
                     const auto drop_arrival = departure+in.travel_time[q.pickup*nv+q.delivery];
@@ -296,7 +309,8 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
                     self(self,q.pickup,departure,expense,revenue+q.revenue,load+q.weight,open_count+1);
                     opened[r] = 0;
                 }
-                route.pop_back(); served.pop_back(); picked[r] = 0;
+                route.pop_back(); served.pop_back(); served_mask[r >> 6] &= ~(std::uint64_t{1} << (r & 63));
+                picked[r] = 0;
                 if (first) {incomplete|=exhausted;exhausted=false;--first_remaining;}
                 else if (exhausted) return;
             }
