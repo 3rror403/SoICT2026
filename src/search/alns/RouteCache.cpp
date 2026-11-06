@@ -171,8 +171,4 @@ std::optional<double> RouteCandidate::cost_if_feasible() const {
         return std::nullopt;
     return instance_.cost(taxi_, s.first) + s.cost;
 }
-double RouteCandidate::cost_unchecked() const {
-    if (!summary_) return 0.0;
-    return instance_.cost(taxi_, summary_->first) + summary_->cost;
-}
 } // namespace soict::alns

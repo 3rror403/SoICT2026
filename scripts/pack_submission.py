@@ -21,6 +21,38 @@ OPTIMIZATION_PRAGMAS = {
 DEFAULT_OPTIMIZATION = 'O3-unroll'
 
 
+def submission_branches(source):
+    """Select the explicit judge/native branches, including nested guards."""
+    defined = {'SOICT_SUBMISSION': True, 'SOICT_ROUTE_POOL_CPLEX': False}
+    active = True
+    stack = []
+    output = []
+    for line in source.splitlines(keepends=True):
+        directive = re.fullmatch(r'\s*#\s*(ifdef|ifndef)\s+(\w+)\s*', line)
+        if directive:
+            kind, name = directive.groups()
+            if name not in defined:
+                raise ValueError(f'unsupported submission conditional: {name}')
+            selected = defined[name] == (kind == 'ifdef')
+            stack.append((active, selected, False))
+            active = active and selected
+        elif re.fullmatch(r'\s*#\s*else\s*', line):
+            if not stack or stack[-1][2]:
+                raise ValueError('unmatched or repeated #else')
+            parent, selected, _ = stack[-1]
+            stack[-1] = (parent, selected, True)
+            active = parent and not selected
+        elif re.fullmatch(r'\s*#\s*endif\s*', line):
+            if not stack:
+                raise ValueError('unmatched #endif')
+            active = stack.pop()[0]
+        elif active:
+            output.append(line)
+    if stack:
+        raise ValueError('unterminated submission conditional')
+    return ''.join(output)
+
+
 def discard_diagnostics(source):
     """Replace console logging statements with no-ops, preserving control flow."""
     tokens = [m for m in TOKEN.finditer(source) if m.lastgroup not in ('space', 'comment')]
@@ -74,69 +106,14 @@ def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZ
         relative = path.relative_to(ROOT).as_posix()
         inputs[relative] = hashlib.sha256(raw).hexdigest()
         source = raw.decode('utf-8')
-        # The standalone judge package uses the standard-library route master.
-        source = re.sub(
-            r'^#ifdef SOICT_ROUTE_POOL_CPLEX\n(.*?)^#endif\n',
-            lambda match: match.group(1).split('#else\n', 1)[1]
-            if '#else\n' in match.group(1) else '', source, flags=re.M | re.S)
-        if relative == 'src/io/InstanceIO.cpp':
-            start = source.index('void write_instance(')
-            source = source[:start] + '} // namespace soict\n'
-        elif relative == 'src/io/SolutionIO.cpp':
-            start = source.index('Solution read_solution(')
-            end = source.index('void write_solution(', start)
-            source = source[:start] + source[end:]
-
-        elif relative == 'src/search/alns/ALNS.cpp':
-            # The feedback counter affects pricing, so retain it outside logging.
-            source = source.replace('std::cerr<<"path_feedback_phase="<<++phase',
-                                    '++phase; std::cerr<<"path_feedback_phase="<<phase')
-            # Judge Config has no log directory; omit development logging only.
-            start = source.index('    std::ofstream trace, operator_log;')
-            end = source.index('    Solution empty;', start)
-            source = source[:start] + source[end:]
-            start = source.index('    const auto report_progress =')
-            end = source.index('    while (', start)
-            source = source[:start] + source[end:]
-            start = source.index('                std::ostringstream line;')
-            end = source.index('                std::cerr << line.str();', start) + len('                std::cerr << line.str();')
-            source = source[:start] + source[end:]
-            source = source.replace('        report_progress();\n', '')
-            start = source.index('        if (iterations % 1000 == 0) {')
-            end = source.index('    if (route_pool) {', start)
-            source = source[:start] + '    }\n' + source[end:]
-            start = source.index('        if (!config.log_directory.empty()) {')
-            end = source.index('    if (config.check) best.check();', start)
-            source = source[:start] + '    }\n' + source[end:]
-            start = source.index('    if (trace) trace << iterations')
-            end = source.index('    Result result;', start)
-            source = source[:start] + source[end:]
-            start = source.index('    if (clean_cut)\n')
-            end = source.index('    return result;', start)
-            source = source[:start] + source[end:]
-            # Default path generation always selects paths_only: incomplete
-            # banks use candidate sampling, and complete banks use enumeration.
-            # The judge has no CLI, so its unused ALNS fallback can be omitted.
-            source = re.sub(
-                r'^#include "search/alns/(?:Balance.hpp|operators/Destroy/[^"\n]+|'
-                r'operators/Repair/(?:GreedyInsertion|ProfitInsertion).hpp)"\n',
-                '', source, flags=re.M)
-            source = source.replace('    std::mt19937_64 rng(config.seed);\n', '')
-            start = source.index('    std::vector<std::unique_ptr<DestroyOperator>> destroys;')
-            end = source.index('    LocalSearch local_search;', start)
-            source = source[:start] + source[end:]
-            start = source.index('    if (!paths_only) {')
-            end = source.index('    if (config.check) current.check();', start)
-            source = source[:start] + source[end:]
-            start = source.index('    double temperature =')
-            end = source.index('    if (route_pool) {', start)
-            source = source[:start] + source[end:]
-            source = source.replace('result.iterations = iterations;', 'result.iterations = 0;')
-            source = source.replace('result.annealing_complete = temperature <= minimum_temperature;',
-                                    'result.annealing_complete = false;')
+        source = submission_branches(source)
         source = prune_unused(relative, source)
         source = strip_submission_validation(relative, source)
-        source = re.sub(r'^#include <(?:span|bit|filesystem)>\n', '', source, flags=re.M)
+        # iostream supplies the stream declarations/definitions below. The
+        # other omitted headers belong only to validation, file logging and
+        # solution-file parsing, all excluded from the judge configuration.
+        source = re.sub(r'^#include <(?:span|bit|filesystem|iosfwd|istream|ostream|'
+                        r'sstream|fstream|stdexcept)>\n', '', source, flags=re.M)
         source = source.replace(
             'const std::span<const std::size_t> subset(requests.data(), remaining);',
             'const std::vector<std::size_t> subset(requests.begin(), requests.begin() + remaining);')
@@ -165,21 +142,16 @@ def pack(output, time_limit, seed, limit, readable, optimization=DEFAULT_OPTIMIZ
         return ''.join(result)
 
     pieces = ['// Generated judge package; C++17; no external libraries.\n',
-              '#include <cstddef>\n#include <limits>\n#include <algorithm>\n#include <vector>\n',
+              '#include <cstddef>\n#include <limits>\n#include <algorithm>\n#include <vector>\n#include <iostream>\n',
               'template<class T, class P> void soict_erase_if(std::vector<T>& values, P predicate) {\n'
               'values.erase(std::remove_if(values.begin(), values.end(), predicate), values.end());\n}\n',
               'inline std::size_t soict_bit_width(std::size_t value) {\n'
               'return value ? std::numeric_limits<unsigned long long>::digits - '
               '__builtin_clzll(static_cast<unsigned long long>(value)) : 0;\n}\n']
     config_source = (ROOT / 'include/search/alns/Config.hpp').read_text()
-    for flag in ('route_pool_repair', 'path_generation', 'candidate_sampling'):
-        if not re.search(r'bool\s+' + flag + r'\s*=\s*true\s*;', config_source):
-            raise ValueError(f'path-only judge package requires default {flag}=true')
     if not re.search(r'bool\s+check\s*=\s*false\s*;', config_source):
         raise ValueError('judge package requires default check=false')
-    excluded = {'Instance.cpp', 'SyntheticGenerator.cpp', 'SolutionValidation.cpp', 'Balance.cpp',
-                'RouteRemoval.cpp', 'OpportunityRemoval.cpp', 'GreedyInsertion.cpp',
-                'RegretInsertion.cpp', 'ProfitInsertion.cpp'}
+    excluded = {'Instance.cpp', 'SyntheticGenerator.cpp', 'SolutionValidation.cpp'}
     for path in library_sources('soict_core') + library_sources('soict_alns'):
         if path.name not in excluded:
             pieces.append(inline(path))

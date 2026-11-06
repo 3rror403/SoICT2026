@@ -118,6 +118,7 @@ Instance read_instance(std::istream& in) {
     return instance;
 }
 
+#ifndef SOICT_SUBMISSION
 void write_instance(std::ostream& out, const Instance& instance) {
     instance.validate();
     out << std::setprecision(17);
@@ -155,4 +156,5 @@ void write_instance(std::ostream& out, const Instance& instance) {
     }
     if (!out) throw std::runtime_error("failed to write instance");
 }
+#endif
 } // namespace soict

@@ -1,5 +1,11 @@
 # SoICT2026
 
+The current solver uses route enumeration, sampled fleets, pricing, fleet selection,
+and local-search polishing. The legacy outer annealing mode and its CLI switches
+have been removed; the default solver logic is unchanged. `solve-alns` remains an
+alias for the current solver. See `SoICT2026 --help` for supported controls and
+[the submission guide](docs/submission/submission.md) for the 50,000-character C++17 package.
+
 ## Optimization retrospective — 2026-10-12
 
 The performance target is reached: **27/27 runs** across nine synthetic instances and solver seeds 1–3 exceeded the original best-known solution (BKS) targets within 90 seconds. The slowest process took **87.18s**. Longer runs improved the three largest objectives by **1,728–2,479 points** over matched 90-second runs, within a 180-second limit. All nine synthetic BKS records have been refreshed after independent checks.

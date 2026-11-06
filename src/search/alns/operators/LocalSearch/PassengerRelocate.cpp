@@ -20,10 +20,7 @@ PassengerRelocationContext::PassengerRelocationContext(const SearchState& state,
                                             route.nodes(), loc.pickup, loc.dropoff);
 }
 
-std::size_t PassengerRelocationContext::length(std::size_t taxi) const {
-    const auto size = state_.cache(taxi).nodes().size();
-    return taxi == source_ ? size - 2 : size;
-}
+
 
 std::size_t PassengerRelocationContext::original_position(std::size_t position) const {
     return position < removed_at_ ? position : position + 2;
@@ -38,11 +35,7 @@ void PassengerRelocationContext::add_source_range(FastRouteCheck& candidate,
     if (right_start < end) candidate.range(right_start + 2, end + 2);
 }
 
-std::optional<double> PassengerRelocationContext::gain(std::size_t taxi,
-                                                        std::size_t boundary) const {
-    if (taxi >= state_.taxi_count()) return std::nullopt;
-    return gain(taxi, state_.cache(taxi), boundary);
-}
+
 
 std::optional<double> PassengerRelocationContext::calculate_delta_fast(std::size_t taxi,
     const RouteCache& route, std::size_t boundary) const {

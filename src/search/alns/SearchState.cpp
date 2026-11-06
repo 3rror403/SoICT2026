@@ -91,12 +91,7 @@ std::size_t SearchState::dropoff_node(std::size_t request) const {
 
 void SearchState::rebuild_route(std::size_t taxi, const std::vector<std::size_t>& route) {
     const auto& in = *instance_;
-    const auto n = in.passengers.size(), m = in.parcels.size(), k_count = in.taxis.size();
-    for (const auto node : cache(taxi).nodes()) {
-        const auto request = node < k_count + 2 * n ? (node - k_count) % n :
-                             n + (node - k_count - 2 * n) % m;
-        locations_[request] = {};
-    }
+    for (const auto node : cache(taxi).nodes()) locations_[request_id(node)] = {};
     auto& slot = routes_by_taxi_.at(taxi);
     const bool was_active = is_active(taxi);
     if (route.empty()) {
@@ -111,11 +106,18 @@ void SearchState::rebuild_route(std::size_t taxi, const std::vector<std::size_t>
             active_taxis_.insert(std::lower_bound(active_taxis_.begin(),
                                                  active_taxis_.end(), taxi), taxi);
     }
+    locate_route(taxi);
+}
+
+std::size_t SearchState::request_id(std::size_t node) const {
+    const auto k = taxi_count(), n = passenger_count(), m = instance_->parcels.size();
+    return node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
+}
+
+void SearchState::locate_route(std::size_t taxi) {
+    const auto& route = cache(taxi).nodes();
     for (std::size_t p = 0; p < route.size(); ++p) {
-        const auto node = route[p];
-        const bool passenger = node < k_count + 2 * n;
-        const auto request = passenger ? (node - k_count) % n :
-                              n + (node - k_count - 2 * n) % m;
+        const auto node = route[p], request = request_id(node);
         auto& loc = locations_[request];
         loc.taxi = static_cast<int>(taxi);
         if (node == pickup_node(request)) loc.pickup = p;
@@ -289,10 +291,6 @@ bool SearchState::replace_request(std::size_t outgoing, std::size_t incoming,
 
 void SearchState::commit_validated_route(std::size_t taxi, RouteCache& updated,
                                         double gain) {
-    const auto k = taxi_count(), n = passenger_count(), m = instance_->parcels.size();
-    const auto request_id = [&](std::size_t node) {
-        return node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
-    };
     auto& slot = routes_by_taxi_.at(taxi);
     for (const auto node : slot.nodes()) locations_[request_id(node)] = {};
     const bool was_active = !slot.nodes().empty();
@@ -305,13 +303,7 @@ void SearchState::commit_validated_route(std::size_t taxi, RouteCache& updated,
     // Keep the validated version and reuse the old route's buffers next time.
     std::swap(slot, updated);
     if (!active) slot.clear();
-    for (std::size_t p = 0; p < slot.nodes().size(); ++p) {
-        const auto node = slot.nodes()[p], request = request_id(node);
-        auto& loc = locations_[request];
-        loc.taxi = static_cast<int>(taxi);
-        if (node == pickup_node(request)) loc.pickup = p;
-        else loc.dropoff = p;
-    }
+    locate_route(taxi);
     benefit_ += gain;
 }
 
@@ -387,16 +379,7 @@ void SearchState::commit_route_pair(std::size_t taxi_a, RouteCache new_a,
             if (!active) active_taxis_.insert(where, taxi);
             routes_by_taxi_[taxi] = std::move(updated);
         }
-        const auto k = instance_->taxis.size(), n = passenger_count(), m = instance_->parcels.size();
-        const auto& nodes = cache(taxi).nodes();
-        for (std::size_t p = 0; p < nodes.size(); ++p) {
-            const auto node = nodes[p];
-            const auto request = node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
-            auto& loc = locations_[request];
-            loc.taxi = static_cast<int>(taxi);
-            if (node == pickup_node(request)) loc.pickup = p;
-            else loc.dropoff = p;
-        }
+        locate_route(taxi);
     };
     assign(taxi_a, std::move(new_a));
     assign(taxi_b, std::move(new_b));

@@ -81,7 +81,7 @@ cmake --build cmake-build-debug --target SoICT2026 -j2
 
 For more candidate generation on the three largest cases, use `--time-limit 180 --generation-seconds 170`. The full nine-instance longer cohort uses `--generation-seconds 160`.
 
-`--generation-seconds`, `--enumeration-seconds`, `--path-prefix-limit`, and route-pool caps control generation. `--disable-candidate-sampling` restores the outer ALNS fallback when enumeration is incomplete. `--disable-path-generation` selects ALNS before final fleet repair. The CLI accounts for parsing and reserves output/cleanup time. Deadlines remain cooperative, so whole-process limits are also checked externally.
+`--generation-seconds`, `--enumeration-seconds`, `--path-prefix-limit`, and route-pool caps control generation. Incomplete enumeration uses sampled fleets. The legacy outer ALNS fallback and its switches have been removed; the current default generation and selection rules are preserved. The CLI accounts for parsing and reserves output/cleanup time. Deadlines remain cooperative, so whole-process limits are also checked externally.
 
 ## Validation and artifacts
 

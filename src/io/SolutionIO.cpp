@@ -9,6 +9,7 @@
 #include <string>
 
 namespace soict {
+#ifndef SOICT_SUBMISSION
 Solution read_solution(std::istream& in, const Instance& instance) {
     instance.validate();
     std::string line;
@@ -47,6 +48,7 @@ Solution read_solution(std::istream& in, const Instance& instance) {
         throw std::runtime_error("claimed benefit differs from recomputed benefit");
     return solution;
 }
+#endif
 
 void write_solution(std::ostream& out, const Solution& solution, const Instance& instance) {
     instance.validate();

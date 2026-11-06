@@ -4,6 +4,7 @@
 #include <limits>
 #include <algorithm>
 #include <vector>
+#include <iostream>
 template<class T, class P> void soict_erase_if(std::vector<T>& values, P predicate) {
 values.erase(std::remove_if(values.begin(), values.end(), predicate), values.end());
 }
@@ -19,7 +20,6 @@ return value ? std::numeric_limits<unsigned long long>::digits - __builtin_clzll
 // BEGIN include/model/Instance.hpp
 
 #include <cstddef>
-#include <stdexcept>
 #include <vector>
 
 namespace soict {
@@ -138,11 +138,9 @@ Evaluation Solution::evaluate(const Instance& instance) const {
 
 // BEGIN include/io/InstanceIO.hpp
 
-#include <iosfwd>
 
 namespace soict {
 Instance read_instance(std::istream& in);
-void write_instance(std::ostream& out, const Instance& instance);
 }
 
 // END include/io/InstanceIO.hpp
@@ -150,9 +148,6 @@ void write_instance(std::ostream& out, const Instance& instance);
 #include <array>
 #include <charconv>
 #include <iomanip>
-#include <istream>
-#include <ostream>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -270,11 +265,9 @@ Instance read_instance(std::istream& in) {
 
 // BEGIN include/io/SolutionIO.hpp
 
-#include <iosfwd>
 
 namespace soict {
 
-Solution read_solution(std::istream& in, const Instance& instance);
 void write_solution(std::ostream& out, const Solution& solution, const Instance& instance);
 
 } // namespace soict
@@ -283,13 +276,10 @@ void write_solution(std::ostream& out, const Solution& solution, const Instance&
 
 #include <cmath>
 #include <iomanip>
-#include <istream>
-#include <ostream>
-#include <sstream>
-#include <stdexcept>
 #include <string>
 
 namespace soict {
+
 void write_solution(std::ostream& out, const Solution& solution, const Instance& instance) {
     const auto evaluation = solution.evaluate(instance);
 
@@ -383,7 +373,6 @@ private:
 #include <algorithm>
 #include <atomic>
 #include <cmath>
-#include <stdexcept>
 
 namespace soict::alns {
 namespace {
@@ -539,7 +528,6 @@ std::optional<double> RouteCandidate::cost_if_feasible() const {
         return std::nullopt;
     return instance_.cost(taxi_, s.first) + s.cost;
 }
-
 } // namespace soict::alns
 
 // END src/search/alns/RouteCache.cpp
@@ -646,6 +634,8 @@ private:
     void commit_route_pair(std::size_t taxi_a, RouteCache new_a,
                            std::size_t taxi_b, RouteCache new_b, double gain);
     std::size_t dropoff_node(std::size_t request) const;
+    std::size_t request_id(std::size_t node) const;
+    void locate_route(std::size_t taxi);
 };
 } // namespace soict::alns
 
@@ -655,7 +645,6 @@ private:
 
 #include <cstddef>
 #include <limits>
-#include <stdexcept>
 #include <vector>
 
 namespace soict::alns {
@@ -842,7 +831,6 @@ inline double separated_insertion_cost(const Instance& in, std::size_t taxi,
 
 #include <algorithm>
 #include <cmath>
-#include <stdexcept>
 #include <utility>
 
 namespace soict::alns {
@@ -915,12 +903,7 @@ std::size_t SearchState::dropoff_node(std::size_t request) const {
 
 void SearchState::rebuild_route(std::size_t taxi, const std::vector<std::size_t>& route) {
     const auto& in = *instance_;
-    const auto n = in.passengers.size(), m = in.parcels.size(), k_count = in.taxis.size();
-    for (const auto node : cache(taxi).nodes()) {
-        const auto request = node < k_count + 2 * n ? (node - k_count) % n :
-                             n + (node - k_count - 2 * n) % m;
-        locations_[request] = {};
-    }
+    for (const auto node : cache(taxi).nodes()) locations_[request_id(node)] = {};
     auto& slot = routes_by_taxi_[taxi];
     const bool was_active = is_active(taxi);
     if (route.empty()) {
@@ -935,11 +918,18 @@ void SearchState::rebuild_route(std::size_t taxi, const std::vector<std::size_t>
             active_taxis_.insert(std::lower_bound(active_taxis_.begin(),
                                                  active_taxis_.end(), taxi), taxi);
     }
+    locate_route(taxi);
+}
+
+std::size_t SearchState::request_id(std::size_t node) const {
+    const auto k = taxi_count(), n = passenger_count(), m = instance_->parcels.size();
+    return node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
+}
+
+void SearchState::locate_route(std::size_t taxi) {
+    const auto& route = cache(taxi).nodes();
     for (std::size_t p = 0; p < route.size(); ++p) {
-        const auto node = route[p];
-        const bool passenger = node < k_count + 2 * n;
-        const auto request = passenger ? (node - k_count) % n :
-                              n + (node - k_count - 2 * n) % m;
+        const auto node = route[p], request = request_id(node);
         auto& loc = locations_[request];
         loc.taxi = static_cast<int>(taxi);
         if (node == pickup_node(request)) loc.pickup = p;
@@ -1113,10 +1103,6 @@ bool SearchState::replace_request(std::size_t outgoing, std::size_t incoming,
 
 void SearchState::commit_validated_route(std::size_t taxi, RouteCache& updated,
                                         double gain) {
-    const auto k = taxi_count(), n = passenger_count(), m = instance_->parcels.size();
-    const auto request_id = [&](std::size_t node) {
-        return node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
-    };
     auto& slot = routes_by_taxi_[taxi];
     for (const auto node : slot.nodes()) locations_[request_id(node)] = {};
     const bool was_active = !slot.nodes().empty();
@@ -1129,13 +1115,7 @@ void SearchState::commit_validated_route(std::size_t taxi, RouteCache& updated,
     // Keep the validated version and reuse the old route's buffers next time.
     std::swap(slot, updated);
     if (!active) slot.clear();
-    for (std::size_t p = 0; p < slot.nodes().size(); ++p) {
-        const auto node = slot.nodes()[p], request = request_id(node);
-        auto& loc = locations_[request];
-        loc.taxi = static_cast<int>(taxi);
-        if (node == pickup_node(request)) loc.pickup = p;
-        else loc.dropoff = p;
-    }
+    locate_route(taxi);
     benefit_ += gain;
 }
 
@@ -1211,16 +1191,7 @@ void SearchState::commit_route_pair(std::size_t taxi_a, RouteCache new_a,
             if (!active) active_taxis_.insert(where, taxi);
             routes_by_taxi_[taxi] = std::move(updated);
         }
-        const auto k = instance_->taxis.size(), n = passenger_count(), m = instance_->parcels.size();
-        const auto& nodes = cache(taxi).nodes();
-        for (std::size_t p = 0; p < nodes.size(); ++p) {
-            const auto node = nodes[p];
-            const auto request = node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
-            auto& loc = locations_[request];
-            loc.taxi = static_cast<int>(taxi);
-            if (node == pickup_node(request)) loc.pickup = p;
-            else loc.dropoff = p;
-        }
+        locate_route(taxi);
     };
     assign(taxi_a, std::move(new_a));
     assign(taxi_b, std::move(new_b));
@@ -1240,26 +1211,17 @@ void SearchState::commit_route_pair(std::size_t taxi_a, RouteCache new_a,
 
 #include <cstdint>
 #include <cstddef>
-#include <cmath>
 #include <string>
 
 namespace soict::alns {
 struct Config {
     std::uint64_t seed = 1;
     double time_limit = 59.0;
-    // Spend the search budget on collecting diverse routes, then let the
-    // final route-pool master combine them. The former 60,000-step schedule
-    // can still be selected with --disable-path-generation and
-    // --cooling 0.9998465061085267.
     bool local_search = true;
     bool clean_cut_2opt_star = true;
-    bool route_pool_repair = true;
-    bool path_generation = true;
-    bool paths_only = false;
     std::size_t path_prefix_limit = 1000000;
     std::size_t route_pool_limit = 400;
     std::size_t path_pool_limit = 400;
-    bool candidate_sampling = true;
     double enumeration_seconds = 2;
     double generation_seconds = 140;
     std::size_t fleet_refinement_interval = 2;
@@ -1278,56 +1240,9 @@ Result solve(const Instance& instance, const Config& config);
 
 // END include/search/alns/ALNS.hpp
 
-// BEGIN include/search/alns/operators/LocalSearch/LocalSearch.hpp
+// BEGIN include/search/alns/RouteGeneration.hpp
 
-// BEGIN include/search/alns/operators/LocalSearch/Move.hpp
-
-// BEGIN include/search/alns/operators/Destroy/DestroyOperator.hpp
-#include <cstddef>
-#include <random>
-#include <string_view>
-#include <vector>
-
-namespace soict::alns {
-class DestroyOperator {
-public:
-    virtual ~DestroyOperator() = default;
-    virtual std::vector<std::size_t> apply(SearchState& state, std::size_t count,
-                                           std::mt19937_64& rng) const = 0;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Destroy/DestroyOperator.hpp
-
-namespace soict::alns {
-class Move {
-public:
-    virtual ~Move() = default;
-    virtual bool improve(SearchState& state) const = 0;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/Move.hpp
-#include <chrono>
-#include <memory>
-#include <vector>
-
-namespace soict::alns {
-class LocalSearch {
-public:
-    void add_move(std::unique_ptr<Move> move) { moves_.push_back(std::move(move)); }
-    bool search(SearchState& state, std::chrono::steady_clock::time_point deadline =
-        std::chrono::steady_clock::time_point::max()) const;
-private:
-    std::vector<std::unique_ptr<Move>> moves_;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/LocalSearch.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/ParcelRelocate.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/MoveCache.hpp
+// BEGIN include/search/alns/operators/Repair/RoutePoolRepair.hpp
 
 // BEGIN include/search/alns/operators/Repair/InsertionSearch.hpp
 #include <chrono>
@@ -1351,7 +1266,7 @@ struct EmptyTaxiChoice {
     std::size_t taxi = 0;
     double gain = 0;
 };
-// Immutable request data reused by repeated AddRequest / ProfitInsertion cache
+// Immutable request data reused by repeated insertion-cache
 // queries. The instance must remain unchanged while its empty-taxi index lives.
 struct RequestSegments {
     bool passenger;
@@ -1429,6 +1344,124 @@ private:
 } // namespace soict::alns
 
 // END include/search/alns/operators/Repair/InsertionSearch.hpp
+#include <map>
+
+namespace soict::alns {
+// A restricted fleet repair over complete, independently feasible taxi routes.
+// Identical served sets on one taxi retain only the most profitable sequence.
+class RoutePoolRepair {
+public:
+    explicit RoutePoolRepair(const Instance& instance, std::size_t limit = 200, std::uint64_t seed = 1);
+    void remember(const SearchState& state);
+    // Enumerate feasible prefixes independently for each taxi. Only completed
+    // positive-profit routes enter the existing capped, served-set bank.
+    // Completion refers to prefix enumeration, not retention of every column.
+    void generate(Deadline deadline, std::size_t prefix_limit = 50000, bool priced = false);
+    // Perturb complete routes and repair with cached insertion. Preserve all
+    // sampled alternatives and return the best feasible sampled fleet.
+    Solution generate_fleets(Deadline deadline, std::shared_ptr<const EmptyTaxiIndex> index = {},
+                             const Solution* initial = nullptr, bool refine = true,
+                             bool clean_cut = true, std::size_t refinement_interval = 2,
+                             bool light_refinement = true, std::size_t refinement_cycles = 3);
+    void generate_replacements(Deadline deadline, const SearchState& fleet);
+    void set_limit(std::size_t limit);
+    bool enumeration_complete() const { return completed_taxis_ == pool_.size(); }
+    bool improve(SearchState& state, Deadline deadline);
+    // Statistics and completion describe the most recent improve() call,
+    // before any subsequent generation changes that call's route bank.
+private:
+    struct Column {
+        // The bank key owns the served set; store only its route and profit here.
+        std::vector<std::size_t> route;
+        double profit = 0;
+    };
+    using Bank = std::map<std::vector<std::size_t>, Column>;
+    struct Arc { std::size_t request; double latest_departure; };
+    const Instance& instance_;
+    std::size_t limit_, column_count_ = 0, nodes_ = 0;
+    bool timed_out_ = false;
+    std::size_t completed_taxis_ = 0;
+    std::vector<double> floors_;
+    std::uint64_t seed_ = 1;
+    std::uint64_t fleet_calls_ = 0;
+    std::uint64_t pricing_calls_ = 0;
+    std::uint64_t generation_calls_ = 0;
+    std::vector<Bank> pool_;
+    std::vector<std::uint64_t> versions_;
+    std::vector<std::vector<Arc>> next_;
+    std::vector<double> delivery_lower_;
+    bool generation_index_ready_ = false;
+    std::uint64_t bank_revision_ = 0;
+    mutable std::uint64_t prices_revision_ = std::numeric_limits<std::uint64_t>::max();
+    mutable std::vector<double> cached_prices_;
+    std::vector<std::size_t> request_scratch_;
+    void add(const SearchState&, std::size_t taxi, bool enforce_limit);
+    void add_column(std::size_t taxi, const std::vector<std::size_t>& requests,
+                    const std::vector<std::size_t>& route, double profit, bool enforce_limit);
+    std::vector<double> estimate_prices(Deadline deadline = Deadline::min()) const;
+};
+} // namespace soict::alns
+
+// END include/search/alns/operators/Repair/RoutePoolRepair.hpp
+
+namespace soict::alns {
+// Enumeration, sampled-fleet generation and pricing, in their existing order.
+void generate_routes(SearchState& current, RoutePoolRepair& pool,
+                     const Config& config, Deadline search_deadline);
+}
+
+// END include/search/alns/RouteGeneration.hpp
+
+// BEGIN include/search/alns/operators/LocalSearch/LocalSearch.hpp
+
+// BEGIN include/search/alns/operators/LocalSearch/Move.hpp
+
+// BEGIN include/search/alns/operators/Destroy/DestroyOperator.hpp
+#include <cstddef>
+#include <random>
+#include <string_view>
+#include <vector>
+
+namespace soict::alns {
+class DestroyOperator {
+public:
+    virtual ~DestroyOperator() = default;
+    virtual std::vector<std::size_t> apply(SearchState& state, std::size_t count,
+                                           std::mt19937_64& rng) const = 0;
+};
+} // namespace soict::alns
+
+// END include/search/alns/operators/Destroy/DestroyOperator.hpp
+
+namespace soict::alns {
+class Move {
+public:
+    virtual ~Move() = default;
+    virtual bool improve(SearchState& state) const = 0;
+};
+} // namespace soict::alns
+
+// END include/search/alns/operators/LocalSearch/Move.hpp
+#include <chrono>
+#include <memory>
+#include <vector>
+
+namespace soict::alns {
+class LocalSearch {
+public:
+    void add_move(std::unique_ptr<Move> move) { moves_.push_back(std::move(move)); }
+    bool search(SearchState& state, std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::time_point::max()) const;
+private:
+    std::vector<std::unique_ptr<Move>> moves_;
+};
+} // namespace soict::alns
+
+// END include/search/alns/operators/LocalSearch/LocalSearch.hpp
+
+// BEGIN include/search/alns/operators/LocalSearch/ParcelRelocate.hpp
+
+// BEGIN include/search/alns/operators/LocalSearch/MoveCache.hpp
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -1532,9 +1565,6 @@ public:
     bool valid() const { return served_; }
     bool removal_feasible() const { return removal_gain_.has_value(); }
     double removal_savings() const { return removal_savings_; }
-    std::size_t length(std::size_t taxi) const;
-    std::optional<double> gain(std::size_t taxi,
-        std::size_t pickup_boundary, std::size_t delivery_boundary) const;
     std::optional<double> gain(std::size_t taxi, const RouteCache& route,
         std::size_t pickup_boundary, std::size_t delivery_boundary) const;
     // Benefit delta from changed travel-cost arcs; feasibility is checked by gain().
@@ -1585,9 +1615,6 @@ public:
     bool valid() const { return served_; }
     bool removal_feasible() const { return removal_gain_.has_value(); }
     double removal_savings() const { return removal_savings_; }
-    std::size_t length(std::size_t taxi) const;
-    std::optional<double> gain(std::size_t taxi,
-                                              std::size_t boundary) const;
     std::optional<double> gain(std::size_t taxi,
         const RouteCache& route, std::size_t boundary) const;
     // Benefit delta from changed travel-cost arcs; feasibility is checked by gain().
@@ -1755,89 +1782,19 @@ private:
 } // namespace soict::alns
 
 // END include/search/alns/operators/LocalSearch/SwapRequest.hpp
-
-// BEGIN include/search/alns/operators/Repair/RoutePoolRepair.hpp
-#include <map>
-#include <iosfwd>
-
-namespace soict::alns {
-// A restricted fleet repair over complete, independently feasible taxi routes.
-// Identical served sets on one taxi retain only the most profitable sequence.
-class RoutePoolRepair {
-public:
-    explicit RoutePoolRepair(const Instance& instance, std::size_t limit = 200, std::uint64_t seed = 1);
-    void remember(const SearchState& state);
-    // Enumerate feasible prefixes independently for each taxi. Only completed
-    // positive-profit routes enter the existing capped, served-set bank.
-    // Completion refers to prefix enumeration, not retention of every column.
-    void generate(Deadline deadline, std::size_t prefix_limit = 50000, bool priced = false);
-    // Perturb complete routes and repair with cached insertion. Preserve all
-    // sampled alternatives and return the best feasible sampled fleet.
-    Solution generate_fleets(Deadline deadline, std::shared_ptr<const EmptyTaxiIndex> index = {},
-                             const Solution* initial = nullptr, bool refine = true,
-                             bool clean_cut = true, std::size_t refinement_interval = 2,
-                             bool light_refinement = true, std::size_t refinement_cycles = 3);
-    void generate_replacements(Deadline deadline, const SearchState& fleet);
-    void set_limit(std::size_t limit);
-    bool enumeration_complete() const { return completed_taxis_ == pool_.size(); }
-    bool improve(SearchState& state, Deadline deadline);
-    // Statistics and completion describe the most recent improve() call,
-    // before any subsequent generation changes that call's route bank.
-private:
-    struct Column {
-        std::vector<std::size_t> requests, route;
-        double profit = 0;
-    };
-    struct Arc { std::size_t request; double latest_departure; };
-    const Instance& instance_;
-    std::size_t limit_, column_count_ = 0, nodes_ = 0;
-    bool timed_out_ = false;
-    std::size_t completed_taxis_ = 0;
-    std::vector<double> floors_;
-    std::uint64_t seed_ = 1;
-    std::uint64_t fleet_calls_ = 0;
-    std::uint64_t pricing_calls_ = 0;
-    std::uint64_t generation_calls_ = 0;
-    std::vector<std::map<std::vector<std::size_t>, Column>> pool_;
-    std::vector<std::uint64_t> versions_;
-    std::vector<std::vector<Arc>> next_;
-    std::vector<double> delivery_lower_;
-    bool generation_index_ready_ = false;
-    std::uint64_t bank_revision_ = 0;
-    mutable std::uint64_t prices_revision_ = std::numeric_limits<std::uint64_t>::max();
-    mutable std::vector<double> cached_prices_;
-    void add(const SearchState&, std::size_t taxi, bool enforce_limit);
-    void add_column(std::size_t taxi, const std::vector<std::size_t>& requests,
-                    const std::vector<std::size_t>& route, double profit, bool enforce_limit);
-    std::vector<double> estimate_prices(Deadline deadline = Deadline::min()) const;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Repair/RoutePoolRepair.hpp
-
 #include <algorithm>
 #include <chrono>
-#include <cmath>
-#include <fstream>
 #include <iostream>
 #include <memory>
-#include <numeric>
-#include <random>
-#include <sstream>
-#include <iomanip>
-#include <stdexcept>
 
 namespace soict::alns {
 Result solve(const Instance& instance, const Config& config) {
     using Clock = std::chrono::steady_clock;
-
-
     const auto start = Clock::now();
     const auto deadline = start + std::chrono::duration_cast<Clock::duration>(
-                                  std::chrono::duration<double>(config.time_limit));
-    const double polish_reserve = config.route_pool_repair ? 1.0 : 0.0;
+        std::chrono::duration<double>(config.time_limit));
     const auto search_deadline = deadline - std::chrono::duration_cast<Clock::duration>(
-        std::chrono::duration<double>(std::min(polish_reserve, config.time_limit * 0.05)));
+        std::chrono::duration<double>(std::min(1.0, config.time_limit * 0.05)));
     LocalSearch local_search;
     local_search.add_move(std::make_unique<RemoveRequest>());
     local_search.add_move(std::make_unique<AddRequest>());
@@ -1857,74 +1814,18 @@ Result solve(const Instance& instance, const Config& config) {
         std::chrono::duration_cast<Clock::duration>(
             std::chrono::duration<double>(std::min(1.0, config.time_limit * 0.05))));
     current.set_empty_taxi_index(build_empty_taxi_index(current, index_deadline));
-    std::unique_ptr<RoutePoolRepair> route_pool;
-    bool paths_only = config.paths_only;
-    if (config.route_pool_repair) {
-        route_pool = std::make_unique<RoutePoolRepair>(instance, config.route_pool_limit,config.seed);
-        if (config.path_generation || config.paths_only) {
-            const auto generation_start = Clock::now();
-            const auto generation_deadline = std::min(search_deadline, generation_start +
-                std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
-                    std::min(config.enumeration_seconds, config.time_limit * 0.2))));
-            route_pool->generate(generation_deadline, config.path_prefix_limit);
-            const bool initial_enumeration_complete=route_pool->enumeration_complete();
-            const bool sampled = config.candidate_sampling &&
-                (!initial_enumeration_complete || instance.taxis.size()>48);
-            if (sampled) {
-                const auto beam_start = Clock::now();
-                // Leave a fixed selection budget instead of abandoning a
-                // large fraction of short competition runs after an easy master.
-                const auto selection_reserve=std::chrono::duration_cast<Clock::duration>(
-                    std::chrono::duration<double>(std::min(3.0,config.time_limit*0.05)));
-                const auto beam_deadline = std::min(search_deadline-selection_reserve,beam_start+
-                    std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
-                        config.generation_seconds)));
-                std::size_t phase=0;
-                do {
-                    const auto sample_deadline = instance.taxis.size()>48 ?
-                        std::min(beam_deadline,Clock::now()+std::chrono::seconds(6)) : beam_deadline;
-                    const auto initial=current.solution();
-                    SearchState generated(instance,route_pool->generate_fleets(sample_deadline,current.empty_taxi_index(),&initial,
-                                          config.local_search,config.clean_cut_2opt_star,config.fleet_refinement_interval,
-                                          config.light_fleet_refinement,config.fleet_refinement_cycles),
-                                          current.insertion_scratch_handle());
-                    generated.set_empty_taxi_index(current.empty_taxi_index());current.copy_from(generated);
-                    if (instance.taxis.size()>48 && Clock::now()+std::chrono::seconds(2)<beam_deadline) {
-                        const auto mix_deadline=std::min(beam_deadline,Clock::now()+std::chrono::seconds(6));
-                        route_pool->improve(current,mix_deadline);
-                        ++phase; (void)0;
-                        if (Clock::now()+std::chrono::seconds(2)<beam_deadline) {
-                            const auto price_deadline=std::min(beam_deadline,Clock::now()+std::chrono::seconds(3));
-                            if (phase%2) route_pool->generate_replacements(price_deadline,current);
-                            else route_pool->generate(price_deadline,config.path_prefix_limit,true);
-                            (void)0;
-                            if (!(phase%2)) (void)0;
-                            (void)0;
-                        }
-                    }
-                } while (instance.taxis.size()>48 && Clock::now()<beam_deadline);
-                paths_only = true;
-            }
-            if (initial_enumeration_complete) {
-                paths_only = true;
-                if (!sampled) route_pool->set_limit(std::min(config.route_pool_limit, config.path_pool_limit));
-            }
-            (void)0;
-        }
-    }
+    RoutePoolRepair route_pool(instance, config.route_pool_limit, config.seed);
+    generate_routes(current, route_pool, config, search_deadline);
     SearchState best = current;
-    if (route_pool) route_pool->remember(current);
-    if (route_pool) {
-        route_pool->improve(best, deadline);
+    route_pool.remember(current);
+    route_pool.improve(best, deadline);
+    (void)0;
+    // Keep the same final complete-move polishing and remaining-time gate.
+    if (config.local_search && Clock::now()+std::chrono::milliseconds(500)<deadline) {
+        const auto before_polish = best.benefit();
+        local_search.search(best, deadline);
+        if (best.benefit()>before_polish+1e-9) route_pool.remember(best);
         (void)0;
-        // Recombination can expose insertions and exchanges absent from the
-        // retained bank. Polish only complete moves within the remaining budget.
-        if (paths_only && config.local_search && Clock::now()+std::chrono::milliseconds(500)<deadline) {
-            const auto before_polish=best.benefit();
-            local_search.search(best,deadline);
-            if (best.benefit()>before_polish+1e-9) route_pool->remember(best);
-            (void)0;
-        }
     }
     Result result;
     result.solution = best.solution();
@@ -1933,6 +1834,67 @@ Result solve(const Instance& instance, const Config& config) {
 } // namespace soict::alns
 
 // END src/search/alns/ALNS.cpp
+
+// BEGIN src/search/alns/RouteGeneration.cpp
+#include <algorithm>
+#include <chrono>
+#include <iostream>
+
+namespace soict::alns {
+void generate_routes(SearchState& current, RoutePoolRepair& pool,
+                     const Config& config, Deadline search_deadline) {
+    using Clock = std::chrono::steady_clock;
+    const auto& instance = current.instance();
+    const auto generation_start = Clock::now();
+    const auto generation_deadline = std::min(search_deadline, generation_start +
+        std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
+            std::min(config.enumeration_seconds, config.time_limit * 0.2))));
+    pool.generate(generation_deadline, config.path_prefix_limit);
+    const bool initial_enumeration_complete=pool.enumeration_complete();
+    const bool sampled = !initial_enumeration_complete || instance.taxis.size()>48;
+    if (sampled) {
+        const auto beam_start = Clock::now();
+        // Leave a fixed selection budget instead of abandoning a
+        // large fraction of short competition runs after an easy master.
+        const auto selection_reserve=std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(std::min(3.0,config.time_limit*0.05)));
+        const auto beam_deadline = std::min(search_deadline-selection_reserve,beam_start+
+            std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
+                config.generation_seconds)));
+        std::size_t phase=0;
+        do {
+            const auto sample_deadline = instance.taxis.size()>48 ?
+                std::min(beam_deadline,Clock::now()+std::chrono::seconds(6)) : beam_deadline;
+            const auto initial=current.solution();
+            SearchState generated(instance,pool.generate_fleets(sample_deadline,current.empty_taxi_index(),&initial,
+                                  config.local_search,config.clean_cut_2opt_star,config.fleet_refinement_interval,
+                                  config.light_fleet_refinement,config.fleet_refinement_cycles),
+                                  current.insertion_scratch_handle());
+            generated.set_empty_taxi_index(current.empty_taxi_index());current.copy_from(generated);
+            if (instance.taxis.size()>48 && Clock::now()+std::chrono::seconds(2)<beam_deadline) {
+                const auto mix_deadline=std::min(beam_deadline,Clock::now()+std::chrono::seconds(6));
+                pool.improve(current,mix_deadline);
+                ++phase;
+                (void)0;
+                if (Clock::now()+std::chrono::seconds(2)<beam_deadline) {
+                    const auto price_deadline=std::min(beam_deadline,Clock::now()+std::chrono::seconds(3));
+                    if (phase%2) pool.generate_replacements(price_deadline,current);
+                    else pool.generate(price_deadline,config.path_prefix_limit,true);
+                    (void)0;
+                    if (!(phase%2)) (void)0;
+                    (void)0;
+                }
+            }
+        } while (instance.taxis.size()>48 && Clock::now()<beam_deadline);
+    }
+    if (initial_enumeration_complete) {
+        if (!sampled) pool.set_limit(std::min(config.route_pool_limit, config.path_pool_limit));
+    }
+    (void)0;
+}
+} // namespace soict::alns
+
+// END src/search/alns/RouteGeneration.cpp
 
 // BEGIN src/search/alns/operators/Destroy/RandomRemoval.cpp
 
@@ -2379,12 +2341,31 @@ MasterResult improve_route_master(const std::vector<MasterColumn>& columns,
 #include <functional>
 #include <iomanip>
 #include <iostream>
-#include <ostream>
+#include <iterator>
 #include <numeric>
-#include <stdexcept>
 #include <random>
 
 namespace soict::alns {
+namespace {
+// Erase the first minimum in map order and return the surviving minimum.
+// The caller has exceeded a positive cap, so at least two entries exist.
+template<class Bank, class Score>
+double erase_worst(Bank& bank, Score score) {
+    auto worst = bank.begin(), second = bank.end();
+    for (auto it = std::next(worst); it != bank.end(); ++it) {
+        if (score(it->second) < score(worst->second)) {
+            second = worst;
+            worst = it;
+        } else if (second == bank.end() || score(it->second) < score(second->second)) {
+            second = it;
+        }
+    }
+    const auto floor = score(second->second);
+    bank.erase(worst);
+    return floor;
+}
+}
+
 RoutePoolRepair::RoutePoolRepair(const Instance& instance, std::size_t limit, std::uint64_t seed)
     : instance_(instance), limit_(limit), floors_(instance.taxis.size(),-std::numeric_limits<double>::infinity()), seed_(seed),
       pool_(instance.taxis.size()), versions_(pool_.size(), 0) {
@@ -2395,7 +2376,8 @@ void RoutePoolRepair::add(const SearchState& state, std::size_t taxi, bool enfor
     const auto& nodes = state.cache(taxi).nodes();
     if (nodes.empty()) return;
     const auto k = state.taxi_count(), n = state.passenger_count();
-    std::vector<std::size_t> requests;
+    auto& requests = request_scratch_;
+    requests.clear();
     double revenue = 0;
     for (const auto node : nodes) {
         std::size_t request;
@@ -2416,19 +2398,19 @@ void RoutePoolRepair::add_column(std::size_t taxi, const std::vector<std::size_t
     if (!std::isfinite(profit) || profit <= 1e-9) return;
     auto& bank = pool_[taxi];
     if (enforce_limit && bank.size() >= limit_ && profit < floors_[taxi]) return;
-    const auto found = bank.find(requests);
-    if (found != bank.end() && found->second.profit >= profit) return;
-    bank[requests] = Column{requests, nodes, profit};
+    const auto found = bank.lower_bound(requests);
+    if (found != bank.end() && found->first == requests) {
+        if (found->second.profit >= profit) return;
+        // Preserve the route buffer when a better sequence serves the same set.
+        found->second.route.assign(nodes.begin(), nodes.end());
+        found->second.profit = profit;
+    } else {
+        bank.emplace_hint(found, requests, Column{nodes, profit});
+    }
     ++bank_revision_;
     if (!enforce_limit) floors_[taxi] = -std::numeric_limits<double>::infinity();
     if (enforce_limit && bank.size() > limit_) {
-        const auto worst = std::min_element(bank.begin(), bank.end(), [](const auto& a, const auto& b) {
-            return a.second.profit < b.second.profit;
-        });
-        bank.erase(worst);
-        floors_[taxi] = std::min_element(bank.begin(),bank.end(),[](const auto& a,const auto& b) {
-            return a.second.profit < b.second.profit;
-        })->second.profit;
+        floors_[taxi] = erase_worst(bank, [](const auto& column) { return column.profit; });
     }
 }
 
@@ -2450,6 +2432,7 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
         double ready, latest, drop_ready, drop_latest, service, revenue, weight;
     };
     std::vector<Request> requests;
+    requests.reserve(nr);
     for (std::size_t r = 0; r < nr; ++r) {
         if (r < n) {
             const auto& p = in.passengers[r];
@@ -2526,8 +2509,8 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
     const auto& next=next_;const auto& delivery_lower=delivery_lower_;
     completed_taxis_ = 0;
     std::vector<unsigned char> picked(nr, 0), opened(nr, 0);
-    std::vector<std::size_t> route, served;
-    route.reserve(2*nr); served.reserve(nr);
+    std::vector<std::size_t> route, served, key;
+    route.reserve(2*nr); served.reserve(nr); key.reserve(nr);
     for (std::size_t taxi = 0; taxi < pool_.size(); ++taxi) {
         if (std::chrono::steady_clock::now() >= deadline) break;
         // Fairly divide a finite generation budget across the remaining taxis.
@@ -2559,20 +2542,23 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
             if (!open_count && revenue-cost > 1e-9 &&
                 (priced ? (priced_bank.size()<limit_ || revenue-cost>=priced_floor) :
                     (pool_[taxi].size()<limit_ || revenue-cost>=floors_[taxi]))) {
-                auto key = served;
+                key.assign(served.begin(), served.end());
                 std::sort(key.begin(), key.end());
                 if (!priced) add_column(taxi, key, route, revenue-cost, true);
                 else {
                     const auto score=revenue-cost;
-                    auto found=priced_bank.find(key);
-                    if (found==priced_bank.end() || found->second.first<score) {
+                    const auto found=priced_bank.lower_bound(key);
+                    const bool existing=found!=priced_bank.end() && found->first==key;
+                    if (!existing || found->second.first<score) {
                         double profit=-cost;for (auto r:key)
                             profit+=r<n?in.passengers[r].revenue:in.parcels[r-n].revenue;
-                        priced_bank[key]={score,Column{key,route,profit}};
+                        if (existing) {
+                            found->second.first=score;
+                            found->second.second.route.assign(route.begin(),route.end());
+                            found->second.second.profit=profit;
+                        } else priced_bank.emplace_hint(found,key,std::make_pair(score,Column{route,profit}));
                         if (priced_bank.size()>limit_) {
-                            const auto worse=[](const auto& a,const auto& b){return a.second.first<b.second.first;};
-                            priced_bank.erase(std::min_element(priced_bank.begin(),priced_bank.end(),worse));
-                            priced_floor=std::min_element(priced_bank.begin(),priced_bank.end(),worse)->second.first;
+                            priced_floor=erase_worst(priced_bank,[](const auto& entry){return entry.first;});
                         }
                     }
                 }
@@ -2660,30 +2646,34 @@ std::vector<double> RoutePoolRepair::estimate_prices(Deadline deadline) const {
         (void)0;
         return cached_prices_;
     }
-    std::vector<const Column*> columns;
+    struct PricedColumn {
+        const std::vector<std::size_t>& requests;
+        double profit;
+    };
+    std::vector<PricedColumn> columns;
     std::vector<std::size_t> taxis;
     for (std::size_t t = 0; t < pool_.size(); ++t) for (const auto& [key,c] : pool_[t]) {
-        columns.push_back(&c);taxis.push_back(t);
+        columns.push_back({key,c.profit});taxis.push_back(t);
     }
 
     std::vector<std::size_t> order(columns.size());std::iota(order.begin(),order.end(),0);
-    std::sort(order.begin(),order.end(),[&](auto a,auto b) { return columns[a]->profit > columns[b]->profit; });
+    std::sort(order.begin(),order.end(),[&](auto a,auto b) { return columns[a].profit > columns[b].profit; });
     std::vector<unsigned char> occupied(nr,0), assigned(pool_.size(),0);
     double lower = 0;
     for (auto j : order) {
         if (assigned[taxis[j]]) continue;
-        bool free = true;for (auto r : columns[j]->requests) free &= !occupied[r];
+        bool free = true;for (auto r : columns[j].requests) free &= !occupied[r];
         if (!free) continue;
-        assigned[taxis[j]] = 1;for (auto r : columns[j]->requests) occupied[r] = 1;
-        lower += columns[j]->profit;
+        assigned[taxis[j]] = 1;for (auto r : columns[j].requests) occupied[r] = 1;
+        lower += columns[j].profit;
     }
     std::vector<double> prices(nr,0), best_prices = prices;
     double best = std::numeric_limits<double>::infinity();
     for (std::size_t iteration = 0; iteration < 192; ++iteration) {
         std::vector<double> maximum(pool_.size(),0);
-        std::vector<const Column*> chosen(pool_.size(),nullptr);
+        std::vector<const PricedColumn*> chosen(pool_.size(),nullptr);
         for (std::size_t j = 0; j < columns.size(); ++j) {
-            const auto& c = *columns[j];double value = c.profit;
+            const auto& c = columns[j];double value = c.profit;
             for (auto r : c.requests) value -= prices[r];
             if (value > maximum[taxis[j]]) { maximum[taxis[j]] = value;chosen[taxis[j]] = &c; }
         }
@@ -2705,13 +2695,14 @@ std::vector<double> RoutePoolRepair::estimate_prices(Deadline deadline) const {
         std::chrono::steady_clock::now()+std::chrono::milliseconds(250)<deadline) {
         std::vector<MasterColumn> subset;
         for (std::size_t taxi=0;taxi<pool_.size();++taxi) {
-            std::vector<std::pair<double,const Column*>> ranked;
-            for (const auto& [key,c]:pool_[taxi]) {
-                double score=c.profit;for (auto r:key) score-=best_prices[r];ranked.push_back({score,&c});
+            std::vector<std::pair<double,const Bank::value_type*>> ranked;
+            for (const auto& entry:pool_[taxi]) {
+                const auto& [key,c]=entry;
+                double score=c.profit;for (auto r:key) score-=best_prices[r];ranked.push_back({score,&entry});
             }
             const auto count=route_master_uses_cplex()?ranked.size():std::min<std::size_t>(64,ranked.size());
             std::partial_sort(ranked.begin(),ranked.begin()+count,ranked.end(),[](const auto& a,const auto& b){return a.first>b.first;});
-            for (std::size_t j=0;j<count;++j) subset.push_back({taxi,ranked[j].second->requests,ranked[j].second->profit});
+            for (std::size_t j=0;j<count;++j) subset.push_back({taxi,ranked[j].second->first,ranked[j].second->second.profit});
         }
         const auto lp_deadline=std::min(deadline,std::chrono::steady_clock::now()+std::chrono::seconds(2));
         auto proposed=route_master_prices(subset,pool_.size(),nr,lp_deadline);
@@ -2920,7 +2911,11 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
 
     // Restore every incumbent route even if the bank's size cap removed it.
     for (const auto taxi : state.active_taxis()) add(state, taxi, false);
-    std::vector<std::vector<Column>> columns(pool_.size());
+    struct SelectionColumn {
+        std::vector<std::size_t> requests, route;
+        double profit;
+    };
+    std::vector<std::vector<SelectionColumn>> columns(pool_.size());
     std::vector<int> selected(pool_.size(), -1), incumbent(pool_.size(), -1);
     std::vector<unsigned char> occupied(state.request_count(), 0);
     std::vector<std::size_t> frequency(state.request_count(), 0), order;
@@ -2928,7 +2923,8 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
     double best_profit = 0;
     for (std::size_t taxi = 0; taxi < pool_.size(); ++taxi) {
         auto& row = columns[taxi];
-        for (const auto& [key, column] : pool_[taxi]) row.push_back(column);
+        row.reserve(pool_[taxi].size());
+        for (const auto& [key, column] : pool_[taxi]) row.push_back({key,column.route,column.profit});
         std::sort(row.begin(), row.end(), [](const auto& a, const auto& b) {
             return a.profit > b.profit || (a.profit == b.profit && a.requests < b.requests);
         });
@@ -2956,7 +2952,7 @@ bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
     for (std::size_t taxi = 0; taxi < columns.size(); ++taxi)
         if (!columns[taxi].empty()) order.push_back(taxi);
     std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) { return conflict[a] > conflict[b]; });
-    const auto compatible = [&](const Column& column) {
+    const auto compatible = [&](const SelectionColumn& column) {
         for (auto r : column.requests) if (occupied[r]) return false;
         return true;
     };
@@ -3600,7 +3596,6 @@ bool LocalSearch::search(SearchState& state, std::chrono::steady_clock::time_poi
 
 #include <optional>
 #include <numeric>
-#include <stdexcept>
 #include <vector>
 
 namespace soict::alns {
@@ -3634,7 +3629,6 @@ bool AddRequest::improve(SearchState& state) const {
 // BEGIN src/search/alns/operators/LocalSearch/RemoveRequest.cpp
 
 #include <optional>
-#include <stdexcept>
 #include <vector>
 
 namespace soict::alns {
@@ -3670,7 +3664,6 @@ bool RemoveRequest::improve(SearchState& state) const {
 // BEGIN src/search/alns/operators/LocalSearch/PassengerRelocate.cpp
 
 #include <algorithm>
-#include <stdexcept>
 
 namespace soict::alns {
 PassengerRelocationContext::PassengerRelocationContext(const SearchState& state,
@@ -3687,10 +3680,7 @@ PassengerRelocationContext::PassengerRelocationContext(const SearchState& state,
                                             route.nodes(), loc.pickup, loc.dropoff);
 }
 
-std::size_t PassengerRelocationContext::length(std::size_t taxi) const {
-    const auto size = state_.cache(taxi).nodes().size();
-    return taxi == source_ ? size - 2 : size;
-}
+
 
 std::size_t PassengerRelocationContext::original_position(std::size_t position) const {
     return position < removed_at_ ? position : position + 2;
@@ -3705,11 +3695,7 @@ void PassengerRelocationContext::add_source_range(FastRouteCheck& candidate,
     if (right_start < end) candidate.range(right_start + 2, end + 2);
 }
 
-std::optional<double> PassengerRelocationContext::gain(std::size_t taxi,
-                                                        std::size_t boundary) const {
-    if (taxi >= state_.taxi_count()) return std::nullopt;
-    return gain(taxi, state_.cache(taxi), boundary);
-}
+
 
 std::optional<double> PassengerRelocationContext::calculate_delta_fast(std::size_t taxi,
     const RouteCache& route, std::size_t boundary) const {
@@ -3845,7 +3831,6 @@ bool PassengerRelocate::improve(SearchState& state) const {
 
 #include <algorithm>
 #include <limits>
-#include <stdexcept>
 
 namespace soict::alns {
 ParcelRelocationContext::ParcelRelocationContext(const SearchState& state,
@@ -3867,10 +3852,7 @@ ParcelRelocationContext::ParcelRelocationContext(const SearchState& state,
                                             route.nodes(), loc.pickup, loc.dropoff);
 }
 
-std::size_t ParcelRelocationContext::length(std::size_t taxi) const {
-    const auto size = state_.cache(taxi).nodes().size();
-    return taxi == source_ ? size - 2 : size;
-}
+
 
 std::size_t ParcelRelocationContext::original_position(std::size_t position) const {
     if (position < pickup_at_) return position;
@@ -3897,11 +3879,7 @@ void ParcelRelocationContext::add_source_range(FastRouteCheck& candidate,
     if (right_start < end) candidate.range(right_start + 2, end + 2);
 }
 
-std::optional<double> ParcelRelocationContext::gain(std::size_t taxi,
-    std::size_t a, std::size_t b) const {
-    if (taxi >= state_.taxi_count()) return std::nullopt;
-    return gain(taxi, state_.cache(taxi), a, b);
-}
+
 
 std::optional<double> ParcelRelocationContext::calculate_delta_fast(std::size_t taxi,
     const RouteCache& route, std::size_t a, std::size_t b) const {
@@ -4091,7 +4069,6 @@ bool ParcelRelocate::improve(SearchState& state) const {
 
 // BEGIN src/search/alns/operators/LocalSearch/CleanCut2OptStar.cpp
 
-#include <stdexcept>
 #include <vector>
 
 namespace soict::alns {
@@ -4177,7 +4154,6 @@ bool CleanCut2OptStar::improve(SearchState& state) const {
 // BEGIN src/search/alns/operators/LocalSearch/ReplaceRequest.cpp
 
 #include <algorithm>
-#include <stdexcept>
 #include <tuple>
 
 namespace soict::alns {
@@ -4317,7 +4293,6 @@ bool ReplaceRequest::improve(SearchState& state) const {
 
 #include <algorithm>
 #include <limits>
-#include <stdexcept>
 #include <tuple>
 
 namespace soict::alns {

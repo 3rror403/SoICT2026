@@ -23,17 +23,12 @@ target_include_directories(soict_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
 add_library(soict_alns
     src/search/alns/RouteCache.cpp
     src/search/alns/SearchState.cpp
-    src/search/alns/Balance.cpp
     src/search/alns/ALNS.cpp
+    src/search/alns/RouteGeneration.cpp
     src/search/alns/operators/Destroy/RandomRemoval.cpp
     src/search/alns/operators/Destroy/WorstRemoval.cpp
     src/search/alns/operators/Destroy/RelatedRemoval.cpp
-    src/search/alns/operators/Destroy/RouteRemoval.cpp
-    src/search/alns/operators/Destroy/OpportunityRemoval.cpp
     src/search/alns/operators/Repair/InsertionSearch.cpp
-    src/search/alns/operators/Repair/GreedyInsertion.cpp
-    src/search/alns/operators/Repair/RegretInsertion.cpp
-    src/search/alns/operators/Repair/ProfitInsertion.cpp
     src/search/alns/operators/Repair/RoutePoolRepair.cpp
     src/search/alns/operators/Repair/RoutePoolMaster.cpp
     src/search/alns/operators/LocalSearch/LocalSearch.cpp
@@ -155,12 +150,6 @@ if(BUILD_TESTING AND EXISTS "${PROJECT_SOURCE_DIR}/tests/CoreTest.cpp")
     add_executable(soict_insertion_neighborhood_test tests/InsertionNeighborhoodTest.cpp)
     target_link_libraries(soict_insertion_neighborhood_test PRIVATE soict_alns)
     add_test(NAME soict_insertion_neighborhood_test COMMAND soict_insertion_neighborhood_test)
-    add_executable(soict_repair_operators_test tests/RepairOperatorsTest.cpp)
-    target_link_libraries(soict_repair_operators_test PRIVATE soict_alns)
-    add_test(NAME soict_repair_operators_test COMMAND soict_repair_operators_test)
-    add_executable(soict_route_removal_test tests/RouteRemovalTest.cpp)
-    target_link_libraries(soict_route_removal_test PRIVATE soict_alns)
-    add_test(NAME soict_route_removal_test COMMAND soict_route_removal_test)
     add_executable(soict_route_pool_repair_test tests/RoutePoolRepairTest.cpp)
     target_link_libraries(soict_route_pool_repair_test PRIVATE soict_alns)
     add_test(NAME soict_route_pool_repair_test COMMAND soict_route_pool_repair_test)

@@ -186,20 +186,17 @@ def prune_metrics(relative, source):
         source = re.sub(r'^\s*mutable (?:std::size_t calls_|double total_gain_)[^\n]*\n',
                         '', source, flags=re.M)
     elif relative == 'src/search/alns/ALNS.cpp':
-        source = re.sub(r'^\s*const auto (?:initial_completed_taxis|pricing_start|before|pool_start|'
+        source = re.sub(r'^\s*const auto (?:before|pool_start|'
                         r'polish_start)\s*=[^\n]*\n', '', source, flags=re.M)
-        source = source.replace('    SearchState candidate = current;\n', '')
-        source = source.replace('    CleanCut2OptStar* clean_cut = nullptr;\n', '')
-        source = source.replace('        clean_cut = move.get();\n', '')
-        source = re.sub(r'^\s*result\.(?:benefit|iterations|seconds|annealing_complete|paths_only) =[^\n]*\n',
+    elif relative == 'src/search/alns/RouteGeneration.cpp':
+        source = re.sub(r'^\s*const auto (?:initial_completed_taxis|pricing_start)\s*=[^\n]*\n',
                         '', source, flags=re.M)
     elif relative == 'include/search/alns/ALNS.hpp':
         source = re.sub(r'struct Result \{.*?\};', 'struct Result { Solution solution; };',
                         source, flags=re.S)
     elif relative == 'include/search/alns/Config.hpp':
-        source = re.sub(r'^\s*(?:bool|double|std::size_t|std::string) (?:temperature|cooling|check|'
-                        r'all_unserved_repair|profit_repair|route_removal|opportunity_removal|'
-                        r'ls_interval|thompson|log_directory)\b[^\n]*\n', '', source, flags=re.M)
+        source = re.sub(r'^\s*(?:bool|std::string) (?:check|log_directory)\b[^\n]*\n',
+                        '', source, flags=re.M)
     return source
 
 
@@ -214,8 +211,6 @@ def prune_unused(relative, source):
         source = erase_block(source, 'void combine(')
         source = erase_block(source, 'bool add_empty_taxis(')
     elif relative == 'include/search/alns/operators/Repair/InsertionSearch.hpp':
-        source = source.replace('"search/alns/operators/Repair/RepairOperator.hpp"',
-                                '"search/alns/SearchState.hpp"')
         source = erase_block(source, 'class BestInsertionCache {', semicolon=True)
         source = erase_block(source, 'class RepairInsertionCache {', semicolon=True)
         start = source.index('InsertionOptions insertion_options(')
@@ -262,10 +257,6 @@ def prune_unused(relative, source):
     elif relative == 'include/search/alns/SearchState.hpp':
         source = source.replace('    void swap(SearchState& other) noexcept;\n', '')
         source = source.replace('    void check() const;\n', '')
-    elif relative == 'src/search/alns/RouteCache.cpp':
-        source = erase_block(source, 'double RouteCandidate::cost_unchecked(')
-    elif relative == 'include/search/alns/RouteCache.hpp':
-        source = source.replace('    [[nodiscard]] double cost_unchecked() const;\n', '')
     elif relative == 'src/search/alns/ALNS.cpp':
         source = source.replace('    if (config.check) current.check();\n', '')
         source = source.replace('    if (config.check) best.check();\n', '')

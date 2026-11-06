@@ -65,7 +65,6 @@ public:
     void add_segment(const Segment& segment);
     void add_node(std::size_t node);
     [[nodiscard]] std::optional<double> cost_if_feasible() const;
-    [[nodiscard]] double cost_unchecked() const;
 
 private:
     const Instance& instance_;

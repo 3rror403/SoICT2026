@@ -12,9 +12,6 @@ public:
     [[nodiscard]] bool valid() const { return served_; }
     [[nodiscard]] bool removal_feasible() const { return removal_gain_.has_value(); }
     [[nodiscard]] double removal_savings() const { return removal_savings_; }
-    [[nodiscard]] std::size_t length(std::size_t taxi) const;
-    [[nodiscard]] std::optional<double> gain(std::size_t taxi,
-        std::size_t pickup_boundary, std::size_t delivery_boundary) const;
     [[nodiscard]] std::optional<double> gain(std::size_t taxi, const RouteCache& route,
         std::size_t pickup_boundary, std::size_t delivery_boundary) const;
     // Benefit delta from changed travel-cost arcs; feasibility is checked by gain().

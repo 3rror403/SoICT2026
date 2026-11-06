@@ -53,21 +53,17 @@ void usage() {
               << "  SoICT2026 solve-stdio [--seed S] [--time-limit SEC] < INSTANCE > SOLUTION\n"
               << "  SoICT2026 --instance FILE --seed S --time-limit SEC [--out SOLUTION]\n"
               << "    Omit --out or use --out - to print the solution to stdout.\n"
-              << "    Optional: --log DIR --temp T --cooling RATE --check --disable-ls --ls-interval N --balance-thompson\n";
+              << "    Optional: --log DIR --check --disable-ls\n";
     std::cerr << "    Clean-cut suffix exchange is enabled by default; --disable-clean-cut-2opt-star disables it.\n";
     std::cerr << "    Default: bounded route generation and conflict-free fleet selection.\n"
               << "    Large or incomplete banks use sampled fleets, priced routes, and repeated fleet selection.\n"
-              << "    --disable-candidate-sampling restores the ALNS fallback after incomplete enumeration.\n"
-              << "    Route generation: --disable-path-generation --paths-only --path-prefix-limit N --path-pool-limit N\n"
+              << "    Route generation: --path-prefix-limit N --path-pool-limit N\n"
               << "    Generation defaults: 1,000,000 prefixes and 400 routes per taxi; enumeration shares at most two seconds.\n"
               << "    --enumeration-seconds controls DFS; --generation-seconds controls route sampling.\n"
               << "    --fleet-refinement-interval N refines every N sampled fleets (default two).\n"
               << "    Candidate sampling uses light refinement; --full-fleet-refinement adds relocation and swap.\n"
               << "    --fleet-refinement-cycles N sets sampling refinement cycles (default three).\n"
-              << "    ALNS route bank: --route-pool-limit N\n"
-              << "    Route and opportunity removal are enabled; --legacy-operators restores the original three destroys and greedy repair.\n"
-              << "    Ablations: --removed-only-repair --disable-profit-repair --disable-route-removal\n"
-              << "               --disable-opportunity-removal --disable-route-pool-repair\n";
+              << "    Route bank: --route-pool-limit N\n";
     std::cerr << "    Large-bank backend: " << (soict::alns::route_master_uses_cplex()?"CPLEX (one thread)":"native C++") << ".\n"
               << "    CLI time limits include input parsing and reserve two seconds for final output and cleanup.\n";
 #ifdef SOICT_WITH_CPLEX
@@ -96,28 +92,8 @@ int main(int argc, char** argv) {
                 if (key == "--disable-ls") { config.local_search = false; continue; }
                 if (key == "--clean-cut-2opt-star") { config.clean_cut_2opt_star = true; continue; }
                 if (key == "--disable-clean-cut-2opt-star") { config.clean_cut_2opt_star = false; continue; }
-                if (key == "--balance-thompson") { config.thompson = true; continue; }
-                if (key == "--all-unserved-repair") { config.all_unserved_repair = true; continue; }
-                if (key == "--profit-repair") { config.profit_repair = true; continue; }
-                if (key == "--route-removal") { config.route_removal = true; continue; }
-                if (key == "--opportunity-removal") { config.opportunity_removal = true; continue; }
-                if (key == "--route-pool-repair") { config.route_pool_repair = true; continue; }
-                if (key == "--generate-paths") { config.path_generation = true; continue; }
-                if (key == "--disable-path-generation") { config.path_generation = false; continue; }
-                if (key == "--paths-only") { config.paths_only = true; continue; }
                 if (key == "--full-fleet-refinement") { config.light_fleet_refinement = false; continue; }
                 if (key == "--light-fleet-refinement") { config.light_fleet_refinement = true; continue; }
-                if (key == "--disable-candidate-sampling") { config.candidate_sampling = false; continue; }
-                if (key == "--removed-only-repair") { config.all_unserved_repair = false; continue; }
-                if (key == "--disable-profit-repair") { config.profit_repair = false; continue; }
-                if (key == "--disable-route-removal") { config.route_removal = false; continue; }
-                if (key == "--disable-opportunity-removal") { config.opportunity_removal = false; continue; }
-                if (key == "--disable-route-pool-repair") { config.route_pool_repair = false; continue; }
-                if (key == "--legacy-operators") {
-                    config.all_unserved_repair = config.profit_repair = config.route_removal =
-                        config.opportunity_removal = config.route_pool_repair = false;
-                    continue;
-                }
                 if (i + 1 >= argc) throw std::invalid_argument("option needs a value: " + key);
                 const char* value = argv[++i];
                 if (key == "--instance" || key == "--input" || key == "-i")
@@ -147,18 +123,9 @@ int main(int argc, char** argv) {
                     config.path_pool_limit = count_arg(value);
                     if (!config.path_pool_limit) throw std::invalid_argument("path pool limit must be positive");
                 }
-                else if (key == "--ls-interval") {
-                    config.ls_interval = count_arg(value);
-                    if (!config.ls_interval) throw std::invalid_argument("ls interval must be positive");
-                }
                 else if (key == "--time-limit" || key == "--time" || key == "-t") {
                     const double requested = alns_positive_arg(value);
                     config.time_limit = requested > 3 ? requested - 2 : requested * 0.9;
-                } else if (key == "--temp" || key == "-T")
-                    config.temperature = alns_positive_arg(value);
-                else if (key == "--cooling") {
-                    config.cooling = alns_positive_arg(value);
-                    if (config.cooling >= 1) throw std::invalid_argument("cooling must be below 1");
                 } else if (key == "--log") config.log_directory = value;
                 else throw std::invalid_argument("unknown solve-alns option: " + key);
             }
@@ -180,10 +147,9 @@ int main(int argc, char** argv) {
             }
             soict::write_solution(solution_path == "-" ? std::cout : out, result.solution, instance);
             (solution_path == "-" ? std::cerr : std::cout) << std::setprecision(17) << "benefit=" << result.benefit
-                      << " iterations=" << result.iterations
+                      << " iterations=0"
                       << " seconds=" << result.seconds
-                      << " stop=" << (result.paths_only ? "route_pool" :
-                          result.annealing_complete ? "temperature" : "time_limit")
+                      << " stop=" << (result.timed_out ? "time_limit" : "route_pool")
                       << '\n';
             return 0;
         }

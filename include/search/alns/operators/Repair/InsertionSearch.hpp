@@ -1,5 +1,5 @@
 #pragma once
-#include "search/alns/operators/Repair/RepairOperator.hpp"
+#include "search/alns/SearchState.hpp"
 #include <chrono>
 #include <cstdint>
 #include <limits>
@@ -21,7 +21,7 @@ struct EmptyTaxiChoice {
     std::size_t taxi = 0;
     double gain = 0;
 };
-// Immutable request data reused by repeated AddRequest / ProfitInsertion cache
+// Immutable request data reused by repeated insertion-cache
 // queries. The instance must remain unchanged while its empty-taxi index lives.
 struct RequestSegments {
     bool passenger;

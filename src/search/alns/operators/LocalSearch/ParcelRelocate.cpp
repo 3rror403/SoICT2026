@@ -26,10 +26,7 @@ ParcelRelocationContext::ParcelRelocationContext(const SearchState& state,
                                             route.nodes(), loc.pickup, loc.dropoff);
 }
 
-std::size_t ParcelRelocationContext::length(std::size_t taxi) const {
-    const auto size = state_.cache(taxi).nodes().size();
-    return taxi == source_ ? size - 2 : size;
-}
+
 
 std::size_t ParcelRelocationContext::original_position(std::size_t position) const {
     if (position < pickup_at_) return position;
@@ -56,11 +53,7 @@ void ParcelRelocationContext::add_source_range(FastRouteCheck& candidate,
     if (right_start < end) candidate.range(right_start + 2, end + 2);
 }
 
-std::optional<double> ParcelRelocationContext::gain(std::size_t taxi,
-    std::size_t a, std::size_t b) const {
-    if (taxi >= state_.taxi_count()) return std::nullopt;
-    return gain(taxi, state_.cache(taxi), a, b);
-}
+
 
 std::optional<double> ParcelRelocationContext::calculate_delta_fast(std::size_t taxi,
     const RouteCache& route, std::size_t a, std::size_t b) const {
