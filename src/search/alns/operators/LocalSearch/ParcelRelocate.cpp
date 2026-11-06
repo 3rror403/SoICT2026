@@ -1,59 +1,21 @@
 #include "search/alns/operators/LocalSearch/ParcelRelocate.hpp"
 #include "search/alns/operators/Repair/InsertionSearch.hpp"
 #include "search/alns/MoveCost.hpp"
+#include "search/alns/RequestData.hpp"
+#include "search/alns/operators/LocalSearch/RelocationEngine.hpp"
 
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
 
 namespace soict::alns {
-ParcelRelocationContext::ParcelRelocationContext(const SearchState& state,
-                                                 std::size_t request)
-    : state_(state), request_(request), source_(0), pickup_at_(0), delivery_at_(0) {
-    if (request < state.passenger_count() || request >= state.request_count() ||
-        state.location(request).taxi < 0) return;
-    const auto& loc = state.location(request);
-    source_ = static_cast<std::size_t>(loc.taxi);
-    pickup_at_ = loc.pickup;
-    delivery_at_ = loc.dropoff;
-    served_ = true;
-    removal_gain_ = state.removal_gain(request);
-    pickup_ = single_node(state.instance(), state.pickup_node(request));
-    delivery_ = single_node(state.instance(),
-        state.instance().parcel_dropoff(request - state.passenger_count()));
-    const auto& route = state.cache(source_);
-    removal_savings_ = removal_savings_cost(state.instance(), source_,
-                                            route.nodes(), loc.pickup, loc.dropoff);
+ParcelRelocationContext::ParcelRelocationContext(const SearchState& state, std::size_t request)
+    : RelocationSource<false>(state, request) {
+    if (!valid()) return;
+    const auto data = request_data(state.instance(), request);
+    pickup_ = single_node(state.instance(), data.pickup);
+    delivery_ = single_node(state.instance(), data.delivery);
 }
-
-
-
-std::size_t ParcelRelocationContext::original_position(std::size_t position) const {
-    if (position < pickup_at_) return position;
-    if (position < delivery_at_ - 1) return position + 1;
-    return position + 2;
-}
-
-bool ParcelRelocationContext::source_boundary_allowed(const RouteCache& route,
-                                                       std::size_t boundary) const {
-    return !boundary || route.boundary_allowed(state_.instance(),
-                                               original_position(boundary - 1) + 1);
-}
-
-void ParcelRelocationContext::add_source_range(FastRouteCheck& candidate,
-                                               std::size_t first,
-                                               std::size_t end) const {
-    const auto left_end = std::min(end, pickup_at_);
-    if (first < left_end) candidate.range(first, left_end);
-    const auto middle_start = std::max(first, pickup_at_);
-    const auto middle_end = std::min(end, delivery_at_ - 1);
-    if (middle_start < middle_end)
-        candidate.range(middle_start + 1, middle_end + 1);
-    const auto right_start = std::max(first, delivery_at_ - 1);
-    if (right_start < end) candidate.range(right_start + 2, end + 2);
-}
-
-
 
 std::optional<double> ParcelRelocationContext::calculate_delta_fast(std::size_t taxi,
     const RouteCache& route, std::size_t a, std::size_t b) const {
@@ -170,72 +132,12 @@ std::optional<InsertionChoice> ParcelRelocate::best_on_taxi(
 }
 
 bool ParcelRelocate::improve(SearchState& state) const {
-    RelocationPool pool;
-    const auto scan_request = [&](std::size_t r, bool all,
-                                  std::size_t first, std::size_t second) {
-        if (state.location(r).taxi < 0) return;
-        ParcelRelocationContext context(state, r);
-        const auto source = static_cast<std::size_t>(state.location(r).taxi);
-        if (!context.valid()) return;
-        // The source stays unchanged throughout this request's destination scan.
-        const auto source_version = state.cache(source).version();
-        const auto& index = state.empty_taxi_index();
-        const bool indexed = index && index->ensure(r);
-        if (indexed) {
-            if (all) {
-                static const RouteCache empty_route;
-                for (const auto& choice : index->choices(r)) {
-                    if (state.is_active(choice.taxi)) continue;
-                    const auto gain = context.gain(choice.taxi, empty_route, 0, 0);
-                    if (gain) pool.add(InsertionChoice{r, choice.taxi, 0, 0, *gain}, source);
-                    break;
-                }
-            }
-            for (const auto taxi : state.active_taxis())
-                if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
-                                         source_version), source);
-        } else {
-            for (std::size_t taxi = 0; taxi < state.taxi_count(); ++taxi)
-                if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
-                                         source_version), source);
-        }
-    };
-    const auto scan_all = [&] {
-        pool.clear();
-        for (std::size_t r = state.passenger_count(); r < state.request_count(); ++r)
-            scan_request(r, true, 0, 0);
-    };
-    scan_all();
-    bool changed = false;
-    while (const auto descriptor = pool.best()) {
-        const auto choice = descriptor->choice;
-        const auto source = descriptor->source;
-        const auto target = choice.taxi;
-        const bool source_active_before = state.is_active(source);
-        const bool target_active_before = state.is_active(target);
-        const bool same = source == target;
-        const bool applied = same ? state.relocate_within_route(
-            choice.request, choice.pickup, choice.delivery) :
-            (state.remove(choice.request) && state.insert(choice.request,
-                target, choice.pickup, choice.delivery));
-        if (!applied)
-            throw std::logic_error("parcel relocation descriptor disagrees with mutation");
-        changed = true;
-        if (state.is_active(source) != source_active_before ||
-            state.is_active(target) != target_active_before) {
-            scan_all();
-            continue;
-        }
-        pool.erase_affected(source, target);
-        for (std::size_t r = state.passenger_count(); r < state.request_count(); ++r) {
-            if (state.location(r).taxi < 0) continue;
-            const auto origin = static_cast<std::size_t>(state.location(r).taxi);
-            scan_request(r, origin == source || origin == target, source, target);
-        }
-    }
-    return changed;
+    return improve_relocations<ParcelRelocationContext, false>(state, state.passenger_count(), state.request_count(),
+        [this](const SearchState& current, const ParcelRelocationContext& context,
+               std::size_t request, std::size_t taxi, const RouteCache& route,
+               std::uint64_t source_version) {
+            return best_on_taxi(current, context, request, taxi, route, source_version);
+        });
 }
 
 } // namespace soict::alns

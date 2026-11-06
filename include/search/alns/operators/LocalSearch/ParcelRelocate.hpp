@@ -1,17 +1,13 @@
 #pragma once
 #include "search/alns/operators/LocalSearch/Move.hpp"
 #include "search/alns/operators/LocalSearch/MoveCache.hpp"
-#include "search/alns/FastRouteCheck.hpp"
-#include "search/alns/operators/LocalSearch/RelocationPool.hpp"
+#include "search/alns/operators/LocalSearch/RelocationSource.hpp"
 #include <optional>
 
 namespace soict::alns {
-class ParcelRelocationContext {
+class ParcelRelocationContext : public RelocationSource<false> {
 public:
     ParcelRelocationContext(const SearchState& state, std::size_t request);
-    [[nodiscard]] bool valid() const { return served_; }
-    [[nodiscard]] bool removal_feasible() const { return removal_gain_.has_value(); }
-    [[nodiscard]] double removal_savings() const { return removal_savings_; }
     [[nodiscard]] std::optional<double> gain(std::size_t taxi, const RouteCache& route,
         std::size_t pickup_boundary, std::size_t delivery_boundary) const;
     // Benefit delta from changed travel-cost arcs; feasibility is checked by gain().
@@ -24,17 +20,7 @@ public:
         const RouteCache& route, std::size_t pickup_boundary,
         std::size_t delivery_boundary, const FastRouteCheck& prefix) const;
 private:
-    const SearchState& state_;
-    std::size_t request_, source_, pickup_at_, delivery_at_;
-    bool served_ = false;
-    std::optional<double> removal_gain_;
-    double removal_savings_ = 0;
     Segment pickup_, delivery_;
-    [[nodiscard]] std::size_t original_position(std::size_t position) const;
-    [[nodiscard]] bool source_boundary_allowed(const RouteCache& route,
-                                                std::size_t boundary) const;
-    void add_source_range(FastRouteCheck& candidate, std::size_t first,
-                          std::size_t end) const;
 };
 
 class ParcelRelocate final : public Move {

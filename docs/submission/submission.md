@@ -20,6 +20,14 @@ g++ -std=c++17 -O2 -DNDEBUG submission/submission.cpp -o /tmp/soict-submission
 
 The default package is limited to 50,000 characters for CMS. The packager removes comments and unnecessary whitespace, deduplicates standard includes, and shortens identifiers while preserving token boundaries and string literals. When needed, it compresses repeated token sequences into macros and verifies that expansion reproduces the original tokens. Remaining one-letter identifiers are assigned to frequent generated aliases. Route generation, route-pool selection, and final full-neighborhood polishing remain included. The feasibility tests used to select valid routes and moves remain intact. Objective recomputation preserves cost subtraction and revenue addition order for valid solutions. The package omits the development CLI, synthetic generator, solution-file reader, instance writer, and development logging. Both complete and incomplete route banks use the same generation pipeline in `RouteGeneration.cpp`; incomplete or large banks still use the existing sampled-fleet rules. Explicit `SOICT_SUBMISSION` guards separate development logging from the shared driver instead of extracting the old annealing loop through text anchors. The packaged executable runs the judge entry point directly and accepts no CLI options.
 
+The modular source shares request metadata through `RequestData`, segment
+composition through `SegmentAccumulator`, and relocation traversal and source
+bookkeeping through `RelocationEngine` and `RelocationSource`. Passenger and
+parcel destination scans retain their specialized feasibility rules. This
+reduces duplicated source while preserving move order, tie handling, cache
+versions, and the existing generation and pruning rules. The submission uses
+these same helpers; it does not maintain a separate solver implementation.
+
 For a readable version of the same judge package, use:
 
 ```sh

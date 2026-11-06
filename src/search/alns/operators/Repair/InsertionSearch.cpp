@@ -1,5 +1,6 @@
 #include "search/alns/operators/Repair/InsertionSearch.hpp"
 #include "search/alns/FastRouteCheck.hpp"
+#include "search/alns/RequestData.hpp"
 #include "search/alns/InsertionScratch.hpp"
 
 #include <algorithm>
@@ -9,15 +10,9 @@
 namespace soict::alns {
 namespace {
 RequestSegments make_request_segments(const Instance& in, std::size_t request) {
-    const auto n = in.passengers.size();
-    const bool passenger = request < n;
-    const auto pickup = passenger ? in.passenger_pickup(request) :
-                                   in.parcel_pickup(request - n);
-    const auto delivery = passenger ? in.passenger_dropoff(request) :
-                                     in.parcel_dropoff(request - n);
-    return {passenger, single_node(in, pickup), single_node(in, delivery),
-            passenger ? in.passengers[request].revenue : in.parcels[request - n].revenue,
-            passenger ? 0 : in.parcels[request - n].weight};
+    const auto data = request_data(in, request);
+    return {request < in.passengers.size(), single_node(in, data.pickup), single_node(in, data.delivery),
+            data.revenue, data.weight};
 }
 }
 
@@ -33,23 +28,17 @@ EmptyTaxiIndex::EmptyTaxiIndex(const Instance& instance)
 bool EmptyTaxiIndex::ensure(std::size_t request, Deadline deadline) const {
     if (complete_.at(request)) return true;
     const auto& in = *instance_;
-    const auto n = in.passengers.size();
-    const auto pickup = request < n ? in.passenger_pickup(request) :
-                                      in.parcel_pickup(request - n);
-    const auto delivery = request < n ? in.passenger_dropoff(request) :
-                                        in.parcel_dropoff(request - n);
-    const auto revenue = request < n ? in.passengers[request].revenue :
-                                       in.parcels[request - n].revenue;
+    const auto data = request_data(in, request);
     const RouteCache empty;
     auto& choices = choices_[request];
     for (auto& taxi = next_taxi_[request]; taxi < in.taxis.size(); ++taxi) {
         if (deadline != Deadline::max() &&
             std::chrono::steady_clock::now() >= deadline) return false;
         RouteCandidate candidate(in, taxi, empty);
-        candidate.add_node(pickup);
-        candidate.add_node(delivery);
+        candidate.add_node(data.pickup);
+        candidate.add_node(data.delivery);
         const auto cost = candidate.cost_if_feasible();
-        if (cost) choices.push_back({taxi, revenue - *cost});
+        if (cost) choices.push_back({taxi, data.revenue - *cost});
     }
     std::sort(choices.begin(), choices.end(), [](const auto& a, const auto& b) {
         return a.gain > b.gain || (a.gain == b.gain && a.taxi < b.taxi);
@@ -97,15 +86,7 @@ bool add_empty_taxis(InsertionOptions& result, const SearchState& state,
 }
 
 RequestSegments request_segments(const SearchState& state, std::size_t request) {
-    const auto& in = state.instance();
-    const auto passenger_count = state.passenger_count();
-    const bool passenger = request < passenger_count;
-    return {passenger,
-            single_node(in, state.pickup_node(request)),
-            single_node(in, passenger ? in.passenger_dropoff(request) :
-                in.parcel_dropoff(request - passenger_count)),
-            state.revenue(request),
-            passenger ? 0 : in.parcels[request - passenger_count].weight};
+    return make_request_segments(state.instance(), request);
 }
 
 InsertionOptions scan_route(const SearchState& state, std::size_t request,

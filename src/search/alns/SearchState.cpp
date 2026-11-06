@@ -2,6 +2,7 @@
 #include "search/alns/InsertionScratch.hpp"
 #include "search/alns/FastRouteCheck.hpp"
 #include "search/alns/MoveCost.hpp"
+#include "search/alns/RequestData.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -91,33 +92,29 @@ std::size_t SearchState::dropoff_node(std::size_t request) const {
 
 void SearchState::rebuild_route(std::size_t taxi, const std::vector<std::size_t>& route) {
     const auto& in = *instance_;
-    for (const auto node : cache(taxi).nodes()) locations_[request_id(node)] = {};
+    for (const auto node : cache(taxi).nodes()) locations_[request_id(*instance_, node)] = {};
     auto& slot = routes_by_taxi_.at(taxi);
-    const bool was_active = is_active(taxi);
     if (route.empty()) {
-        if (was_active) {
-            slot.clear();
-            active_taxis_.erase(std::lower_bound(active_taxis_.begin(),
-                                                active_taxis_.end(), taxi));
-        }
+        slot.clear();
+        set_active(taxi, false);
     } else {
         slot.rebuild(in, taxi, route);
-        if (!was_active)
-            active_taxis_.insert(std::lower_bound(active_taxis_.begin(),
-                                                 active_taxis_.end(), taxi), taxi);
+        set_active(taxi, true);
     }
     locate_route(taxi);
 }
 
-std::size_t SearchState::request_id(std::size_t node) const {
-    const auto k = taxi_count(), n = passenger_count(), m = instance_->parcels.size();
-    return node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
+void SearchState::set_active(std::size_t taxi, bool active) {
+    const auto where = std::lower_bound(active_taxis_.begin(), active_taxis_.end(), taxi);
+    const bool was_active = where != active_taxis_.end() && *where == taxi;
+    if (active && !was_active) active_taxis_.insert(where, taxi);
+    else if (!active && was_active) active_taxis_.erase(where);
 }
 
 void SearchState::locate_route(std::size_t taxi) {
     const auto& route = cache(taxi).nodes();
     for (std::size_t p = 0; p < route.size(); ++p) {
-        const auto node = route[p], request = request_id(node);
+        const auto node = route[p], request = request_id(*instance_, node);
         auto& loc = locations_[request];
         loc.taxi = static_cast<int>(taxi);
         if (node == pickup_node(request)) loc.pickup = p;
@@ -292,16 +289,11 @@ bool SearchState::replace_request(std::size_t outgoing, std::size_t incoming,
 void SearchState::commit_validated_route(std::size_t taxi, RouteCache& updated,
                                         double gain) {
     auto& slot = routes_by_taxi_.at(taxi);
-    for (const auto node : slot.nodes()) locations_[request_id(node)] = {};
-    const bool was_active = !slot.nodes().empty();
+    for (const auto node : slot.nodes()) locations_[request_id(*instance_, node)] = {};
     const bool active = !updated.nodes().empty();
-    if (was_active != active) {
-        const auto where = std::lower_bound(active_taxis_.begin(), active_taxis_.end(), taxi);
-        if (active) active_taxis_.insert(where, taxi);
-        else active_taxis_.erase(where);
-    }
     // Keep the validated version and reuse the old route's buffers next time.
     std::swap(slot, updated);
+    set_active(taxi, active);
     if (!active) slot.clear();
     locate_route(taxi);
     benefit_ += gain;
@@ -370,14 +362,12 @@ void SearchState::commit_route_pair(std::size_t taxi_a, RouteCache new_a,
     for (auto& loc : locations_)
         if (loc.taxi == static_cast<int>(taxi_a) || loc.taxi == static_cast<int>(taxi_b)) loc = {};
     const auto assign = [&](std::size_t taxi, RouteCache updated) {
-        auto where = std::lower_bound(active_taxis_.begin(), active_taxis_.end(), taxi);
-        const bool active = where != active_taxis_.end() && *where == taxi;
         if (updated.nodes().empty()) {
-            if (active) active_taxis_.erase(where);
             routes_by_taxi_[taxi].clear();
+            set_active(taxi, false);
         } else {
-            if (!active) active_taxis_.insert(where, taxi);
             routes_by_taxi_[taxi] = std::move(updated);
+            set_active(taxi, true);
         }
         locate_route(taxi);
     };

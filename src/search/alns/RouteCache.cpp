@@ -48,18 +48,8 @@ Segment single_node(const Instance& in, std::size_t node) {
 }
 
 Segment join(const Instance& in, const Segment& a, const Segment& b) {
-    const double travel = in.time(a.last, b.first);
-    Segment s;
-    s.first = a.first;
-    s.last = b.last;
-    s.duration = a.duration + travel + b.duration;
-    s.ready = std::max(a.ready + travel + b.duration, b.ready);
-    s.latest_input = std::min(a.latest_input, b.latest_input - travel - a.duration);
-    s.feasible = a.feasible && b.feasible && a.ready + travel <= b.latest_input;
-    s.cost = a.cost + in.cost(a.last, b.first) + b.cost;
-    s.load_change = a.load_change + b.load_change;
-    s.min_load = std::min(a.min_load, a.load_change + b.min_load);
-    s.max_load = std::max(a.max_load, a.load_change + b.max_load);
+    Segment s = a;
+    append_segment<true>(in, s, b);
     return s;
 }
 
@@ -150,25 +140,4 @@ bool RouteCache::boundary_allowed(const Instance& in, std::size_t pos) const {
     return preceding < k || preceding >= k + in.passengers.size();
 }
 
-RouteCandidate::RouteCandidate(const Instance& in, std::size_t taxi,
-                               const RouteCache& cache)
-    : instance_(in), taxi_(taxi), cache_(cache) {}
-
-void RouteCandidate::add_range(std::size_t first, std::size_t end) {
-    if (first == end) return;
-    add_segment(cache_.range(instance_, first, end - 1));
-}
-void RouteCandidate::add_segment(const Segment& segment) {
-    summary_ = summary_ ? join(instance_, *summary_, segment) : segment;
-}
-void RouteCandidate::add_node(std::size_t node) { add_segment(single_node(instance_, node)); }
-std::optional<double> RouteCandidate::cost_if_feasible() const {
-    if (!summary_) return 0.0;
-    const auto& s = *summary_;
-    const double arrival = instance_.time(taxi_, s.first);
-    if (!s.feasible || arrival > s.latest_input || s.min_load < -1e-8 ||
-        s.max_load > instance_.taxis[taxi_].parcel_capacity + 1e-8)
-        return std::nullopt;
-    return instance_.cost(taxi_, s.first) + s.cost;
-}
 } // namespace soict::alns

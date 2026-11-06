@@ -299,6 +299,7 @@ void write_solution(std::ostream& out, const Solution& solution, const Instance&
 
 // BEGIN include/search/alns/RouteCache.hpp
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -321,6 +322,23 @@ struct Segment {
 
 Segment single_node(const Instance& instance, std::size_t node);
 Segment join(const Instance& instance, const Segment& left, const Segment& right);
+
+// One composition kernel for persistent route summaries and temporary checks.
+// The cost-free specialization keeps feasibility scans free of cost accesses.
+template<bool WithCost>
+inline void append_segment(const Instance& in, Segment& s, const Segment& next) {
+    const double travel = in.time(s.last, next.first);
+    const double old_change = s.load_change, old_duration = s.duration, old_ready = s.ready;
+    if constexpr (WithCost) s.cost = s.cost + in.cost(s.last, next.first) + next.cost;
+    s.feasible = s.feasible && next.feasible && old_ready + travel <= next.latest_input;
+    s.latest_input = std::min(s.latest_input, next.latest_input - travel - old_duration);
+    s.duration = old_duration + travel + next.duration;
+    s.ready = std::max(old_ready + travel + next.duration, next.ready);
+    s.min_load = std::min(s.min_load, old_change + next.min_load);
+    s.max_load = std::max(s.max_load, old_change + next.max_load);
+    s.load_change = old_change + next.load_change;
+    s.last = next.last;
+}
 
 class RouteCache {
 public:
@@ -351,21 +369,52 @@ private:
 
 // Builds a virtual route from a constant number of existing segments and new
 // nodes. No route vector is copied while enumerating candidate positions.
-class RouteCandidate {
+template<bool WithCost>
+class SegmentAccumulator {
 public:
-    RouteCandidate(const Instance& instance, std::size_t taxi,
-                   const RouteCache& cache);
-    void add_range(std::size_t first, std::size_t end); // [first, end)
-    void add_segment(const Segment& segment);
-    void add_node(std::size_t node);
-    std::optional<double> cost_if_feasible() const;
+    SegmentAccumulator(const Instance& in, std::size_t taxi, const RouteCache& route)
+        : in_(in), taxi_(taxi), route_(route) {}
+    void range(std::size_t first, std::size_t end) {
+        if constexpr (WithCost) { if (first == end) return; }
+        else { if (first >= end) return; }
+        segment(route_.range(in_, first, end - 1));
+    }
+    void node(std::size_t id) { segment(single_node(in_, id)); }
+    void segment(const Segment& next) {
+        if (summary_) append_segment<WithCost>(in_, *summary_, next);
+        else summary_ = next;
+    }
+    // Keep the existing RouteCandidate interface at its call sites.
+    void add_range(std::size_t first, std::size_t end) { range(first, end); }
+    void add_segment(const Segment& next) { segment(next); }
+    void add_node(std::size_t id) { node(id); }
+    bool feasible() const {
+        if (!summary_) return true;
+        const auto& s = *summary_;
+        if constexpr (WithCost) {
+            const double arrival = in_.time(taxi_, s.first);
+            // Preserve RouteCandidate's original comparisons, including its
+            // floating-point edge behavior; FastRouteCheck uses the <= form.
+            return !(!s.feasible || arrival > s.latest_input || s.min_load < -1e-8 ||
+                s.max_load > in_.taxis[taxi_].parcel_capacity + 1e-8);
+        } else {
+            return s.feasible && in_.time(taxi_, s.first) <= s.latest_input && s.min_load >= -1e-8 &&
+                s.max_load <= in_.taxis[taxi_].parcel_capacity + 1e-8;
+        }
+    }
+    std::optional<double> cost_if_feasible() const {
+        static_assert(WithCost);
+        if (!feasible()) return std::nullopt;
+        return summary_ ? in_.cost(taxi_, summary_->first) + summary_->cost : 0.0;
+    }
 
 private:
-    const Instance& instance_;
+    const Instance& in_;
     std::size_t taxi_;
-    const RouteCache& cache_;
+    const RouteCache& route_;
     std::optional<Segment> summary_;
 };
+using RouteCandidate = SegmentAccumulator<true>;
 } // namespace soict::alns
 
 // END include/search/alns/RouteCache.hpp
@@ -416,18 +465,8 @@ Segment single_node(const Instance& in, std::size_t node) {
 }
 
 Segment join(const Instance& in, const Segment& a, const Segment& b) {
-    const double travel = in.time(a.last, b.first);
-    Segment s;
-    s.first = a.first;
-    s.last = b.last;
-    s.duration = a.duration + travel + b.duration;
-    s.ready = std::max(a.ready + travel + b.duration, b.ready);
-    s.latest_input = std::min(a.latest_input, b.latest_input - travel - a.duration);
-    s.feasible = a.feasible && b.feasible && a.ready + travel <= b.latest_input;
-    s.cost = a.cost + in.cost(a.last, b.first) + b.cost;
-    s.load_change = a.load_change + b.load_change;
-    s.min_load = std::min(a.min_load, a.load_change + b.min_load);
-    s.max_load = std::max(a.max_load, a.load_change + b.max_load);
+    Segment s = a;
+    append_segment<true>(in, s, b);
     return s;
 }
 
@@ -507,27 +546,6 @@ bool RouteCache::boundary_allowed(const Instance& in, std::size_t pos) const {
     return preceding < k || preceding >= k + in.passengers.size();
 }
 
-RouteCandidate::RouteCandidate(const Instance& in, std::size_t taxi,
-                               const RouteCache& cache)
-    : instance_(in), taxi_(taxi), cache_(cache) {}
-
-void RouteCandidate::add_range(std::size_t first, std::size_t end) {
-    if (first == end) return;
-    add_segment(cache_.range(instance_, first, end - 1));
-}
-void RouteCandidate::add_segment(const Segment& segment) {
-    summary_ = summary_ ? join(instance_, *summary_, segment) : segment;
-}
-void RouteCandidate::add_node(std::size_t node) { add_segment(single_node(instance_, node)); }
-std::optional<double> RouteCandidate::cost_if_feasible() const {
-    if (!summary_) return 0.0;
-    const auto& s = *summary_;
-    const double arrival = instance_.time(taxi_, s.first);
-    if (!s.feasible || arrival > s.latest_input || s.min_load < -1e-8 ||
-        s.max_load > instance_.taxis[taxi_].parcel_capacity + 1e-8)
-        return std::nullopt;
-    return instance_.cost(taxi_, s.first) + s.cost;
-}
 } // namespace soict::alns
 
 // END src/search/alns/RouteCache.cpp
@@ -633,8 +651,8 @@ private:
     void commit_validated_route(std::size_t taxi, RouteCache& updated, double gain);
     void commit_route_pair(std::size_t taxi_a, RouteCache new_a,
                            std::size_t taxi_b, RouteCache new_b, double gain);
+    void set_active(std::size_t taxi, bool active);
     std::size_t dropoff_node(std::size_t request) const;
-    std::size_t request_id(std::size_t node) const;
     void locate_route(std::size_t taxi);
 };
 } // namespace soict::alns
@@ -685,61 +703,13 @@ private:
 
 // BEGIN include/search/alns/FastRouteCheck.hpp
 
-#include <algorithm>
-#include <optional>
 
 namespace soict::alns {
 // Fixed-size feasibility accumulator for a move's unchanged route pieces.
 // A piece maps arrival x to departure max(x + duration, ready). Joining pieces
 // keeps that map, the latest admissible input, and the parcel-load extrema.
 // Travel cost is deliberately absent: each move computes it from changed arcs.
-class FastRouteCheck {
-public:
-    FastRouteCheck(const Instance& in, std::size_t taxi, const RouteCache& route)
-        : in_(in), taxi_(taxi), route_(route) {}
-
-    void range(std::size_t first, std::size_t end) {
-        if (first < end) append(route_.range(in_, first, end - 1));
-    }
-    void node(std::size_t id) { append(single_node(in_, id)); }
-    void segment(const Segment& next) { append(next); }
-
-    bool feasible() const {
-        if (!summary_) return true;
-        const auto& s = *summary_;
-        return s.feasible && in_.time(taxi_, s.first) <= s.latest_input &&
-               s.min_load >= -1e-8 &&
-               s.max_load <= in_.taxis[taxi_].parcel_capacity + 1e-8;
-    }
-
-private:
-    void append(const Segment& next) {
-        if (!summary_) {
-            summary_ = next;
-            return;
-        }
-        auto& s = *summary_;
-        const double travel = in_.time(s.last, next.first);
-        const double old_change = s.load_change;
-        const double old_duration = s.duration;
-        const double old_ready = s.ready;
-        s.feasible = s.feasible && next.feasible &&
-                     old_ready + travel <= next.latest_input;
-        s.latest_input = std::min(s.latest_input,
-                                  next.latest_input - travel - old_duration);
-        s.duration = old_duration + travel + next.duration;
-        s.ready = std::max(old_ready + travel + next.duration, next.ready);
-        s.min_load = std::min(s.min_load, old_change + next.min_load);
-        s.max_load = std::max(s.max_load, old_change + next.max_load);
-        s.load_change = old_change + next.load_change;
-        s.last = next.last;
-    }
-
-    const Instance& in_;
-    std::size_t taxi_;
-    const RouteCache& route_;
-    std::optional<Segment> summary_;
-};
+using FastRouteCheck = SegmentAccumulator<false>;
 } // namespace soict::alns
 
 // END include/search/alns/FastRouteCheck.hpp
@@ -829,6 +799,44 @@ inline double separated_insertion_cost(const Instance& in, std::size_t taxi,
 
 // END include/search/alns/MoveCost.hpp
 
+// BEGIN include/search/alns/RequestData.hpp
+
+#include <limits>
+
+namespace soict::alns {
+
+// Common request view used by route generation and local-search support.
+// Request ids list passengers first, then parcels.
+struct RequestData {
+    std::size_t pickup = 0, delivery = 0;
+    double ready = 0, latest = 0;
+    double drop_ready = 0, drop_latest = 0;
+    double service = 0, revenue = 0, weight = 0;
+};
+
+inline RequestData request_data(const Instance& in, std::size_t request) {
+    const auto n = in.passengers.size();
+    if (request < n) {
+        const auto& p = in.passengers[request];
+        return {in.passenger_pickup(request), in.passenger_dropoff(request),
+                p.pickup.earliest, p.pickup.latest, 0,
+                std::numeric_limits<double>::infinity(), p.service, p.revenue, 0};
+    }
+    const auto& p = in.parcels[request - n];
+    return {in.parcel_pickup(request - n), in.parcel_dropoff(request - n),
+            p.pickup.earliest, p.pickup.latest, p.delivery.earliest,
+            p.delivery.latest, p.service, p.revenue, p.weight};
+}
+
+inline std::size_t request_id(const Instance& in, std::size_t node) {
+    const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();
+    return node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
+}
+
+} // namespace soict::alns
+
+// END include/search/alns/RequestData.hpp
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -903,33 +911,29 @@ std::size_t SearchState::dropoff_node(std::size_t request) const {
 
 void SearchState::rebuild_route(std::size_t taxi, const std::vector<std::size_t>& route) {
     const auto& in = *instance_;
-    for (const auto node : cache(taxi).nodes()) locations_[request_id(node)] = {};
+    for (const auto node : cache(taxi).nodes()) locations_[request_id(*instance_, node)] = {};
     auto& slot = routes_by_taxi_[taxi];
-    const bool was_active = is_active(taxi);
     if (route.empty()) {
-        if (was_active) {
-            slot.clear();
-            active_taxis_.erase(std::lower_bound(active_taxis_.begin(),
-                                                active_taxis_.end(), taxi));
-        }
+        slot.clear();
+        set_active(taxi, false);
     } else {
         slot.rebuild(in, taxi, route);
-        if (!was_active)
-            active_taxis_.insert(std::lower_bound(active_taxis_.begin(),
-                                                 active_taxis_.end(), taxi), taxi);
+        set_active(taxi, true);
     }
     locate_route(taxi);
 }
 
-std::size_t SearchState::request_id(std::size_t node) const {
-    const auto k = taxi_count(), n = passenger_count(), m = instance_->parcels.size();
-    return node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
+void SearchState::set_active(std::size_t taxi, bool active) {
+    const auto where = std::lower_bound(active_taxis_.begin(), active_taxis_.end(), taxi);
+    const bool was_active = where != active_taxis_.end() && *where == taxi;
+    if (active && !was_active) active_taxis_.insert(where, taxi);
+    else if (!active && was_active) active_taxis_.erase(where);
 }
 
 void SearchState::locate_route(std::size_t taxi) {
     const auto& route = cache(taxi).nodes();
     for (std::size_t p = 0; p < route.size(); ++p) {
-        const auto node = route[p], request = request_id(node);
+        const auto node = route[p], request = request_id(*instance_, node);
         auto& loc = locations_[request];
         loc.taxi = static_cast<int>(taxi);
         if (node == pickup_node(request)) loc.pickup = p;
@@ -1104,16 +1108,11 @@ bool SearchState::replace_request(std::size_t outgoing, std::size_t incoming,
 void SearchState::commit_validated_route(std::size_t taxi, RouteCache& updated,
                                         double gain) {
     auto& slot = routes_by_taxi_[taxi];
-    for (const auto node : slot.nodes()) locations_[request_id(node)] = {};
-    const bool was_active = !slot.nodes().empty();
+    for (const auto node : slot.nodes()) locations_[request_id(*instance_, node)] = {};
     const bool active = !updated.nodes().empty();
-    if (was_active != active) {
-        const auto where = std::lower_bound(active_taxis_.begin(), active_taxis_.end(), taxi);
-        if (active) active_taxis_.insert(where, taxi);
-        else active_taxis_.erase(where);
-    }
     // Keep the validated version and reuse the old route's buffers next time.
     std::swap(slot, updated);
+    set_active(taxi, active);
     if (!active) slot.clear();
     locate_route(taxi);
     benefit_ += gain;
@@ -1182,14 +1181,12 @@ void SearchState::commit_route_pair(std::size_t taxi_a, RouteCache new_a,
     for (auto& loc : locations_)
         if (loc.taxi == static_cast<int>(taxi_a) || loc.taxi == static_cast<int>(taxi_b)) loc = {};
     const auto assign = [&](std::size_t taxi, RouteCache updated) {
-        auto where = std::lower_bound(active_taxis_.begin(), active_taxis_.end(), taxi);
-        const bool active = where != active_taxis_.end() && *where == taxi;
         if (updated.nodes().empty()) {
-            if (active) active_taxis_.erase(where);
             routes_by_taxi_[taxi].clear();
+            set_active(taxi, false);
         } else {
-            if (!active) active_taxis_.insert(where, taxi);
             routes_by_taxi_[taxi] = std::move(updated);
+            set_active(taxi, true);
         }
         locate_route(taxi);
     };
@@ -1517,54 +1514,71 @@ private:
 
 // END include/search/alns/operators/LocalSearch/MoveCache.hpp
 
-// BEGIN include/search/alns/operators/LocalSearch/RelocationPool.hpp
+// BEGIN include/search/alns/operators/LocalSearch/RelocationSource.hpp
 
-#include <algorithm>
-#include <optional>
-#include <vector>
 
 namespace soict::alns {
-// For a fixed request and destination route, only its best position can win
-// best improvement. A route change invalidates every descriptor that reads it.
-struct RelocationDescriptor {
-    InsertionChoice choice;
-    std::size_t source;
-};
 
-class RelocationPool {
+// Shared source-route data. Passenger and parcel contexts keep their own
+// destination scans, but removal costs and virtual source positions coincide.
+template<bool Passenger>
+class RelocationSource {
 public:
-    void add(std::optional<InsertionChoice> choice, std::size_t source) {
-        if (choice && choice->gain > 1e-9) moves_.push_back({*choice, source});
+    RelocationSource(const SearchState& state, std::size_t request)
+        : state_(state), request_(request) {
+        if constexpr (Passenger) {
+            if (request >= state.passenger_count()) return;
+        } else {
+            if (request < state.passenger_count() || request >= state.request_count()) return;
+        }
+        const auto& loc = state.location(request);
+        if (loc.taxi < 0) return;
+        source_ = static_cast<std::size_t>(loc.taxi);
+        pickup_at_ = loc.pickup;
+        delivery_at_ = loc.dropoff;
+        removal_gain_ = state.removal_gain(request);
+        removal_savings_ = removal_savings_cost(state.instance(), source_,
+            state.cache(source_).nodes(), pickup_at_, delivery_at_);
     }
-    std::optional<RelocationDescriptor> best() const {
-        if (moves_.empty()) return std::nullopt;
-        return *std::max_element(moves_.begin(), moves_.end(),
-            [](const auto& a, const auto& b) {
-                return a.choice.gain < b.choice.gain;
-            });
-    }
-    void erase_affected(std::size_t first, std::size_t second) {
-        soict_erase_if(moves_, [&](const auto& move) {
-            return move.source == first || move.source == second ||
-                   move.choice.taxi == first || move.choice.taxi == second;
-        });
-    }
-    void clear() { moves_.clear(); }
-private:
-    std::vector<RelocationDescriptor> moves_;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/RelocationPool.hpp
-#include <optional>
-
-namespace soict::alns {
-class ParcelRelocationContext {
-public:
-    ParcelRelocationContext(const SearchState& state, std::size_t request);
-    bool valid() const { return served_; }
+    bool valid() const { return source_ != std::numeric_limits<std::size_t>::max(); }
     bool removal_feasible() const { return removal_gain_.has_value(); }
     double removal_savings() const { return removal_savings_; }
+
+protected:
+    const SearchState& state_;
+    std::size_t request_, source_ = std::numeric_limits<std::size_t>::max();
+    std::size_t pickup_at_ = 0, delivery_at_ = 0;
+    std::optional<double> removal_gain_;
+    double removal_savings_ = 0;
+
+    std::size_t original_position(std::size_t position) const {
+        if (position < pickup_at_) return position;
+        if (position < delivery_at_ - 1) return position + 1;
+        return position + 2;
+    }
+    bool source_boundary_allowed(const RouteCache& route, std::size_t boundary) const {
+        return !boundary || route.boundary_allowed(state_.instance(), original_position(boundary - 1) + 1);
+    }
+    void add_source_range(FastRouteCheck& candidate, std::size_t first, std::size_t end) const {
+        const auto left_end = std::min(end, pickup_at_);
+        if (first < left_end) candidate.range(first, left_end);
+        const auto middle_start = std::max(first, pickup_at_);
+        const auto middle_end = std::min(end, delivery_at_ - 1);
+        if (middle_start < middle_end) candidate.range(middle_start + 1, middle_end + 1);
+        const auto right_start = std::max(first, delivery_at_ - 1);
+        if (right_start < end) candidate.range(right_start + 2, end + 2);
+    }
+};
+
+} // namespace soict::alns
+
+// END include/search/alns/operators/LocalSearch/RelocationSource.hpp
+#include <optional>
+
+namespace soict::alns {
+class ParcelRelocationContext : public RelocationSource<false> {
+public:
+    ParcelRelocationContext(const SearchState& state, std::size_t request);
     std::optional<double> gain(std::size_t taxi, const RouteCache& route,
         std::size_t pickup_boundary, std::size_t delivery_boundary) const;
     // Benefit delta from changed travel-cost arcs; feasibility is checked by gain().
@@ -1577,17 +1591,7 @@ public:
         const RouteCache& route, std::size_t pickup_boundary,
         std::size_t delivery_boundary, const FastRouteCheck& prefix) const;
 private:
-    const SearchState& state_;
-    std::size_t request_, source_, pickup_at_, delivery_at_;
-    bool served_ = false;
-    std::optional<double> removal_gain_;
-    double removal_savings_ = 0;
     Segment pickup_, delivery_;
-    std::size_t original_position(std::size_t position) const;
-    bool source_boundary_allowed(const RouteCache& route,
-                                                std::size_t boundary) const;
-    void add_source_range(FastRouteCheck& candidate, std::size_t first,
-                          std::size_t end) const;
 };
 
 class ParcelRelocate final : public Move {
@@ -1609,26 +1613,14 @@ private:
 namespace soict::alns {
 // One source-removal context is shared by every candidate destination. For a
 // same-route move, positions refer to the route after the passenger is removed.
-class PassengerRelocationContext {
+class PassengerRelocationContext : public RelocationSource<true> {
 public:
-    PassengerRelocationContext(const SearchState& state, std::size_t request);
-    bool valid() const { return served_; }
-    bool removal_feasible() const { return removal_gain_.has_value(); }
-    double removal_savings() const { return removal_savings_; }
+    using RelocationSource<true>::RelocationSource;
     std::optional<double> gain(std::size_t taxi,
         const RouteCache& route, std::size_t boundary) const;
     // Benefit delta from changed travel-cost arcs; feasibility is checked by gain().
     std::optional<double> calculate_delta_fast(std::size_t taxi,
         const RouteCache& route, std::size_t boundary) const;
-private:
-    const SearchState& state_;
-    std::size_t request_, source_, removed_at_;
-    bool served_ = false;
-    std::optional<double> removal_gain_;
-    double removal_savings_ = 0;
-    std::size_t original_position(std::size_t position) const;
-    void add_source_range(FastRouteCheck& candidate, std::size_t first,
-                          std::size_t end) const;
 };
 
 class PassengerRelocate final : public Move {
@@ -2030,15 +2022,9 @@ std::vector<std::size_t> RelatedRemoval::apply(SearchState& state, std::size_t c
 namespace soict::alns {
 namespace {
 RequestSegments make_request_segments(const Instance& in, std::size_t request) {
-    const auto n = in.passengers.size();
-    const bool passenger = request < n;
-    const auto pickup = passenger ? in.passenger_pickup(request) :
-                                   in.parcel_pickup(request - n);
-    const auto delivery = passenger ? in.passenger_dropoff(request) :
-                                     in.parcel_dropoff(request - n);
-    return {passenger, single_node(in, pickup), single_node(in, delivery),
-            passenger ? in.passengers[request].revenue : in.parcels[request - n].revenue,
-            passenger ? 0 : in.parcels[request - n].weight};
+    const auto data = request_data(in, request);
+    return {request < in.passengers.size(), single_node(in, data.pickup), single_node(in, data.delivery),
+            data.revenue, data.weight};
 }
 }
 
@@ -2054,23 +2040,17 @@ EmptyTaxiIndex::EmptyTaxiIndex(const Instance& instance)
 bool EmptyTaxiIndex::ensure(std::size_t request, Deadline deadline) const {
     if (complete_[request]) return true;
     const auto& in = *instance_;
-    const auto n = in.passengers.size();
-    const auto pickup = request < n ? in.passenger_pickup(request) :
-                                      in.parcel_pickup(request - n);
-    const auto delivery = request < n ? in.passenger_dropoff(request) :
-                                        in.parcel_dropoff(request - n);
-    const auto revenue = request < n ? in.passengers[request].revenue :
-                                       in.parcels[request - n].revenue;
+    const auto data = request_data(in, request);
     const RouteCache empty;
     auto& choices = choices_[request];
     for (auto& taxi = next_taxi_[request]; taxi < in.taxis.size(); ++taxi) {
         if (deadline != Deadline::max() &&
             std::chrono::steady_clock::now() >= deadline) return false;
         RouteCandidate candidate(in, taxi, empty);
-        candidate.add_node(pickup);
-        candidate.add_node(delivery);
+        candidate.add_node(data.pickup);
+        candidate.add_node(data.delivery);
         const auto cost = candidate.cost_if_feasible();
-        if (cost) choices.push_back({taxi, revenue - *cost});
+        if (cost) choices.push_back({taxi, data.revenue - *cost});
     }
     std::sort(choices.begin(), choices.end(), [](const auto& a, const auto& b) {
         return a.gain > b.gain || (a.gain == b.gain && a.taxi < b.taxi);
@@ -2102,15 +2082,7 @@ void consider(InsertionOptions& result, InsertionChoice choice) {
 
 
 RequestSegments request_segments(const SearchState& state, std::size_t request) {
-    const auto& in = state.instance();
-    const auto passenger_count = state.passenger_count();
-    const bool passenger = request < passenger_count;
-    return {passenger,
-            single_node(in, state.pickup_node(request)),
-            single_node(in, passenger ? in.passenger_dropoff(request) :
-                in.parcel_dropoff(request - passenger_count)),
-            state.revenue(request),
-            passenger ? 0 : in.parcels[request - passenger_count].weight};
+    return make_request_segments(state.instance(), request);
 }
 
 InsertionOptions scan_route(const SearchState& state, std::size_t request,
@@ -2427,24 +2399,11 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
         (void)0;
     }
     const auto generation_seed=seed_+0x9e3779b97f4a7c15ULL*generation_calls_++;
-    struct Request {
-        std::size_t pickup, delivery;
-        double ready, latest, drop_ready, drop_latest, service, revenue, weight;
-    };
-    std::vector<Request> requests;
+    std::vector<RequestData> requests;
     requests.reserve(nr);
     for (std::size_t r = 0; r < nr; ++r) {
-        if (r < n) {
-            const auto& p = in.passengers[r];
-            requests.push_back({in.passenger_pickup(r), in.passenger_dropoff(r),
-                p.pickup.earliest, p.pickup.latest, 0, std::numeric_limits<double>::infinity(),
-                p.service, p.revenue-prices[r], 0});
-        } else {
-            const auto& p = in.parcels[r-n];
-            requests.push_back({in.parcel_pickup(r-n), in.parcel_dropoff(r-n),
-                p.pickup.earliest, p.pickup.latest, p.delivery.earliest, p.delivery.latest,
-                p.service, p.revenue-prices[r], p.weight});
-        }
+        requests.push_back(request_data(in, r));
+        requests.back().revenue -= prices[r];
     }
     const auto m=in.parcels.size();
     if (!generation_index_ready_) {
@@ -3663,46 +3622,141 @@ bool RemoveRequest::improve(SearchState& state) const {
 
 // BEGIN src/search/alns/operators/LocalSearch/PassengerRelocate.cpp
 
+// BEGIN include/search/alns/operators/LocalSearch/RelocationEngine.hpp
+
+
+// BEGIN include/search/alns/operators/LocalSearch/RelocationPool.hpp
+
+#include <algorithm>
+#include <optional>
+#include <vector>
+
+namespace soict::alns {
+// For a fixed request and destination route, only its best position can win
+// best improvement. A route change invalidates every descriptor that reads it.
+struct RelocationDescriptor {
+    InsertionChoice choice;
+    std::size_t source;
+};
+
+class RelocationPool {
+public:
+    void add(std::optional<InsertionChoice> choice, std::size_t source) {
+        if (choice && choice->gain > 1e-9) moves_.push_back({*choice, source});
+    }
+    std::optional<RelocationDescriptor> best() const {
+        if (moves_.empty()) return std::nullopt;
+        return *std::max_element(moves_.begin(), moves_.end(),
+            [](const auto& a, const auto& b) {
+                return a.choice.gain < b.choice.gain;
+            });
+    }
+    void erase_affected(std::size_t first, std::size_t second) {
+        soict_erase_if(moves_, [&](const auto& move) {
+            return move.source == first || move.source == second ||
+                   move.choice.taxi == first || move.choice.taxi == second;
+        });
+    }
+    void clear() { moves_.clear(); }
+private:
+    std::vector<RelocationDescriptor> moves_;
+};
+} // namespace soict::alns
+
+// END include/search/alns/operators/LocalSearch/RelocationPool.hpp
+
+namespace soict::alns {
+
+// Shared request/taxi traversal for passenger and parcel relocation. The
+// context and best_on_taxi callback retain the event-specific feasibility
+// rules; this engine owns only cache reuse, affected-taxi rescans, and move
+// application order.
+template<class Context, bool Passenger, class BestOnTaxi>
+bool improve_relocations(SearchState& state, std::size_t first_request,
+                         std::size_t end_request,
+                         BestOnTaxi best_on_taxi) {
+    RelocationPool pool;
+    const auto scan_request = [&](std::size_t request, bool all,
+                                  std::size_t first, std::size_t second) {
+        if (state.location(request).taxi < 0) return;
+        Context context(state, request);
+        const auto source = static_cast<std::size_t>(state.location(request).taxi);
+        if (!context.valid()) return;
+        const auto source_version = state.cache(source).version();
+        const auto& index = state.empty_taxi_index();
+        const bool indexed = index && index->ensure(request);
+        if (indexed) {
+            if (all) {
+                static const RouteCache empty_route;
+                for (const auto& choice : index->choices(request)) {
+                    if (state.is_active(choice.taxi)) continue;
+                    const auto gain = [&] {
+                        if constexpr (Passenger) return context.gain(choice.taxi, empty_route, 0);
+                        else return context.gain(choice.taxi, empty_route, 0, 0);
+                    }();
+                    if (gain) pool.add(InsertionChoice{request, choice.taxi, 0, 0, *gain}, source);
+                    break;
+                }
+            }
+            for (const auto taxi : state.active_taxis())
+                if (all || taxi == first || taxi == second)
+                    pool.add(best_on_taxi(state, context, request, taxi,
+                                         state.cache(taxi), source_version), source);
+        } else {
+            for (std::size_t taxi = 0; taxi < state.taxi_count(); ++taxi)
+                if (all || taxi == first || taxi == second)
+                    pool.add(best_on_taxi(state, context, request, taxi,
+                                         state.cache(taxi), source_version), source);
+        }
+    };
+    const auto scan_all = [&] {
+        pool.clear();
+        for (std::size_t request = first_request; request < end_request; ++request)
+            scan_request(request, true, 0, 0);
+    };
+    scan_all();
+    bool changed = false;
+    while (const auto descriptor = pool.best()) {
+        const auto choice = descriptor->choice;
+        const auto source = descriptor->source;
+        const auto target = choice.taxi;
+        const bool source_active_before = state.is_active(source);
+        const bool target_active_before = state.is_active(target);
+        const bool same = source == target;
+        const bool applied = same ? state.relocate_within_route(
+            choice.request, choice.pickup, choice.delivery) :
+            (state.remove(choice.request) && state.insert(choice.request,
+                target, choice.pickup, choice.delivery));
+
+        changed = true;
+        if (state.is_active(source) != source_active_before ||
+            state.is_active(target) != target_active_before) {
+            scan_all();
+            continue;
+        }
+        pool.erase_affected(source, target);
+        for (std::size_t request = first_request; request < end_request; ++request) {
+            if (state.location(request).taxi < 0) continue;
+            const auto origin = static_cast<std::size_t>(state.location(request).taxi);
+            scan_request(request, origin == source || origin == target, source, target);
+        }
+    }
+    return changed;
+}
+
+} // namespace soict::alns
+
+// END include/search/alns/operators/LocalSearch/RelocationEngine.hpp
+
 #include <algorithm>
 
 namespace soict::alns {
-PassengerRelocationContext::PassengerRelocationContext(const SearchState& state,
-                                                       std::size_t request)
-    : state_(state), request_(request), source_(0), removed_at_(0) {
-    if (request >= state.passenger_count() || state.location(request).taxi < 0) return;
-    const auto& loc = state.location(request);
-    source_ = static_cast<std::size_t>(loc.taxi);
-    removed_at_ = loc.pickup;
-    served_ = true;
-    removal_gain_ = state.removal_gain(request);
-    const auto& route = state.cache(source_);
-    removal_savings_ = removal_savings_cost(state.instance(), source_,
-                                            route.nodes(), loc.pickup, loc.dropoff);
-}
-
-
-
-std::size_t PassengerRelocationContext::original_position(std::size_t position) const {
-    return position < removed_at_ ? position : position + 2;
-}
-
-void PassengerRelocationContext::add_source_range(FastRouteCheck& candidate,
-                                                  std::size_t first,
-                                                  std::size_t end) const {
-    const auto left_end = std::min(end, removed_at_);
-    if (first < left_end) candidate.range(first, left_end);
-    const auto right_start = std::max(first, removed_at_);
-    if (right_start < end) candidate.range(right_start + 2, end + 2);
-}
-
-
-
 std::optional<double> PassengerRelocationContext::calculate_delta_fast(std::size_t taxi,
     const RouteCache& route, std::size_t boundary) const {
     if (!valid() || taxi >= state_.taxi_count() ||
         boundary > route.nodes().size() - (taxi == source_ ? 2 : 0) ||
         (taxi != source_ && !removal_gain_)) return std::nullopt;
-    const RouteView view{route.nodes(), removed_at_, removed_at_ + 1, taxi == source_};
+    const RouteView view{route.nodes(), pickup_at_, pickup_at_ + 1, taxi == source_};
     const auto delta = adjacent_insertion_cost(state_.instance(), taxi, view, boundary,
         state_.pickup_node(request_), state_.instance().passenger_dropoff(request_));
     return removal_savings_ - delta;
@@ -3756,71 +3810,12 @@ std::optional<InsertionChoice> PassengerRelocate::best_on_taxi(
 }
 
 bool PassengerRelocate::improve(SearchState& state) const {
-    RelocationPool pool;
-    const auto scan_request = [&](std::size_t r, bool all,
-                                  std::size_t first, std::size_t second) {
-        if (state.location(r).taxi < 0) return;
-        PassengerRelocationContext context(state, r);
-        const auto source = static_cast<std::size_t>(state.location(r).taxi);
-        if (!context.valid()) return;
-        // The source stays unchanged throughout this request's destination scan.
-        const auto source_version = state.cache(source).version();
-        const auto& index = state.empty_taxi_index();
-        const bool indexed = index && index->ensure(r);
-        if (indexed) {
-            if (all) {
-                static const RouteCache empty_route;
-                for (const auto& choice : index->choices(r)) {
-                    if (state.is_active(choice.taxi)) continue;
-                    const auto gain = context.gain(choice.taxi, empty_route, 0);
-                    if (gain) pool.add(InsertionChoice{r, choice.taxi, 0, 0, *gain}, source);
-                    break;
-                }
-            }
-            for (const auto taxi : state.active_taxis())
-                if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
-                                         source_version), source);
-        } else {
-            for (std::size_t taxi = 0; taxi < state.taxi_count(); ++taxi)
-                if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
-                                         source_version), source);
-        }
-    };
-    const auto scan_all = [&] {
-        pool.clear();
-        for (std::size_t r = 0; r < state.passenger_count(); ++r)
-            scan_request(r, true, 0, 0);
-    };
-    scan_all();
-    bool changed = false;
-    while (const auto descriptor = pool.best()) {
-        const auto choice = descriptor->choice;
-        const auto source = descriptor->source;
-        const auto target = choice.taxi;
-        const bool source_active_before = state.is_active(source);
-        const bool target_active_before = state.is_active(target);
-        const bool same = source == target;
-        const bool applied = same ? state.relocate_within_route(
-            choice.request, choice.pickup, choice.delivery) :
-            (state.remove(choice.request) && state.insert(choice.request,
-                target, choice.pickup, choice.delivery));
-
-        changed = true;
-        if (state.is_active(source) != source_active_before ||
-            state.is_active(target) != target_active_before) {
-            scan_all();
-            continue;
-        }
-        pool.erase_affected(source, target);
-        for (std::size_t r = 0; r < state.passenger_count(); ++r) {
-            if (state.location(r).taxi < 0) continue;
-            const auto origin = static_cast<std::size_t>(state.location(r).taxi);
-            scan_request(r, origin == source || origin == target, source, target);
-        }
-    }
-    return changed;
+    return improve_relocations<PassengerRelocationContext, true>(state, 0, state.passenger_count(),
+        [this](const SearchState& current, const PassengerRelocationContext& context,
+               std::size_t request, std::size_t taxi, const RouteCache& route,
+               std::uint64_t source_version) {
+            return best_on_taxi(current, context, request, taxi, route, source_version);
+        });
 }
 
 } // namespace soict::alns
@@ -3833,53 +3828,13 @@ bool PassengerRelocate::improve(SearchState& state) const {
 #include <limits>
 
 namespace soict::alns {
-ParcelRelocationContext::ParcelRelocationContext(const SearchState& state,
-                                                 std::size_t request)
-    : state_(state), request_(request), source_(0), pickup_at_(0), delivery_at_(0) {
-    if (request < state.passenger_count() || request >= state.request_count() ||
-        state.location(request).taxi < 0) return;
-    const auto& loc = state.location(request);
-    source_ = static_cast<std::size_t>(loc.taxi);
-    pickup_at_ = loc.pickup;
-    delivery_at_ = loc.dropoff;
-    served_ = true;
-    removal_gain_ = state.removal_gain(request);
-    pickup_ = single_node(state.instance(), state.pickup_node(request));
-    delivery_ = single_node(state.instance(),
-        state.instance().parcel_dropoff(request - state.passenger_count()));
-    const auto& route = state.cache(source_);
-    removal_savings_ = removal_savings_cost(state.instance(), source_,
-                                            route.nodes(), loc.pickup, loc.dropoff);
+ParcelRelocationContext::ParcelRelocationContext(const SearchState& state, std::size_t request)
+    : RelocationSource<false>(state, request) {
+    if (!valid()) return;
+    const auto data = request_data(state.instance(), request);
+    pickup_ = single_node(state.instance(), data.pickup);
+    delivery_ = single_node(state.instance(), data.delivery);
 }
-
-
-
-std::size_t ParcelRelocationContext::original_position(std::size_t position) const {
-    if (position < pickup_at_) return position;
-    if (position < delivery_at_ - 1) return position + 1;
-    return position + 2;
-}
-
-bool ParcelRelocationContext::source_boundary_allowed(const RouteCache& route,
-                                                       std::size_t boundary) const {
-    return !boundary || route.boundary_allowed(state_.instance(),
-                                               original_position(boundary - 1) + 1);
-}
-
-void ParcelRelocationContext::add_source_range(FastRouteCheck& candidate,
-                                               std::size_t first,
-                                               std::size_t end) const {
-    const auto left_end = std::min(end, pickup_at_);
-    if (first < left_end) candidate.range(first, left_end);
-    const auto middle_start = std::max(first, pickup_at_);
-    const auto middle_end = std::min(end, delivery_at_ - 1);
-    if (middle_start < middle_end)
-        candidate.range(middle_start + 1, middle_end + 1);
-    const auto right_start = std::max(first, delivery_at_ - 1);
-    if (right_start < end) candidate.range(right_start + 2, end + 2);
-}
-
-
 
 std::optional<double> ParcelRelocationContext::calculate_delta_fast(std::size_t taxi,
     const RouteCache& route, std::size_t a, std::size_t b) const {
@@ -3996,71 +3951,12 @@ std::optional<InsertionChoice> ParcelRelocate::best_on_taxi(
 }
 
 bool ParcelRelocate::improve(SearchState& state) const {
-    RelocationPool pool;
-    const auto scan_request = [&](std::size_t r, bool all,
-                                  std::size_t first, std::size_t second) {
-        if (state.location(r).taxi < 0) return;
-        ParcelRelocationContext context(state, r);
-        const auto source = static_cast<std::size_t>(state.location(r).taxi);
-        if (!context.valid()) return;
-        // The source stays unchanged throughout this request's destination scan.
-        const auto source_version = state.cache(source).version();
-        const auto& index = state.empty_taxi_index();
-        const bool indexed = index && index->ensure(r);
-        if (indexed) {
-            if (all) {
-                static const RouteCache empty_route;
-                for (const auto& choice : index->choices(r)) {
-                    if (state.is_active(choice.taxi)) continue;
-                    const auto gain = context.gain(choice.taxi, empty_route, 0, 0);
-                    if (gain) pool.add(InsertionChoice{r, choice.taxi, 0, 0, *gain}, source);
-                    break;
-                }
-            }
-            for (const auto taxi : state.active_taxis())
-                if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
-                                         source_version), source);
-        } else {
-            for (std::size_t taxi = 0; taxi < state.taxi_count(); ++taxi)
-                if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, r, taxi, state.cache(taxi),
-                                         source_version), source);
-        }
-    };
-    const auto scan_all = [&] {
-        pool.clear();
-        for (std::size_t r = state.passenger_count(); r < state.request_count(); ++r)
-            scan_request(r, true, 0, 0);
-    };
-    scan_all();
-    bool changed = false;
-    while (const auto descriptor = pool.best()) {
-        const auto choice = descriptor->choice;
-        const auto source = descriptor->source;
-        const auto target = choice.taxi;
-        const bool source_active_before = state.is_active(source);
-        const bool target_active_before = state.is_active(target);
-        const bool same = source == target;
-        const bool applied = same ? state.relocate_within_route(
-            choice.request, choice.pickup, choice.delivery) :
-            (state.remove(choice.request) && state.insert(choice.request,
-                target, choice.pickup, choice.delivery));
-
-        changed = true;
-        if (state.is_active(source) != source_active_before ||
-            state.is_active(target) != target_active_before) {
-            scan_all();
-            continue;
-        }
-        pool.erase_affected(source, target);
-        for (std::size_t r = state.passenger_count(); r < state.request_count(); ++r) {
-            if (state.location(r).taxi < 0) continue;
-            const auto origin = static_cast<std::size_t>(state.location(r).taxi);
-            scan_request(r, origin == source || origin == target, source, target);
-        }
-    }
-    return changed;
+    return improve_relocations<ParcelRelocationContext, false>(state, state.passenger_count(), state.request_count(),
+        [this](const SearchState& current, const ParcelRelocationContext& context,
+               std::size_t request, std::size_t taxi, const RouteCache& route,
+               std::uint64_t source_version) {
+            return best_on_taxi(current, context, request, taxi, route, source_version);
+        });
 }
 
 } // namespace soict::alns

@@ -102,8 +102,8 @@ private:
     void commit_validated_route(std::size_t taxi, RouteCache& updated, double gain);
     void commit_route_pair(std::size_t taxi_a, RouteCache new_a,
                            std::size_t taxi_b, RouteCache new_b, double gain);
+    void set_active(std::size_t taxi, bool active);
     [[nodiscard]] std::size_t dropoff_node(std::size_t request) const;
-    [[nodiscard]] std::size_t request_id(std::size_t node) const;
     void locate_route(std::size_t taxi);
 };
 } // namespace soict::alns

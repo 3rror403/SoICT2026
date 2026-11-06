@@ -22,6 +22,7 @@
 #include "search/alns/operators/Destroy/RelatedRemoval.hpp"
 #include "search/alns/operators/Destroy/WorstRemoval.hpp"
 #include "search/alns/MoveCost.hpp"
+#include "search/alns/RequestData.hpp"
 
 namespace soict::alns {
 namespace {
@@ -105,24 +106,11 @@ void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool
         std::cerr<<"path_price_scale="<<scale<<'\n';
     }
     const auto generation_seed=seed_+0x9e3779b97f4a7c15ULL*generation_calls_++;
-    struct Request {
-        std::size_t pickup, delivery;
-        double ready, latest, drop_ready, drop_latest, service, revenue, weight;
-    };
-    std::vector<Request> requests;
+    std::vector<RequestData> requests;
     requests.reserve(nr);
     for (std::size_t r = 0; r < nr; ++r) {
-        if (r < n) {
-            const auto& p = in.passengers[r];
-            requests.push_back({in.passenger_pickup(r), in.passenger_dropoff(r),
-                p.pickup.earliest, p.pickup.latest, 0, std::numeric_limits<double>::infinity(),
-                p.service, p.revenue-prices[r], 0});
-        } else {
-            const auto& p = in.parcels[r-n];
-            requests.push_back({in.parcel_pickup(r-n), in.parcel_dropoff(r-n),
-                p.pickup.earliest, p.pickup.latest, p.delivery.earliest, p.delivery.latest,
-                p.service, p.revenue-prices[r], p.weight});
-        }
+        requests.push_back(request_data(in, r));
+        requests.back().revenue -= prices[r];
     }
     const auto m=in.parcels.size();
     if (!generation_index_ready_) {
