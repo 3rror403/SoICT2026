@@ -1159,12 +1159,16 @@ bool replace_move(State &s, Deadline until) {
 		bool changed=cache.version[t] != s.version[t];
 		auto &ids=changed ? incoming : new_free;
 		if (ids.empty()) continue;
+		cache.version[t]=0; // Invalidate before a timed refresh.
 		for (int id : ids) cache.row[t][id]=Replacement{};
 		for (int out : served(s.route[t])) {
 			auto reduced=without(s.route[t], out);
 			Real base=profit(t, reduced) - s.gain[t];
 			for (int in : ids) {
-				if (Clock::now() >= until) return false;
+				if (Clock::now() >= until) {
+					fill(cache.version.begin(), cache.version.end(), 0);
+					return false;
+				}
 				auto &entry=cache.row[t][in];
 				Real floor=max(EPS, entry.gain);
 				auto c=insertion(in, t, reduced, floor - base);
@@ -1510,7 +1514,7 @@ void select_routes(State &s, Deadline until) {
 			routes.push_back(c.route);
 		}
 	auto prices=P.k > 48 ? estimate_prices(s.value) : Reals{};
-	auto solved=P.k > 96 ? group_master(cols, P.k, P.R, initial, until, seed, prices)
+	auto solved=P.k > 64 ? group_master(cols, P.k, P.R, initial, until, seed, prices)
 						   : (P.k > 48 ? ranked_master(cols, P.k, P.R, initial, until)
 									   : solve_master(cols, P.k, P.R, initial, until));
 	Fleet f(P.k);
@@ -1621,7 +1625,7 @@ int main(int argc, char **argv) {
 		int phase=0;
 		if (P.k > 48) select_routes(state, min(finish, after(20)));
 		// Alternate fleet rebuilding, selection, and pricing.
-		auto generating=P.k > 96 ? finish - Sec(8) : min(finish - Sec(4), after(100));
+		auto generating=P.k > 64 ? finish - Sec(8) : min(finish - Sec(4), after(100));
 		do {
 			sample(state, P.k > 48 ? min(generating, after(6)) : generating);
 			if (P.k > 48 && Clock::now() + Sec(2) < generating) {
