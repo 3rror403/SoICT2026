@@ -4,7 +4,7 @@ The current solver uses route enumeration, sampled fleets, pricing, fleet select
 and local-search polishing. The legacy outer annealing mode and its CLI switches
 have been removed; the default solver logic is unchanged. `solve-alns` remains an
 alias for the current solver. See `SoICT2026 --help` for supported controls and
-[the submission guide](docs/submission/submission.md) for the 50,000-character C++17 package.
+[the current submission guide](submission/README.md) for the readable standalone C++17 package.
 
 ## Optimization retrospective — 2026-10-12
 

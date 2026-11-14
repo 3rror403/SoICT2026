@@ -1,3 +1,9 @@
+# Current second-submission artifact
+
+The current upload is the readable standalone `submission/submission.cpp`, documented in [submission/README.md](../../submission/README.md). It contains v010 plus memory corrections and late parcel-pair generation, with the embedded HSOL backend and no research logging. Its current local source convention is500,000 characters. Compile and validate that exact file; the modular packagers below describe an older algorithm and do not regenerate this promoted version.
+
+The remainder is retained as historical packaging documentation.
+
 # Single-file contest submission
 
 Generate the current default route-generation solver as one standalone C++17 file:

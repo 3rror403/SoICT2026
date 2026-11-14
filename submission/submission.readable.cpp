@@ -1,4346 +1,9984 @@
-#pragma GCC optimize("O3","unroll-loops")
-// Generated judge package; C++17; no external libraries.
-#include <cstddef>
-#include <limits>
-#include <algorithm>
-#include <vector>
-#include <iostream>
-template<class T, class P> void soict_erase_if(std::vector<T>& values, P predicate) {
-values.erase(std::remove_if(values.begin(), values.end(), predicate), values.end());
+// Standard input: official instance. Standard output: profit and one route per taxi.
+// HSOL replaces CPLEX as the LP backend for our MIP branch-and-bound solver.
+
+// HSOL by Qi Huangfu and Julian Hall. Upstream: https://github.com/jajhall/hsol
+/*
+MIT License
+
+Copyright (c) 2018 Julian Hall
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+#include <bits/stdc++.h>
+#include <sys/time.h>
+
+namespace hsol_embed {
+
+struct DeadlineReached {};
+inline std::chrono::steady_clock::time_point caller_deadline =
+    std::chrono::steady_clock::time_point::max();
+inline void check_deadline() {
+    if (std::chrono::steady_clock::now() >= caller_deadline)
+        throw DeadlineReached{};
 }
-inline std::size_t soict_bit_width(std::size_t value) {
-return value ? std::numeric_limits<unsigned long long>::digits - __builtin_clzll(static_cast<unsigned long long>(value)) : 0;
-}
 
-// BEGIN src/model/Solution.cpp
+// Upstream file: HDual.cpp
 
-// BEGIN include/model/Solution.hpp
+// Upstream file: HDual.h
+#ifndef HDUAL_H_
+#define HDUAL_H_
 
+// Upstream file: HModel.h
+#ifndef HMODEL_H_
+#define HMODEL_H_
 
-// BEGIN include/model/Instance.hpp
+// Upstream file: HMatrix.h
+#ifndef HMATRIX_H_
+#define HMATRIX_H_
 
-#include <cstddef>
-#include <vector>
+// Upstream file: HVector.h
+#ifndef HVECTOR_H_
+#define HVECTOR_H_
 
-namespace soict {
+using namespace std;
 
-struct Window {
-    double earliest = 0;
-    double latest = 0;
+class HVector {
+  public:
+    // Main part
+    void setup(int size_);
+    void clear();
+    int size;
+    int count;            // count of non zeros
+    vector<int> index;    // index of non zeros
+    vector<double> array; // array
+    int pseudoTick;
+    double fakeTick;
+
+    // For update
+    vector<char> cwork; // char working buffer
+    vector<int> iwork;  // integer working buffer
+    HVector *next;
+
+    // Package
+    void tight();
+    void pack();
+    bool packFlag;            // pack flag: do pack or not
+    int packCount;            // pack count
+    vector<int> packIndex;    // pack index
+    vector<double> packValue; // pack value
+
+    // Advanced
+    void copy(const HVector *from);
+    double norm2();
+    void saxpy(const double pivotX, const HVector *pivot);
 };
 
-struct Taxi {
-    double parcel_capacity = 0;
+typedef HVector *HVector_ptr;
+
+#endif /* HVECTOR_H_ */
+
+using namespace std;
+
+class HMatrix {
+  public:
+    const int *getAstart() const { return &Astart[0]; }
+    const int *getAindex() const { return &Aindex[0]; }
+    const double *getAvalue() const { return &Avalue[0]; }
+    void setup(int numCol, int numRow, const int *Astart, const int *Aindex, const double *Avalue);
+    void price_by_col(HVector &row_ap, HVector &row_ep) const;
+    void price_by_row(HVector &row_ap, HVector &row_ep) const;
+    void update(int columnIn, int columnOut);
+    double compute_dot(HVector &vector, int iCol) const;
+    void collect_aj(HVector &vector, int iCol, double multi) const;
+
+    void compute_vecT_matB(const double *vec, const int *base, HVector *res);
+    void compute_matB_vec(const double *vec, const int *base, HVector *res);
+
+  private:
+    int numCol;
+    int numRow;
+    vector<int> Astart;
+    vector<int> Aindex;
+    vector<double> Avalue;
+
+    vector<int> ARstart;
+    vector<int> AR_Nend;
+    vector<int> ARindex;
+    vector<double> ARvalue;
 };
 
-struct Passenger {
-    double revenue = 0;
-    Window pickup;
-    double service = 0;
+#endif /* HMATRIX_H_ */
+
+// Upstream file: HFactor.h
+#ifndef HFACTOR_H_
+#define HFACTOR_H_
+
+using namespace std;
+
+enum UPDATE_METHOD {
+    UPDATE_METHOD_FT = 1,
+    UPDATE_METHOD_PF = 2,
+    UPDATE_METHOD_MPF = 3,
+    UPDATE_METHOD_APF = 4
 };
 
-struct Parcel {
-    double revenue = 0;
-    double weight = 0;
-    Window pickup;
-    Window delivery;
-    double service = 0;
+class HFactor {
+  public:
+    void copyFrom(const HFactor *from);
+    void setup(int numCol, int numRow, int *Astart, int *Aindex, double *Avalue, int *baseIndex,
+               int updateMethod = UPDATE_METHOD_FT);
+    void change(int updateMethod);
+    void build();
+    void ftran(HVector &vector, double hist_dsty) const;
+    void btran(HVector &vector, double hist_dsty) const;
+    void update(HVector *aq, HVector *ep, int *iRow, int *hint);
+    int pseudoTick;
+    int BtotalX;
+    int FtotalX;
+
+    double realTick;
+    double fakeTick;
+
+  private:
+    /**
+     * Data of the factor
+     */
+
+    // Problem size, coefficient matrix and update method
+    int numRow;
+    int numCol;
+    const int *Astart;
+    const int *Aindex;
+    const double *Avalue;
+    int *baseIndex;
+    int updateMethod;
+
+    // Count of elements
+
+    // Working buffer
+    int nwork;
+    vector<int> iwork;
+    vector<double> dwork;
+
+    // Basis matrix
+    vector<int> Bstart;
+    vector<int> Bindex;
+    vector<double> Bvalue;
+
+    // Permutation
+    vector<int> permute;
+
+    // Kernel matrix
+    vector<int> MCstart;
+    vector<int> MCcountA;
+    vector<int> MCcountN;
+    vector<int> MCspace;
+    vector<int> MCindex;
+    vector<double> MCvalue;
+    vector<double> MCminpivot;
+
+    // Row wise kernel matrix
+    vector<int> MRstart;
+    vector<int> MRcount;
+    vector<int> MRspace;
+    vector<int> MRcountb4;
+    vector<int> MRindex;
+
+    // Kernel column buffer
+    vector<int> McolumnIndex;
+    vector<char> McolumnMark;
+    vector<double> McolumnArray;
+
+    // Count link list
+    vector<int> clinkFirst;
+    vector<int> clinkNext;
+    vector<int> clinkLast;
+
+    vector<int> rlinkFirst;
+    vector<int> rlinkNext;
+    vector<int> rlinkLast;
+
+    // Factor L
+    vector<int> LpivotLookup;
+    vector<int> LpivotIndex;
+
+    vector<int> Lstart;
+    vector<int> Lindex;
+    vector<double> Lvalue;
+    vector<int> LRstart;
+    vector<int> LRindex;
+    vector<double> LRvalue;
+
+    // Factor U
+    vector<int> UpivotLookup;
+    vector<int> UpivotIndex;
+    vector<double> UpivotValue;
+
+    int UmeritX;
+    int UtotalX;
+    vector<int> Ustart;
+    vector<int> Ulastp;
+    vector<int> Uindex;
+    vector<double> Uvalue;
+    vector<int> URstart;
+    vector<int> URlastp;
+    vector<int> URspace;
+    vector<int> URindex;
+    vector<double> URvalue;
+
+    // Update buffer
+    vector<double> PFpivotValue;
+    vector<int> PFpivotIndex;
+    vector<int> PFstart;
+    vector<int> PFindex;
+    vector<double> PFvalue;
+
+    // Implementation
+    void buildSimple();
+    void buildKernel();
+    void buildFinish();
+
+    void ftranL(HVector &vector, double hist_dsty) const;
+    void btranL(HVector &vector, double hist_dsty) const;
+    void ftranU(HVector &vector, double hist_dsty) const;
+    void btranU(HVector &vector, double hist_dsty) const;
+
+    void ftranFT(HVector &vector) const;
+    void btranFT(HVector &vector) const;
+    void ftranPF(HVector &vector) const;
+    void btranPF(HVector &vector) const;
+    void ftranMPF(HVector &vector) const;
+    void btranMPF(HVector &vector) const;
+    void ftranAPF(HVector &vector) const;
+    void btranAPF(HVector &vector) const;
+
+    void updateCFT(HVector *aq, HVector *ep, int *iRow, int *hint);
+    void updateFT(HVector *aq, HVector *ep, int iRow, int *hint);
+    void updatePF(HVector *aq, HVector *ep, int iRow, int *hint);
+    void updateMPF(HVector *aq, HVector *ep, int iRow, int *hint);
+    void updateAPF(HVector *aq, HVector *ep, int iRow, int *hint);
+
+    /**
+     * Local in-line functions
+     */
+    void colInsert(const int iCol, const int iRow, const double value) {
+        const int iput = MCstart[iCol] + MCcountA[iCol]++;
+        MCindex[iput] = iRow;
+        MCvalue[iput] = value;
+    }
+    void colStoreN(const int iCol, const int iRow, const double value) {
+        const int iput = MCstart[iCol] + MCspace[iCol] - (++MCcountN[iCol]);
+        MCindex[iput] = iRow;
+        MCvalue[iput] = value;
+    }
+    void colFixMax(const int iCol) {
+        double maxValue = 0;
+        for (int k = MCstart[iCol]; k < MCstart[iCol] + MCcountA[iCol]; k++)
+            maxValue = max(maxValue, fabs(MCvalue[k]));
+        MCminpivot[iCol] = maxValue * 0.1;
+    }
+
+    double colDelete(const int iCol, const int iRow) {
+        int idel = MCstart[iCol];
+        int imov = idel + (--MCcountA[iCol]);
+        while (MCindex[idel] != iRow)
+            idel++;
+        double pivotX = MCvalue[idel];
+        MCindex[idel] = MCindex[imov];
+        MCvalue[idel] = MCvalue[imov];
+        return pivotX;
+    }
+
+    void rowInsert(const int iCol, const int iRow) {
+        int iput = MRstart[iRow] + MRcount[iRow]++;
+        MRindex[iput] = iCol;
+    }
+
+    void rowDelete(const int iCol, const int iRow) {
+        int idel = MRstart[iRow];
+        int imov = idel + (--MRcount[iRow]);
+        while (MRindex[idel] != iCol)
+            idel++;
+        MRindex[idel] = MRindex[imov];
+    }
+
+    void clinkAdd(const int index, const int count) {
+        const int mover = clinkFirst[count];
+        clinkLast[index] = -2 - count;
+        clinkNext[index] = mover;
+        clinkFirst[count] = index;
+        if (mover >= 0)
+            clinkLast[mover] = index;
+    }
+
+    void clinkDel(const int index) {
+        const int xlast = clinkLast[index];
+        const int xnext = clinkNext[index];
+        if (xlast >= 0)
+            clinkNext[xlast] = xnext;
+        else
+            clinkFirst[-xlast - 2] = xnext;
+        if (xnext >= 0)
+            clinkLast[xnext] = xlast;
+    }
+
+    void rlinkAdd(const int index, const int count) {
+        const int mover = rlinkFirst[count];
+        rlinkLast[index] = -2 - count;
+        rlinkNext[index] = mover;
+        rlinkFirst[count] = index;
+        if (mover >= 0)
+            rlinkLast[mover] = index;
+    }
+
+    void rlinkDel(const int index) {
+        const int xlast = rlinkLast[index];
+        const int xnext = rlinkNext[index];
+        if (xlast >= 0)
+            rlinkNext[xlast] = xnext;
+        else
+            rlinkFirst[-xlast - 2] = xnext;
+        if (xnext >= 0)
+            rlinkLast[xnext] = xlast;
+    }
 };
 
-// Node order: taxi origins, passenger pickups, passenger drop-offs,
-// parcel pickups, parcel drop-offs. All indices are zero-based.
-struct Instance {
-    std::vector<Taxi> taxis;
-    std::vector<Passenger> passengers;
-    std::vector<Parcel> parcels;
-    // Internal node -> official one-based vertex. Empty means node + 1.
-    std::vector<std::size_t> vertex_ids;
-    std::vector<double> travel_time;
-    std::vector<double> travel_cost;
+#endif /* HFACTOR_H_ */
 
-    std::size_t node_count() const {
-        return taxis.size() + 2 * (passengers.size() + parcels.size());
+// Upstream file: HRandom.h
+#ifndef HRANDOM_H_
+#define HRANDOM_H_
+
+class HRandom {
+  public:
+    HRandom() {
+        random_mw = 1985;
+        random_mz = 2012;
     }
-    std::size_t vertex_id(std::size_t node) const {
-        return vertex_ids.empty() ? node + 1 : vertex_ids[node];
+    int intRandom() {
+        random_mz = 36969 * (random_mz & 65535) + (random_mz >> 16);
+        random_mw = 18000 * (random_mw & 65535) + (random_mw >> 16);
+        unsigned result = (random_mz << 16) + random_mw;
+        return result >> 1;
     }
-    std::size_t passenger_pickup(std::size_t i) const {
-        return taxis.size() + i;
+    double dblRandom() {
+        random_mz = 36969 * (random_mz & 65535) + (random_mz >> 16);
+        random_mw = 18000 * (random_mw & 65535) + (random_mw >> 16);
+        unsigned result = (random_mz << 16) + random_mw;
+        return (result + 1.0) * 2.328306435454494e-10;
     }
-    std::size_t passenger_dropoff(std::size_t i) const {
-        return taxis.size() + passengers.size() + i;
-    }
-    std::size_t parcel_pickup(std::size_t j) const {
-        return taxis.size() + 2 * passengers.size() + j;
-    }
-    std::size_t parcel_dropoff(std::size_t j) const {
-        return taxis.size() + 2 * passengers.size() + parcels.size() + j;
-    }
-    double time(std::size_t u, std::size_t v) const {
-        return travel_time[u * node_count() + v];
-    }
-    double cost(std::size_t u, std::size_t v) const {
-        return travel_cost[u * node_count() + v];
-    }
+
+  private:
+    unsigned random_mw;
+    unsigned random_mz;
 };
 
-} // namespace soict
+#endif /* HRANDOM_H_ */
 
-// END include/model/Instance.hpp
-#include <string>
-#include <vector>
+// Upstream file: HTimer.h
+#ifndef HTIMER_H_
+#define HTIMER_H_
 
-namespace soict {
+using namespace std;
 
-struct Evaluation {
-    bool feasible = false;
-    double benefit = 0;
-    std::string error;
+enum HTickItem {
+    // Predefined groups
+    HTICK_GROUP1 = 0,
+    HTICK_GROUP2,
+    HTICK_GROUP3,
+    HTICK_GROUP4,
+    HTICK_GROUP5,
+    HTICK_GROUP6,
+    HTICK_GROUP7,
+    HTICK_GROUP8,
+    HTICK_GROUP9,
+
+    // Simplex method related items
+    HTICK_INVERT,
+    HTICK_CHUZR1,
+    HTICK_CHUZC0,
+    HTICK_CHUZC1,
+    HTICK_CHUZC2,
+    HTICK_CHUZC3,
+    HTICK_CHUZC4,
+    HTICK_FTRAN,
+    HTICK_BTRAN,
+    HTICK_PRICE,
+    HTICK_FTRAN_DSE,
+    HTICK_FTRAN_MIX,
+    HTICK_UPDATE_DUAL,
+    HTICK_UPDATE_PRIMAL,
+    HTICK_UPDATE_WEIGHT,
+    HTICK_UPDATE_FACTOR,
+    HTICK_UPDATE_ROW_EP,
+
+    // The total count
+    HTICK_ITEMS_COUNT
 };
 
-// routes[k] lists service-node indices after taxi k's origin.
-struct Solution {
-    std::vector<std::vector<std::size_t>> routes;
+class HTimer {
+  public:
+    HTimer() {
+        itemNames[HTICK_GROUP1] = "GP1";
+        itemNames[HTICK_GROUP2] = "GP2";
+        itemNames[HTICK_GROUP3] = "GP3";
+        itemNames[HTICK_GROUP4] = "GP4";
+        itemNames[HTICK_GROUP5] = "GP5";
+        itemNames[HTICK_GROUP6] = "GP6";
+        itemNames[HTICK_GROUP7] = "GP7";
+        itemNames[HTICK_GROUP8] = "GP8";
+        itemNames[HTICK_GROUP9] = "GP9";
 
-    Evaluation evaluate(const Instance& instance) const;
-};
+        itemNames[HTICK_INVERT] = "INV";
+        itemNames[HTICK_CHUZR1] = "CR1";
+        itemNames[HTICK_CHUZC0] = "CC0";
+        itemNames[HTICK_CHUZC1] = "CC1";
+        itemNames[HTICK_CHUZC2] = "CC2";
+        itemNames[HTICK_CHUZC3] = "CC3";
+        itemNames[HTICK_CHUZC4] = "CC4";
+        itemNames[HTICK_FTRAN] = "COL";
+        itemNames[HTICK_BTRAN] = "REP";
+        itemNames[HTICK_PRICE] = "RAP";
+        itemNames[HTICK_FTRAN_DSE] = "DSE";
+        itemNames[HTICK_FTRAN_MIX] = "MIX";
+        itemNames[HTICK_UPDATE_DUAL] = "UPD";
+        itemNames[HTICK_UPDATE_PRIMAL] = "UPP";
+        itemNames[HTICK_UPDATE_WEIGHT] = "UPW";
+        itemNames[HTICK_UPDATE_FACTOR] = "UPF";
+        itemNames[HTICK_UPDATE_ROW_EP] = "UPR";
 
-} // namespace soict
+        reset();
+    }
 
-// END include/model/Solution.hpp
-namespace soict {
-Evaluation Solution::evaluate(const Instance& instance) const {
-    const auto n = instance.passengers.size(), m = instance.parcels.size();
-    const auto k_count = instance.taxis.size();
-    std::vector<bool> served(n + m, false);
-    double benefit = 0;
-    for (std::size_t k = 0; k < k_count; ++k) {
-        std::size_t previous = k;
-        for (const auto node : routes[k]) {
-            benefit -= instance.cost(previous, node);
-            if (node < k_count + n) served[node - k_count] = true;
-            else if (node >= k_count + 2 * n && node < k_count + 2 * n + m)
-                served[n + node - k_count - 2 * n] = true;
-            previous = node;
+    // Reset the timer
+    void reset() {
+        for (int i = 0; i < HTICK_ITEMS_COUNT; i++)
+            itemTicks[i] = 0;
+        startTime = getWallTime();
+        startTick = getWallTick();
+    }
+
+    // Record tick of one item
+    void recordStart(int itemKey) { itemStart[itemKey] = getWallTick(); }
+    void recordFinish(int itemKey) { itemTicks[itemKey] += (getWallTick() - itemStart[itemKey]); }
+
+    // Report specific items in the list
+    void report(int itemCount, int *itemList) {
+        double totalTick = getTick();
+        fprintf(stderr, "profile-name ");
+        for (int i = 0; i < itemCount; i++)
+            fprintf(stderr, " %s", itemNames[itemList[i]].c_str());
+        fprintf(stderr, "\n");
+        fprintf(stderr, "profile-item ");
+        for (int i = 0; i < itemCount; i++) {
+            int percent = 1000.0 * itemTicks[itemList[i]] / totalTick;
+            fprintf(stderr, " %3d", percent);
         }
+        fprintf(stderr, "\n");
     }
-    for (std::size_t i = 0; i < n + m; ++i)
-        if (served[i]) benefit += i < n ? instance.passengers[i].revenue :
-                                        instance.parcels[i - n].revenue;
-    return {true, benefit, {}};
-}
-} // namespace soict
 
-// END src/model/Solution.cpp
-
-// BEGIN src/io/InstanceIO.cpp
-#include <cstdlib>
-
-// BEGIN include/io/InstanceIO.hpp
-
-
-namespace soict {
-Instance read_instance(std::istream& in);
-}
-
-// END include/io/InstanceIO.hpp
-
-#include <array>
-#include <charconv>
-#include <iomanip>
-#include <string>
-#include <string_view>
-
-namespace soict {
-namespace {
-// Bounded streaming storage: matrix parsing never retains the input file.
-class NumericReader {
-    std::istream& input_;
-    std::array<char, 65536> buffer_{};
-    std::size_t position_ = 0, size_ = 0;
-    std::string continued_;
-    bool refill() {
-        size_ = static_cast<std::size_t>(input_.rdbuf()->sgetn(buffer_.data(), buffer_.size()));
-        position_ = 0;
-        return size_ != 0;
+    void reportLocal(int itemCount, int *itemList) {
+        double totalTick = 0;
+        for (int i = 0; i < itemCount; i++) {
+            totalTick += itemTicks[itemList[i]];
+        }
+        fprintf(stderr, "profile-name ");
+        for (int i = 0; i < itemCount; i++)
+            fprintf(stderr, " %s", itemNames[itemList[i]].c_str());
+        fprintf(stderr, "\n");
+        fprintf(stderr, "profile-item ");
+        for (int i = 0; i < itemCount; i++) {
+            int percent = 1000.0 * itemTicks[itemList[i]] / totalTick;
+            fprintf(stderr, " %3d", percent);
+        }
+        fprintf(stderr, "\n");
     }
-public:
-    explicit NumericReader(std::istream& input) : input_(input) {}
-    std::string_view next() {
-        continued_.clear();
-        for (;;) {
-            if (position_ == size_ && !refill()) return {};
-            while (position_ < size_ && static_cast<unsigned char>(buffer_[position_]) <= ' ') ++position_;
-            if (position_ < size_) break;
-        }
-        for (;;) {
-            const auto start = position_;
-            while (position_ < size_ && static_cast<unsigned char>(buffer_[position_]) > ' ') ++position_;
-            const std::string_view piece(buffer_.data()+start,position_-start);
-            if (position_ < size_) {
-                if (continued_.empty()) return piece;
-                continued_.append(piece.data(),piece.size());
-                return continued_;
-            }
-            continued_.append(piece.data(),piece.size());
-            if (!refill()) return continued_;
-        }
+
+    // Current eclipsed time
+    double getTime() { return getWallTime() - startTime; }
+
+    // Current eclipsed CPU tick
+    double getTick() { return getWallTick() - startTick; }
+
+  private:
+    // The start tick and time
+    double startTime;
+    double startTick;
+
+    // The items tick and name
+    double itemStart[HTICK_ITEMS_COUNT];
+    double itemTicks[HTICK_ITEMS_COUNT];
+    string itemNames[HTICK_ITEMS_COUNT];
+
+    // Current wall time
+    double getWallTime() {
+        double walltime;
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        walltime = tv.tv_sec;
+        walltime += (double)tv.tv_usec / 1000000.0;
+        return walltime;
+    }
+
+    // Current wall tick
+    double getWallTick() {
+        unsigned a, d;
+        asm volatile("rdtsc" : "=a"(a), "=d"(d));
+        return ((unsigned long long)a) | (((unsigned long long)d) << 32);
     }
 };
-template <typename T> void read(NumericReader& input, T& value) {
-    auto token = input.next();
-    // from_chars accepts exponent notation but omits the optional leading +.
-    if (!token.empty() && token.front() == '+') token.remove_prefix(1);
 
-    std::from_chars(token.data(),token.data()+token.size(),value);
+#endif /* HTIMER_H_ */
 
-}
-void read(NumericReader& input, double& value) {
-    value = std::strtod(std::string(input.next()).c_str(), nullptr);
-}
-}
+using namespace std;
 
-Instance read_instance(std::istream& in) {
-    NumericReader input(in);
-    std::size_t k = 0, n = 0, m = 0;
-    read(input, k);
-    read(input, n);
-    read(input, m);
+const int LP_Status_Unset = -1;
+const int LP_Status_Optimal = 0;
+const int LP_Status_Infeasible = 1;
+const int LP_Status_Unbounded = 2;
+const int LP_Status_Singular = 3;
+const int LP_Status_Failed = 4;
 
-    const std::size_t v = k + 2 * (n + m);
+enum HSOL_INT_OPTIONS {
+    INTOPT_PRINT_FLAG = 0, // 0/1 = none/do-print
+    INTOPT_TRANSPOSE_FLAG, // 0/1 = none/do-transpose if possible
+    INTOPT_SCALE_FLAG,     // 0/1 = none/do-scale
+    INTOPT_TIGHT_FLAG,     // 0/1 = none/do-tight
+    INTOPT_PERMUTE_FLAG,   // 0/1 = none/do-permute
+    INTOPT_PERTURB_FLAG,   // 0/1 = none/do-perturb
+    INTOPT_COUNT
+};
 
-    Instance instance;
-    instance.taxis.resize(k);
-    instance.passengers.resize(n);
-    instance.parcels.resize(m);
-    instance.vertex_ids.resize(v);
-    const auto vertex = [&](std::size_t node) {
-        auto& id = instance.vertex_ids[node];
-        read(input, id);
+enum HSOL_DBL_OPTIONS {
+    DBLOPT_TIME_LIMIT = 0,
+    DBLOPT_PRIMAL_TOL,
+    DBLOPT_DUAL_TOL,
+    DBLOPT_PERTURB_BASE,
+    DBLOPT_PAMI_CUTOFF,
+    DBLOPT_COUNT
+};
 
+enum HSOL_STR_OPTIONS {
+    STROPT_PARTITION_FILE = 0, // name of row partition file
+    STROPT_COUNT
+};
+
+class HModel {
+  public:
+    HModel();
+    void setup(const char *filename);
+    void setup_loadMPS(const char *filename);
+    void setup_transposeLP();
+    void setup_scaleMatrix();
+    void setup_tightenBound();
+    void setup_shuffleColumn();
+    void setup_allocWorking();
+
+    int getNumRow() { return numRow; }
+    int getNumCol() { return numCol; }
+    int getNumTot() { return numTot; }
+    const HMatrix *getMatrix() { return &matrix; }
+    const HFactor *getFactor() { return &factor; }
+    int *getBaseIndex() { return &basicIndex[0]; }
+    int *getNonbasicFlag() { return &nonbasicFlag[0]; }
+    int *getNonbasicMove() { return &nonbasicMove[0]; }
+    int *getWorkIntBreak() { return &intBreak[0]; }
+    double *getWorkCost() { return &workCost[0]; }
+    double *getWorkDual() { return &workDual[0]; }
+    double *getWorkShift() { return &workShift[0]; }
+    double *getWorkLower() { return &workLower[0]; }
+    double *getWorkUpper() { return &workUpper[0]; }
+    double *getWorkRange() { return &workRange[0]; }
+    double *getWorkValue() { return &workValue[0]; }
+    double *getBaseLower() { return &baseLower[0]; }
+    double *getBaseUpper() { return &baseUpper[0]; }
+    double *getBaseValue() { return &baseValue[0]; }
+
+    void initCost(int perturb = 0);
+    void initBound(int phase = 2);
+    void initValue();
+
+    void computeFactor();
+    void computeDual();
+    void computeDualInfeasInDual(int *dualInfeasCount);
+    void computeDualInfeasInPrimal(int *dualInfeasCount);
+    void correctDual(int *freeInfeasCount);
+    void computePrimal();
+    void computeObject(int phase = 2);
+
+    void shiftCost(int iCol, double amount);
+    void shiftBack(int iCol);
+    void flipBound(int iCol);
+
+    void updateFactor(HVector *column, HVector *row_ep, int *iRow, int *hint);
+    void updateMatrix(int columnIn, int columnOut);
+    void updatePivots(int columnIn, int rowOut, int sourceOut);
+
+    void changeUpdate(int updateMethod);
+
+    void reportPivots(int columnIn, int columnOut, double alpha);
+    void reportStatus(int status);
+
+    void printMessage(const char *message);
+    void printObject();
+    void printResult();
+    void printProgress();
+    void writePivots(const char *suffix);
+    void writeMPS(const char *filename);
+
+    // Solving options
+    int intOption[INTOPT_COUNT];
+    double dblOption[DBLOPT_COUNT];
+    string strOption[STROPT_COUNT];
+
+    // Random generator
+    HRandom random;
+
+    // The time and timer
+    HTimer timer;
+    double totalTime;
+
+    // Perturbation flag
+    int problemPerturbed;
+
+    // The original models
+    string modelName;
+
+    // Solving result
+    int limitUpdate;
+    int countUpdate;
+    int numberIteration;
+    double objective;
+
+    //private:
+    // The original model
+    int numCol;
+    int numRow;
+    int numTot;
+    vector<int> Astart;
+    vector<int> Aindex;
+    vector<double> Avalue;
+    vector<double> colCost;
+    vector<double> colLower;
+    vector<double> colUpper;
+    vector<double> rowLower;
+    vector<double> rowUpper;
+    double objOffset;
+
+    // Associated data of original model
+    vector<int> workRowPart; // Row partition
+    vector<int> intBreak;
+    vector<double> dblXpert;
+
+    // Working model
+    int problemStatus;
+    vector<int> basicIndex;
+    vector<int> nonbasicFlag;
+    vector<int> nonbasicMove;
+    HMatrix matrix;
+    HFactor factor;
+    HVector buffer;
+    HVector bufferLong;
+
+    vector<double> workCost;
+    vector<double> workDual;
+    vector<double> workShift;
+
+    vector<double> workLower;
+    vector<double> workUpper;
+    vector<double> workRange;
+    vector<double> workValue;
+
+    vector<double> baseLower;
+    vector<double> baseUpper;
+    vector<double> baseValue;
+
+    vector<int> historyColumnIn;
+    vector<int> historyColumnOut;
+    vector<double> historyAlpha;
+};
+
+#endif /* HMODEL_H_ */
+
+// Upstream file: HDualRow.h
+#ifndef HDUALROW_H_
+#define HDUALROW_H_
+
+using namespace std;
+
+/**
+ * This class deal with ratio test
+ * and some update dual/flip tasks.
+ */
+
+class HDualRow {
+  public:
+    void setup(HModel *model);
+    void setupSlice(HModel *model, int size);
+    void clear();
+    void choose_makepack(const HVector *row, const int offset);
+    void choose_possible();
+    void choose_joinpack(const HDualRow *otherRow);
+    void choose_final();
+
+    void update_flip(HVector *bfrtColumn);
+    void update_dual(double theta);
+
+    void create_Freelist();
+    void create_Freemove(HVector *row_ep);
+    void delete_Freemove();
+    void delete_Freelist(int iColumn);
+
+    HModel *workModel;
+    int workSize;
+    const int *workRand;
+    const int *workMove;
+    const double *workDual;
+    const double *workRange;
+
+    set<int> freeList;
+
+    int packCount;
+    vector<int> packIndex;
+    vector<double> packValue;
+
+    double workDelta;
+    double workAlpha;
+    double workTheta;
+    int workPivot;
+    int workCount;
+
+    vector<pair<int, double> > workData;
+    vector<int> workGroup;
+};
+
+#endif /* HDUALROW_H_ */
+
+// Upstream file: HDualRHS.h
+#ifndef HDUALRHS_H_
+#define HDUALRHS_H_
+
+using namespace std;
+
+/**
+ * This class deal with optimality test
+ * and some update primal/weight tasks
+ */
+
+class HDualRHS {
+  public:
+    void setup(HModel *model);
+    void setup_partition(const char *filename);
+
+    void choose_normal(int *chIndex);
+    void choose_multi_global(int *chIndex, int *chCount, int chLimit);
+    void choose_multi_HGauto(int *chIndex, int *chCount, int chLimit);
+    void choose_multi_HGpart(int *chIndex, int *chCount, int chLimit);
+
+    void update_primal(HVector *column, double theta);
+    void update_weight(HVector *column, double devex, double Kai, double *dse);
+    void update_pivots(int iRow, double value);
+
+    void update_infeasList(HVector *column);
+    void create_infeasList(double columnDensity);
+    void create_infeasArray();
+
+    HModel *workModel;
+    double workCutoff;
+    int workCount;
+    vector<char> workMark;
+    vector<int> workIndex;
+    vector<double> workArray;
+    vector<double> workDevex;
+    vector<double> workDevexFull;
+
+    int partNum;
+    int partNumRow;
+    int partNumCol;
+    int partNumCut;
+    int partSwitch;
+    vector<int> workPartition;
+};
+
+#endif /* HDUALRHS_H_ */
+
+using namespace std;
+
+const int HSOL_THREAD_LIMIT = 32;
+const int HSOL_SLICED_LIMIT = 100;
+
+enum HDUAL_VARIANT {
+    HDUAL_VARIANT_PLAIN = 0,
+    HDUAL_VARIANT_TASKS,
+    HDUAL_VARIANT_MULTI,
+};
+
+class HDual {
+  public:
+    void solve(HModel *model, int variant = 0, int num_threads = 1);
+
+  public:
+    void init(int num_threads);
+    void init_slice(int init_sliced_num);
+
+    void solve_phase1();
+    void solve_phase2();
+
+    void rebuild();
+    void cleanup();
+
+    void iterate();
+    void iterate_tasks();
+    void iterate_multi();
+
+    void chooseRow();
+
+    void chooseColumn(HVector *row_ep);
+    void chooseColumn_slice(HVector *row_ep);
+
+    void updateFtranBFRT();
+    void updateFtran();
+    void updateFtranDSE(HVector *dseVector);
+    void updateVerify();
+    void updateDual();
+    void updatePrimal(HVector *dseVector);
+    void updatePivots();
+
+    void major_chooseRow();
+    void major_chooseRowBtran();
+    void minor_chooseRow();
+
+    void minor_update();
+    void minor_updateDual();
+    void minor_updatePrimal();
+    void minor_updatePivots();
+    void minor_updateRows();
+
+    void major_update();
+    void major_updateFtranPrepare();
+    void major_updateFtranParallel();
+    void major_updateFtranFinal();
+    void major_updatePrimal();
+    void major_updateFactor();
+
+    void major_rollback();
+
+    // Variant choice
+    int dual_variant;
+
+    // Model
+    HModel *model;
+    double Tp; // Tolerance for primal
+    double Td; // Tolerance for dual
+
+    int numCol;
+    int numRow;
+    int numTot;
+    const HMatrix *matrix;
+    const HFactor *factor;
+
+    const int *jMove;
+    const double *workRange;
+    const double *baseLower;
+    const double *baseUpper;
+    double *baseValue;
+    double *workDual;
+
+    int solvePhase;
+    int invertHint;
+
+    HVector row_ep;
+    HVector row_ap;
+    HVector column;
+    HVector columnBFRT;
+    HVector columnDSE;
+    double row_epDensity;
+    double rowdseDensity;
+    double columnDensity;
+
+    HDualRow dualRow;
+
+    // Solving related buffers
+    int dualInfeasCount;
+
+    HDualRHS dualRHS;
+
+    // Simplex pivotal information
+    int rowOut;
+    int columnOut;
+    int sourceOut; // -1 from small to lower, +1 to upper
+    int columnIn;
+    double deltaPrimal;
+    double thetaDual;
+    double thetaPrimal;
+    double alpha;
+    double alphaRow;
+
+    // Partitioned coefficient matrix
+    int slice_num;
+    int slice_PRICE;
+    int slice_start[HSOL_SLICED_LIMIT + 1];
+    HMatrix slice_matrix[HSOL_SLICED_LIMIT];
+    HVector slice_row_ap[HSOL_SLICED_LIMIT];
+    HDualRow slice_dualRow[HSOL_SLICED_LIMIT];
+
+    // Multiple price data
+    struct MChoice {
+        int rowOut;
+        double baseValue;
+        double baseLower;
+        double baseUpper;
+        double infeasValue;
+        double infeasDevex;
+        double infeasLimit;
+        HVector row_ep;
+        HVector column;
+        HVector columnBFRT;
     };
-    for (std::size_t taxi = 0; taxi < k; ++taxi) {
-        vertex(taxi);
-        read(input, instance.taxis[taxi].parcel_capacity);
+
+    struct MFinish {
+        int moveIn;
+        double shiftOut;
+        vector<int> flipList;
+
+        int rowOut;
+        int columnOut;
+        int columnIn;
+        double alphaRow;
+        double thetaPrimal;
+        double basicBound;
+        double basicValue;
+        double devex;
+        HVector_ptr row_ep;
+        HVector_ptr column;
+        HVector_ptr columnBFRT;
+    };
+
+    int multi_num;
+    int multi_iChoice;
+    int multi_nFinish;
+    int multi_iteration;
+    int multi_chooseAgain;
+    MChoice multi_choice[HSOL_THREAD_LIMIT];
+    MFinish multi_finish[HSOL_THREAD_LIMIT];
+
+    double total_fake;
+    double total_INVERT_TICK;
+    double total_FT_inc_TICK;
+};
+
+#endif /* HDUAL_H_ */
+
+// Upstream file: HConst.h
+#ifndef HCONST_H_
+#define HCONST_H_
+
+const double HSOL_CONST_INF = 1e200;
+const double HSOL_CONST_TINY = 1e-14;
+const double HSOL_CONST_ZERO = 1e-50;
+
+#endif /* HCONST_H_ */
+
+// Upstream file: HPrimal.h
+#ifndef HPRIMAL_H_
+#define HPRIMAL_H_
+
+class HPrimal {
+  public:
+    void solvePhase2(HModel *ptr_model);
+
+  private:
+    void primalRebuild();
+    void primalChooseColumn();
+    void primalChooseRow();
+    void primalUpdate();
+
+    // Model pointer
+    HModel *model;
+    int numCol;
+    int numRow;
+    int numTot;
+
+    // Pivot related
+    int limitUpdate;
+    int countUpdate;
+    int invertHint;
+    int columnIn;
+    int rowOut;
+
+    // Solve buffer
+    HVector row_ep;
+    HVector row_ap;
+    HVector column;
+    double row_epDensity;
+    double columnDensity;
+};
+
+#endif /* HPRIMAL_H_ */
+
+using namespace std;
+
+void HDual::solve(HModel *ptr_model, int variant, int num_threads) {
+    dual_variant = variant;
+    model = ptr_model;
+    if (model->getNumRow() == 0)
+        return;
+    model->timer.reset();
+
+    // Initialise working environment
+    init(num_threads);
+
+    model->initCost(1);
+    model->computeFactor();
+    model->computeDual();
+    model->computeDualInfeasInDual(&dualInfeasCount);
+    solvePhase = dualInfeasCount > 0 ? 1 : 2;
+
+    // Find largest dual and adjust the dual tolerance accordingly
+    double largeDual = 0;
+    for (int i = 0; i < numTot; i++) {
+        if (model->getNonbasicFlag()[i]) {
+            double myDual = fabs(workDual[i] * jMove[i]);
+            if (largeDual < myDual)
+                largeDual = myDual;
+        }
     }
-    for (std::size_t i = 0; i < n; ++i) {
-        auto& p = instance.passengers[i];
-        vertex(instance.passenger_pickup(i));
-        vertex(instance.passenger_dropoff(i));
-        read(input, p.pickup.earliest);
-        read(input, p.pickup.latest);
-        read(input, p.service);
-        read(input, p.revenue);
+
+    // The major solving loop
+    while (solvePhase) {
+        switch (solvePhase) {
+        case 1:
+            solve_phase1();
+            break;
+        case 2:
+            solve_phase2();
+            break;
+        case 4:
+            break;
+        default:
+            solvePhase = 0;
+            break;
+        }
+        // Jump for primal
+        if (solvePhase == 4)
+            break;
     }
-    for (std::size_t j = 0; j < m; ++j) {
-        auto& p = instance.parcels[j];
-        vertex(instance.parcel_pickup(j));
-        vertex(instance.parcel_dropoff(j));
-        read(input, p.weight);
-        read(input, p.pickup.earliest);
-        read(input, p.pickup.latest);
-        read(input, p.delivery.earliest);
-        read(input, p.delivery.latest);
-        read(input, p.service);
-        read(input, p.revenue);
+
+    // Report the ticks before primal
+    if (dual_variant == HDUAL_VARIANT_PLAIN) {
+        int reportList[] = {HTICK_INVERT,        HTICK_CHUZR1,       HTICK_BTRAN,
+                            HTICK_PRICE,         HTICK_CHUZC1,       HTICK_CHUZC2,
+                            HTICK_CHUZC3,        HTICK_FTRAN,        HTICK_FTRAN_MIX,
+                            HTICK_FTRAN_DSE,     HTICK_UPDATE_DUAL,  HTICK_UPDATE_PRIMAL,
+                            HTICK_UPDATE_WEIGHT, HTICK_UPDATE_FACTOR};
+        int reportCount = sizeof(reportList) / sizeof(int);
+        if (model->intOption[INTOPT_PRINT_FLAG])
+            model->timer.report(reportCount, reportList);
     }
-    std::vector<std::size_t> internal(v);
-    for (std::size_t node = 0; node < v; ++node)
-        internal[instance.vertex_id(node) - 1] = node;
-    for (auto* matrix : {&instance.travel_time, &instance.travel_cost}) {
-        matrix->resize(v * v);
-        for (std::size_t u = 0; u < v; ++u)
-            for (std::size_t w = 0; w < v; ++w)
-                read(input, (*matrix)[internal[u] * v + internal[w]]);
+
+    if (dual_variant == HDUAL_VARIANT_TASKS) {
+        int reportList[] = {
+            HTICK_INVERT,        HTICK_CHUZR1,        HTICK_BTRAN,       HTICK_PRICE,
+            HTICK_CHUZC1,        HTICK_CHUZC2,        HTICK_CHUZC3,      HTICK_FTRAN,
+            HTICK_FTRAN_MIX,     HTICK_FTRAN_DSE,     HTICK_UPDATE_DUAL, HTICK_UPDATE_PRIMAL,
+            HTICK_UPDATE_WEIGHT, HTICK_UPDATE_FACTOR, HTICK_GROUP1,      HTICK_GROUP2};
+        int reportCount = sizeof(reportList) / sizeof(int);
+        if (model->intOption[INTOPT_PRINT_FLAG])
+            model->timer.report(reportCount, reportList);
     }
-    // Generator metadata may follow the matrices; it is not part of the instance.
-    return instance;
+
+    if (dual_variant == HDUAL_VARIANT_MULTI) {
+        int reportList[] = {HTICK_INVERT,        HTICK_CHUZR1,        HTICK_BTRAN,
+                            HTICK_PRICE,         HTICK_CHUZC1,        HTICK_CHUZC2,
+                            HTICK_CHUZC3,        HTICK_FTRAN,         HTICK_FTRAN_MIX,
+                            HTICK_FTRAN_DSE,     HTICK_UPDATE_DUAL,   HTICK_UPDATE_PRIMAL,
+                            HTICK_UPDATE_WEIGHT, HTICK_UPDATE_FACTOR, HTICK_UPDATE_ROW_EP};
+        int reportCount = sizeof(reportList) / sizeof(int);
+        if (model->intOption[INTOPT_PRINT_FLAG])
+            model->timer.report(reportCount, reportList);
+        fprintf(stderr, "PAMI   %-20s    CUTOFF  %6g    PERSISTENSE  %6g\n",
+                model->modelName.c_str(), model->dblOption[DBLOPT_PAMI_CUTOFF],
+                model->numberIteration / (1.0 + multi_iteration));
+    }
+
+    // Use primal to clean up
+    if (solvePhase == 4) {
+        HPrimal hPrimal;
+        hPrimal.solvePhase2(model);
+    }
+
+    // Save the solved results
+    model->totalTime += model->timer.getTime();
 }
 
-} // namespace soict
+void HDual::init(int num_threads) {
+    // Copy size, matrix and factor
+    numCol = model->getNumCol();
+    numRow = model->getNumRow();
+    numTot = model->getNumTot();
+    matrix = model->getMatrix();
+    factor = model->getFactor();
 
-// END src/io/InstanceIO.cpp
+    // Copy pointers
+    jMove = model->getNonbasicMove();
+    workDual = model->getWorkDual();
+    workRange = model->getWorkRange();
+    baseLower = model->getBaseLower();
+    baseUpper = model->getBaseUpper();
+    baseValue = model->getBaseValue();
 
-// BEGIN src/io/SolutionIO.cpp
+    // Copy tolerances
+    Tp = model->dblOption[DBLOPT_PRIMAL_TOL];
+    Td = model->dblOption[DBLOPT_DUAL_TOL];
 
-// BEGIN include/io/SolutionIO.hpp
+    // Setup local vectors
+    columnDSE.setup(numRow);
+    columnBFRT.setup(numRow);
+    column.setup(numRow);
+    row_ep.setup(numRow);
+    row_ap.setup(numCol);
+    columnDensity = 0;
+    row_epDensity = 0;
+    rowdseDensity = 0;
 
+    // Setup other buffers
+    dualRow.setup(model);
+    dualRHS.setup(model);
 
-namespace soict {
-
-void write_solution(std::ostream& out, const Solution& solution, const Instance& instance);
-
-} // namespace soict
-
-// END include/io/SolutionIO.hpp
-
-#include <cmath>
-#include <iomanip>
-#include <string>
-
-namespace soict {
-
-void write_solution(std::ostream& out, const Solution& solution, const Instance& instance) {
-    const auto evaluation = solution.evaluate(instance);
-
-    out << std::setprecision(17) << evaluation.benefit << '\n';
-    for (const auto& route : solution.routes) {
-        out << route.size();
-        for (const auto node : route) out << ' ' << instance.vertex_id(node);
-        out << '\n';
+    // Initialize for tasks
+    if (dual_variant == HDUAL_VARIANT_TASKS) {
+        init_slice(num_threads - 2);
     }
 
+    // Initialize for multi
+    if (dual_variant == HDUAL_VARIANT_MULTI) {
+        multi_num = num_threads;
+        if (multi_num < 1)
+            multi_num = 1;
+        if (multi_num > HSOL_THREAD_LIMIT)
+            multi_num = HSOL_THREAD_LIMIT;
+        for (int i = 0; i < multi_num; i++) {
+            multi_choice[i].row_ep.setup(numRow);
+            multi_choice[i].column.setup(numRow);
+            multi_choice[i].columnBFRT.setup(numRow);
+        }
+        init_slice(multi_num - 1);
+    }
+    multi_iteration = 0;
+    string partitionFile = model->strOption[STROPT_PARTITION_FILE];
+    if (partitionFile.size()) {
+        dualRHS.setup_partition(partitionFile.c_str());
+    }
 }
-} // namespace soict
 
-// END src/io/SolutionIO.cpp
+void HDual::init_slice(int init_sliced_num) {
+    // Number of slices
+    slice_num = init_sliced_num;
+    if (slice_num < 1)
+        slice_num = 1;
+    if (slice_num > HSOL_SLICED_LIMIT)
+        slice_num = HSOL_SLICED_LIMIT;
 
-// BEGIN src/search/alns/RouteCache.cpp
+    // Alias to the matrix
+    const int *Astart = matrix->getAstart();
+    const int *Aindex = matrix->getAindex();
+    const double *Avalue = matrix->getAvalue();
+    const int AcountX = Astart[numCol];
 
-// BEGIN include/search/alns/RouteCache.hpp
+    // Figure out partition weight
+    double sliced_countX = AcountX / slice_num;
+    slice_start[0] = 0;
+    for (int i = 0; i < slice_num - 1; i++) {
+        int endColumn = slice_start[i] + 1; // At least one column
+        int endX = Astart[endColumn];
+        int stopX = (i + 1) * sliced_countX;
+        while (endX < stopX) {
+            endX = Astart[++endColumn];
+        }
+        slice_start[i + 1] = endColumn;
+        if (endColumn >= numCol) {
+            slice_num = i; // SHRINK
+            break;
+        }
+    }
+    slice_start[slice_num] = numCol;
 
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <limits>
-#include <optional>
-#include <vector>
+    // Partition the matrix, row_ap and related packet
+    vector<int> sliced_Astart;
+    for (int i = 0; i < slice_num; i++) {
+        // The matrix
+        int mystart = slice_start[i];
+        int mycount = slice_start[i + 1] - mystart;
+        int mystartX = Astart[mystart];
+        sliced_Astart.resize(mycount + 1);
+        for (int k = 0; k <= mycount; k++)
+            sliced_Astart[k] = Astart[k + mystart] - mystartX;
+        slice_matrix[i].setup(mycount, numRow, &sliced_Astart[0], Aindex + mystartX,
+                              Avalue + mystartX);
 
-namespace soict::alns {
+        // The row_ap and its packages
+        slice_row_ap[i].setup(mycount);
+        slice_dualRow[i].setupSlice(model, mycount);
+    }
+}
 
-// A route segment maps arrival at its first node x to departure at its last
-// node max(x + duration, ready). It is feasible only for x <= latest_input.
+void HDual::solve_phase1() {
+    model->printMessage("dual-phase-1-start");
+    // Switch to dual phase 1 bounds
+    model->initBound(1);
+    model->initValue();
+
+    // Main solving structure
+    for (;;) {
+        rebuild();
+        for (;;) {
+            switch (dual_variant) {
+            default:
+            case HDUAL_VARIANT_PLAIN:
+                iterate();
+                break;
+            case HDUAL_VARIANT_TASKS:
+                iterate_tasks();
+                break;
+            case HDUAL_VARIANT_MULTI:
+                iterate_multi();
+                break;
+            }
+            if (invertHint)
+                break;
+        }
+        if (model->countUpdate == 0)
+            break;
+    }
+
+    if (rowOut == -1) {
+        model->printMessage("dual-phase-1-optimal");
+        // Go to phase 2
+        if (model->objective == 0) {
+            solvePhase = 2;
+        } else {
+            // We still have dual infeasible
+            if (model->problemPerturbed) {
+                // Clean up perturbation and go on
+                cleanup();
+                if (dualInfeasCount == 0)
+                    solvePhase = 2;
+            } else {
+                // Report dual infeasible
+                solvePhase = -1;
+                model->printMessage("dual-infeasible");
+                model->reportStatus(LP_Status_Unbounded);
+            }
+        }
+    } else if (columnIn == -1) {
+        // We got dual phase 1 unbounded - strange
+        model->printMessage("dual-phase-1-unbounded");
+        if (model->problemPerturbed) {
+            // Clean up perturbation and go on
+            cleanup();
+            if (dualInfeasCount == 0)
+                solvePhase = 2;
+        } else {
+            // Report strange issues
+            solvePhase = -1;
+            model->printMessage("dual-phase-1-not-solved");
+            model->reportStatus(LP_Status_Failed);
+        }
+    }
+
+    if (solvePhase == 2) {
+        model->initBound();
+        model->initValue();
+    }
+}
+
+void HDual::solve_phase2() {
+    model->printMessage("dual-phase-2-start");
+
+    // Collect free variables
+    dualRow.create_Freelist();
+
+    // Main solving structure
+    for (;;) {
+        rebuild();
+        if (dualInfeasCount > 0)
+            break;
+        for (;;) {
+            model->printProgress();
+            switch (dual_variant) {
+            default:
+            case HDUAL_VARIANT_PLAIN:
+                iterate();
+                break;
+            case HDUAL_VARIANT_TASKS:
+                iterate_tasks();
+                break;
+            case HDUAL_VARIANT_MULTI:
+                iterate_multi();
+                break;
+            }
+
+            if (invertHint)
+                break;
+        }
+        if (model->countUpdate == 0)
+            break;
+    }
+
+    if (dualInfeasCount > 0) {
+        // We got free variables - need dual phase 1
+        model->printMessage("dual-phase-2-found-free");
+        solvePhase = 1;
+    } else if (rowOut == -1) {
+        // Tentative optimal
+        model->printMessage("dual-phase-2-optimal");
+        cleanup();
+        if (dualInfeasCount > 0) {
+            solvePhase = 4; // Do primal
+        } else {
+            solvePhase = 0;
+            model->printMessage("problem-optimal");
+            model->reportStatus(LP_Status_Optimal);
+        }
+    } else if (columnIn == -1) {
+        model->printMessage("dual-phase-2-unbounded");
+        if (model->problemPerturbed) {
+            cleanup();
+        } else {
+            solvePhase = -1;
+            model->printMessage("problem-infeasible");
+            model->reportStatus(LP_Status_Infeasible);
+        }
+    }
+}
+
+void HDual::rebuild() {
+    check_deadline();
+    // Save history information
+    model->reportPivots(-1, -1, 0); // Indicate REINVERT
+    model->timer.recordStart(HTICK_INVERT);
+
+    invertHint = 0;
+    // Rebuild model->factor
+    if (model->countUpdate > 0) {
+        const int *baseIndex = model->getBaseIndex();
+        for (int i = 0; i < numRow; i++)
+            dualRHS.workDevexFull[baseIndex[i]] = dualRHS.workDevex[i];
+        model->computeFactor();
+        for (int i = 0; i < numRow; i++)
+            dualRHS.workDevex[i] = dualRHS.workDevexFull[baseIndex[i]];
+    }
+
+    // Recompute dual solution
+    model->computeDual();
+    model->correctDual(&dualInfeasCount);
+    model->computePrimal();
+
+    // Collect primal infeasible as a list
+    dualRHS.create_infeasArray();
+    dualRHS.create_infeasList(columnDensity);
+
+    // Compute the objective value
+    model->computeObject(solvePhase);
+    model->printObject();
+
+    total_INVERT_TICK = factor->pseudoTick;
+    total_FT_inc_TICK = 0;
+    total_fake = 0;
+
+    model->timer.recordFinish(HTICK_INVERT);
+}
+
+void HDual::cleanup() {
+    // Remove perturbation and recompute the dual solution
+    model->printMessage("dual-cleanup-shift");
+    model->initCost();
+    model->initBound();
+    model->computeDual();
+    model->computeObject(solvePhase);
+    model->printObject();
+
+    model->computeDualInfeasInPrimal(&dualInfeasCount);
+}
+
+void HDual::iterate() {
+    check_deadline();
+    chooseRow();
+    chooseColumn(&row_ep);
+
+    updateFtranBFRT();
+    updateFtran();
+    updateFtranDSE(&row_ep);
+
+    updateVerify();
+    updateDual();
+    updatePrimal(&row_ep);
+    updatePivots();
+}
+
+void HDual::iterate_tasks() {
+    slice_PRICE = 1;
+
+    // Group 1
+    chooseRow();
+
+    // Disable slice when too sparse
+    if (1.0 * row_ep.count / numRow < 0.01)
+        slice_PRICE = 0;
+
+    model->timer.recordStart(HTICK_GROUP1);
+
+    {
+
+        {
+            columnDSE.copy(&row_ep);
+            updateFtranDSE(&columnDSE);
+        }
+
+        {
+            if (slice_PRICE)
+                chooseColumn_slice(&row_ep);
+            else
+                chooseColumn(&row_ep);
+
+            updateFtranBFRT();
+
+            updateFtran();
+        }
+    }
+    model->timer.recordFinish(HTICK_GROUP1);
+
+    updateVerify();
+    updateDual();
+    updatePrimal(&columnDSE);
+    updatePivots();
+}
+
+void HDual::chooseRow() {
+    if (invertHint)
+        return;
+    for (;;) {
+        // Choose row
+        dualRHS.choose_normal(&rowOut);
+        if (rowOut == -1) {
+            invertHint = 1;
+            return;
+        }
+
+        // Verify weight
+        model->timer.recordStart(HTICK_BTRAN);
+        row_ep.clear();
+        row_ep.count = 1;
+        row_ep.index[0] = rowOut;
+        row_ep.array[rowOut] = 1;
+        row_ep.packFlag = true;
+        factor->btran(row_ep, row_epDensity);
+        model->timer.recordFinish(HTICK_BTRAN);
+        double u_weight = dualRHS.workDevex[rowOut];
+        double c_weight = dualRHS.workDevex[rowOut] = row_ep.norm2();
+        if (u_weight >= 0.25 * c_weight)
+            break;
+    }
+
+    // Assign basic info
+    columnOut = model->getBaseIndex()[rowOut];
+    if (baseValue[rowOut] < baseLower[rowOut])
+        deltaPrimal = baseValue[rowOut] - baseLower[rowOut];
+    else
+        deltaPrimal = baseValue[rowOut] - baseUpper[rowOut];
+    sourceOut = deltaPrimal < 0 ? -1 : 1;
+    row_epDensity *= 0.95;
+    row_epDensity += 0.05 * row_ep.count / numRow;
+}
+
+void HDual::chooseColumn(HVector *row_ep) {
+    if (invertHint)
+        return;
+
+    // Compute pivot row
+    model->timer.recordStart(HTICK_PRICE);
+    row_ap.clear();
+    matrix->price_by_row(row_ap, *row_ep);
+    model->timer.recordFinish(HTICK_PRICE);
+
+    // Choose column - possible
+    model->timer.recordStart(HTICK_CHUZC1);
+    dualRow.clear();
+    dualRow.workDelta = deltaPrimal;
+    dualRow.create_Freemove(row_ep);
+    dualRow.choose_makepack(&row_ap, 0);
+    dualRow.choose_makepack(row_ep, numCol);
+    dualRow.choose_possible();
+    model->timer.recordFinish(HTICK_CHUZC1);
+
+    // Choose column - check problem
+    columnIn = -1;
+    if (dualRow.workTheta <= 0 || dualRow.workCount == 0) {
+        invertHint = 1;
+        return;
+    }
+
+    // Choose column - final
+    dualRow.choose_final();
+    dualRow.delete_Freemove();
+
+    columnIn = dualRow.workPivot;
+    alphaRow = dualRow.workAlpha;
+    thetaDual = dualRow.workTheta;
+}
+
+void HDual::chooseColumn_slice(HVector *row_ep) {
+    if (invertHint)
+        return;
+
+    model->timer.recordStart(HTICK_CHUZC1);
+    dualRow.clear();
+    dualRow.workDelta = deltaPrimal;
+    dualRow.create_Freemove(row_ep);
+
+    // Row_ep:         PACK + CC1
+
+    {
+
+        dualRow.choose_makepack(row_ep, numCol);
+        dualRow.choose_possible();
+    }
+
+    // Row_ap: PRICE + PACK + CC1
+    for (int i = 0; i < slice_num; i++) {
+
+        {
+            slice_row_ap[i].clear();
+            slice_matrix[i].price_by_row(slice_row_ap[i], *row_ep);
+
+            slice_dualRow[i].clear();
+            slice_dualRow[i].workDelta = deltaPrimal;
+            slice_dualRow[i].choose_makepack(&slice_row_ap[i], slice_start[i]);
+            slice_dualRow[i].choose_possible();
+        }
+    }
+
+    // Join CC1 results here
+    for (int i = 0; i < slice_num; i++)
+        dualRow.choose_joinpack(&slice_dualRow[i]);
+
+    // Infeasible we created before
+    columnIn = -1;
+    if (dualRow.workTheta <= 0 || dualRow.workCount == 0) {
+        invertHint = 1;
+        return;
+    }
+    model->timer.recordFinish(HTICK_CHUZC1);
+
+    // Choose column 2, This only happens if didn't go out
+    dualRow.choose_final();
+    dualRow.delete_Freemove();
+    columnIn = dualRow.workPivot;
+    alphaRow = dualRow.workAlpha;
+    thetaDual = dualRow.workTheta;
+}
+
+void HDual::updateFtranBFRT() {
+    if (invertHint)
+        return;
+    model->timer.recordStart(HTICK_FTRAN_MIX);
+    dualRow.update_flip(&columnBFRT);
+    if (columnBFRT.count)
+        factor->ftran(columnBFRT, columnDensity);
+    model->timer.recordFinish(HTICK_FTRAN_MIX);
+}
+
+void HDual::updateFtran() {
+    if (invertHint)
+        return;
+    model->timer.recordStart(HTICK_FTRAN);
+    column.clear();
+    column.packFlag = true;
+    matrix->collect_aj(column, columnIn, 1);
+    factor->ftran(column, columnDensity);
+    alpha = column.array[rowOut];
+    model->timer.recordFinish(HTICK_FTRAN);
+}
+
+void HDual::updateFtranDSE(HVector *dseVector) {
+    if (invertHint)
+        return;
+    model->timer.recordStart(HTICK_FTRAN_DSE);
+    factor->ftran(*dseVector, rowdseDensity);
+    model->timer.recordFinish(HTICK_FTRAN_DSE);
+}
+
+void HDual::updateVerify() {
+    if (invertHint)
+        return;
+
+    // The alpha
+    double aCol = fabs(alpha);
+    double aRow = fabs(alphaRow);
+    double aDiff = fabs(aCol - aRow);
+    if (aDiff / min(aCol, aRow) > 1e-7 && model->countUpdate > 0) {
+        invertHint = 1;
+    }
+
+    // We get this thing, but it is not actived by default.
+    //    // The dual reduced cost
+    //    double dualin_u = workDual[columnIn];
+    //    double dualin_c = model->getWorkCost()[columnIn];
+    //    for (int i = 0; i < column.count; i++) {
+    //        int iRow = column.index[i];
+    //        int iCol = model->getBaseIndex()[iRow];
+    //        double value = column.array[iRow];
+    //        double cost = model->getWorkCost()[iCol] + model->getWorkShift()[iCol];
+    //        dualin_c -= cost * value;
+    //    }
+    //    double dualin_diff = fabs(dualin_c - dualin_u);
+    ////    if (dualin_diff > Td) {
+    ////        cerr << dualin_c << "\t" << dualin_u << "\t" << dualin_diff << endl;
+    ////        invertHint = 1;
+    ////    }
+}
+
+void HDual::updateDual() {
+    if (invertHint)
+        return;
+
+    // Update - dual (shift and back)
+    if (thetaDual == 0)
+        model->shiftCost(columnIn, -workDual[columnIn]);
+    else {
+        dualRow.update_dual(thetaDual);
+        if (dual_variant != HDUAL_VARIANT_PLAIN && slice_PRICE)
+            for (int i = 0; i < slice_num; i++)
+                slice_dualRow[i].update_dual(thetaDual);
+    }
+    workDual[columnIn] = 0;
+    workDual[columnOut] = -thetaDual;
+    model->shiftBack(columnOut);
+}
+
+void HDual::updatePrimal(HVector *dseVector) {
+    if (invertHint)
+        return;
+
+    // Update - primal and weight
+    dualRHS.update_primal(&columnBFRT, 1);
+    dualRHS.update_infeasList(&columnBFRT);
+    double x_out = baseValue[rowOut];
+    double l_out = baseLower[rowOut];
+    double u_out = baseUpper[rowOut];
+    thetaPrimal = (x_out - (deltaPrimal < 0 ? l_out : u_out)) / alpha;
+    dualRHS.update_primal(&column, thetaPrimal);
+    double thisDevex = dualRHS.workDevex[rowOut] / (alpha * alpha);
+    dualRHS.update_weight(&column, thisDevex, -2 / alpha, &dseVector->array[0]);
+    dualRHS.workDevex[rowOut] = thisDevex;
+    dualRHS.update_infeasList(&column);
+
+    rowdseDensity = 0.95 * rowdseDensity + 0.05 * dseVector->count / numRow;
+    columnDensity = 0.95 * columnDensity + 0.05 * column.count / numRow;
+
+    total_fake += column.fakeTick;
+    total_fake += dseVector->fakeTick;
+
+    total_FT_inc_TICK += column.pseudoTick;
+    total_FT_inc_TICK += dseVector->pseudoTick;
+}
+
+void HDual::updatePivots() {
+    if (invertHint)
+        return;
+
+    // Update - pivots
+    model->updatePivots(columnIn, rowOut, sourceOut);
+    model->reportPivots(columnIn, columnOut, alpha);
+    model->updateFactor(&column, &row_ep, &rowOut, &invertHint);
+    model->updateMatrix(columnIn, columnOut);
+    dualRow.delete_Freelist(columnIn);
+    dualRHS.update_pivots(rowOut, model->getWorkValue()[columnIn] + thetaPrimal);
+
+    if (total_fake >= factor->fakeTick && model->countUpdate >= 50) {
+        //        cerr << total_fake << "\t" << factor->fakeTick << endl;
+        //        fprintf(stderr,
+        //                "%10d   %10.2e  %10.2e  %10.4f          %10.2e  %10.2e  %10.4f\n",
+        //                model->countUpdate, total_INVERT_TICK, total_FT_inc_TICK,
+        //                total_FT_inc_TICK / total_INVERT_TICK, factor->fakeTick,
+        //                total_fake, total_fake / factor->fakeTick);
+        invertHint = 1;
+    }
+}
+
+// Upstream file: HDualMulti.cpp
+
+using namespace std;
+
+void HDual::iterate_multi() {
+    slice_PRICE = 1;
+
+    // Report candidate
+    major_chooseRow();
+    minor_chooseRow();
+    if (rowOut == -1) {
+        invertHint = 1;
+        return;
+    }
+
+    // Assign the slice_row_ep, skip if possible
+    if (1.0 * multi_finish[multi_nFinish].row_ep->count / numRow < 0.01)
+        slice_PRICE = 0;
+
+    if (slice_PRICE) {
+
+        chooseColumn_slice(multi_finish[multi_nFinish].row_ep);
+    } else {
+        chooseColumn(multi_finish[multi_nFinish].row_ep);
+    }
+    // If we failed.
+    if (invertHint) {
+        major_update();
+        return;
+    }
+
+    minor_update();
+    major_update();
+}
+
+void HDual::major_chooseRow() {
+
+    /**
+     * 0. Initial check to see if we need to do it again
+     */
+    if (model->countUpdate == 0)
+        multi_chooseAgain = 1;
+    if (!multi_chooseAgain)
+        return;
+    multi_chooseAgain = 0;
+    multi_iteration++;
+
+    /**
+     * Major loop:
+     *     repeat 1-5, until we found a good sets of choices
+     */
+    for (;;) {
+        // 1. Multiple CHUZR
+        int initialCount = 0;
+        vector<int> choiceIndex(multi_num);
+        dualRHS.choose_multi_HGauto(&choiceIndex[0], &initialCount, multi_num);
+        //        dualRHS.choose_multi_global(&choiceIndex[0], &initialCount, multi_num);
+        if (initialCount == 0 && dualRHS.workCutoff == 0) {
+            // OPTIMAL
+            return;
+        }
+
+        // 2. Shrink the size by cutoff
+        int choiceCount = 0;
+        for (int i = 0; i < initialCount; i++) {
+            int iRow = choiceIndex[i];
+            if (dualRHS.workArray[iRow] / dualRHS.workDevex[iRow] >= dualRHS.workCutoff) {
+                choiceIndex[choiceCount++] = iRow;
+            }
+        }
+        if (initialCount == 0 || choiceCount <= initialCount / 3) {
+            // Need to do the list again
+            dualRHS.create_infeasList(columnDensity);
+            continue;
+        }
+
+        // 3. Store the choiceIndex to buffer
+        for (int ich = 0; ich < multi_num; ich++)
+            multi_choice[ich].rowOut = -1;
+        for (int ich = 0; ich < choiceCount; ich++)
+            multi_choice[ich].rowOut = choiceIndex[ich];
+
+        // 4. Parallel BTRAN and compute weight
+        major_chooseRowBtran();
+
+        // 5. Update row weights
+        for (int ich = 0; ich < multi_num; ich++) {
+            if (multi_choice[ich].rowOut >= 0) {
+                row_epDensity *= 0.95;
+                row_epDensity += 0.05 * multi_choice[ich].row_ep.count / numRow;
+            }
+        }
+
+        // 6. Check updated and computed weight
+        int countWrongDevex = 0;
+        for (int i = 0; i < multi_num; i++) {
+            const int iRow = multi_choice[i].rowOut;
+            if (iRow < 0)
+                continue;
+            double u_weight = dualRHS.workDevex[iRow];
+            double c_weight = dualRHS.workDevex[iRow] = multi_choice[i].infeasDevex;
+            if (u_weight < 0.25 * c_weight) {
+                multi_choice[i].rowOut = -1;
+                countWrongDevex++;
+            }
+        }
+        if (countWrongDevex <= choiceCount / 3)
+            break;
+    }
+
+    // 6. Take other info associated with choices
+    double pamiCutoff = model->dblOption[DBLOPT_PAMI_CUTOFF];
+    for (int i = 0; i < multi_num; i++) {
+        const int iRow = multi_choice[i].rowOut;
+        if (iRow < 0)
+            continue;
+        // Other info
+        multi_choice[i].baseValue = baseValue[iRow];
+        multi_choice[i].baseLower = baseLower[iRow];
+        multi_choice[i].baseUpper = baseUpper[iRow];
+        multi_choice[i].infeasValue = dualRHS.workArray[iRow];
+        multi_choice[i].infeasDevex = dualRHS.workDevex[iRow];
+        multi_choice[i].infeasLimit = dualRHS.workArray[iRow] / dualRHS.workDevex[iRow];
+        multi_choice[i].infeasLimit *= pamiCutoff;
+    }
+
+    // 6. Finish count
+    multi_nFinish = 0;
+}
+
+void HDual::major_chooseRowBtran() {
+    model->timer.recordStart(HTICK_BTRAN);
+
+    // 4.1. Prepare BTRAN buffer
+    int multi_ntasks = 0;
+    int multi_iRow[HSOL_THREAD_LIMIT];
+    int multi_iwhich[HSOL_THREAD_LIMIT];
+    double multi_devex[HSOL_THREAD_LIMIT];
+    HVector_ptr multi_vector[HSOL_THREAD_LIMIT];
+    for (int ich = 0; ich < multi_num; ich++) {
+        if (multi_choice[ich].rowOut >= 0) {
+            multi_iRow[multi_ntasks] = multi_choice[ich].rowOut;
+            multi_vector[multi_ntasks] = &multi_choice[ich].row_ep;
+            multi_iwhich[multi_ntasks] = ich;
+            multi_ntasks++;
+        }
+    }
+
+    // 4.2 Perform BTRAN
+
+    for (int i = 0; i < multi_ntasks; i++) {
+        const int iRow = multi_iRow[i];
+        HVector_ptr work_ep = multi_vector[i];
+        work_ep->clear();
+        work_ep->count = 1;
+        work_ep->index[0] = iRow;
+        work_ep->array[iRow] = 1;
+        work_ep->packFlag = true;
+        factor->btran(*work_ep, row_epDensity);
+        multi_devex[i] = work_ep->norm2();
+    }
+
+    // 4.3 Put back devex
+    for (int i = 0; i < multi_ntasks; i++)
+        multi_choice[multi_iwhich[i]].infeasDevex = multi_devex[i];
+    model->timer.recordFinish(HTICK_BTRAN);
+}
+
+void HDual::minor_chooseRow() {
+    /**
+     * 1. Find which to go out
+     *        Because we had other checking code
+     *        We know current best is OK to be used
+     */
+    multi_iChoice = -1;
+    double bestMerit = 0;
+    for (int ich = 0; ich < multi_num; ich++) {
+        const int iRow = multi_choice[ich].rowOut;
+        if (iRow < 0)
+            continue;
+        double infeasValue = multi_choice[ich].infeasValue;
+        double infeasDevex = multi_choice[ich].infeasDevex;
+        double infeasMerit = infeasValue / infeasDevex;
+        if (bestMerit < infeasMerit) {
+            bestMerit = infeasMerit;
+            multi_iChoice = ich;
+        }
+    }
+
+    /**
+     * 2. Obtain other info for
+     *        current sub-optimisation choice
+     */
+    rowOut = -1;
+    if (multi_iChoice != -1) {
+        MChoice *workChoice = &multi_choice[multi_iChoice];
+
+        // Assign useful variables
+        rowOut = workChoice->rowOut;
+        columnOut = model->getBaseIndex()[rowOut];
+        double valueOut = workChoice->baseValue;
+        double lowerOut = workChoice->baseLower;
+        double upperOut = workChoice->baseUpper;
+        deltaPrimal = valueOut - (valueOut < lowerOut ? lowerOut : upperOut);
+        sourceOut = deltaPrimal < 0 ? -1 : 1;
+
+        // Assign buffers
+        MFinish *workFinish = &multi_finish[multi_nFinish];
+        workFinish->rowOut = rowOut;
+        workFinish->columnOut = columnOut;
+        workFinish->row_ep = &workChoice->row_ep;
+        workFinish->column = &workChoice->column;
+        workFinish->columnBFRT = &workChoice->columnBFRT;
+        workFinish->devex = workChoice->infeasDevex;
+
+        // Disable current row
+        workChoice->rowOut = -1;
+    }
+}
+
+void HDual::minor_update() {
+    // Minor update - store roll back data
+    MFinish *Fin = &multi_finish[multi_nFinish];
+    Fin->moveIn = model->getNonbasicMove()[columnIn];
+    Fin->shiftOut = model->getWorkShift()[columnOut];
+    Fin->flipList.clear();
+    for (int i = 0; i < dualRow.workCount; i++)
+        Fin->flipList.push_back(dualRow.workData[i].first);
+
+    // Minor update - key parts
+    minor_updateDual();
+    minor_updatePrimal();
+    minor_updatePivots();
+    minor_updateRows();
+    multi_nFinish++;
+
+    // Minor update - check for the next iteration
+    int countRemain = 0;
+    for (int i = 0; i < multi_num; i++) {
+        int iRow = multi_choice[i].rowOut;
+        if (iRow < 0)
+            continue;
+        double myInfeas = multi_choice[i].infeasValue;
+        double myWeight = multi_choice[i].infeasDevex;
+        countRemain += (myInfeas / myWeight > multi_choice[i].infeasLimit);
+    }
+    if (countRemain == 0)
+        multi_chooseAgain = 1;
+    //    if (multi_nFinish + 1 == multi_num)
+    //        multi_chooseAgain = 1;
+}
+
+void HDual::minor_updateDual() {
+    /**
+     * 1. Update the dual solution
+     *    XXX Data parallel (depends on the ap partition before)
+     */
+    if (thetaDual == 0) {
+        model->shiftCost(columnIn, -workDual[columnIn]);
+    } else {
+        dualRow.update_dual(thetaDual);
+        if (slice_PRICE) {
+            for (int i = 0; i < slice_num; i++)
+                slice_dualRow[i].update_dual(thetaDual);
+        }
+    }
+    workDual[columnIn] = 0;
+    workDual[columnOut] = -thetaDual;
+    model->shiftBack(columnOut);
+
+    /**
+     * 2. Apply global bound flip
+     */
+    dualRow.update_flip(multi_finish[multi_nFinish].columnBFRT);
+
+    /**
+     * 3. Apply local bound flips
+     */
+    for (int ich = 0; ich < multi_num; ich++) {
+        if (ich == multi_iChoice || multi_choice[ich].rowOut >= 0) {
+            HVector *this_ep = &multi_choice[ich].row_ep;
+            for (int i = 0; i < dualRow.workCount; i++) {
+                double dot = matrix->compute_dot(*this_ep, dualRow.workData[i].first);
+                multi_choice[ich].baseValue -= dualRow.workData[i].second * dot;
+            }
+        }
+    }
+}
+
+void HDual::minor_updatePrimal() {
+    MChoice *Cho = &multi_choice[multi_iChoice];
+    MFinish *Fin = &multi_finish[multi_nFinish];
+    double valueOut = Cho->baseValue;
+    double lowerOut = Cho->baseLower;
+    double upperOut = Cho->baseUpper;
+    if (deltaPrimal < 0) {
+        thetaPrimal = (valueOut - lowerOut) / alphaRow;
+        Fin->basicBound = lowerOut;
+    }
+    if (deltaPrimal > 0) {
+        thetaPrimal = (valueOut - upperOut) / alphaRow;
+        Fin->basicBound = upperOut;
+    }
+    Fin->thetaPrimal = thetaPrimal;
+
+    /**
+     * 5. Update the other primal value
+     *    By the pivot (thetaPrimal)
+     */
+    for (int ich = 0; ich < multi_num; ich++) {
+        if (multi_choice[ich].rowOut >= 0) {
+            HVector *this_ep = &multi_choice[ich].row_ep;
+            double dot = matrix->compute_dot(*this_ep, columnIn);
+            multi_choice[ich].baseValue -= thetaPrimal * dot;
+            double value = multi_choice[ich].baseValue;
+            double lower = multi_choice[ich].baseLower;
+            double upper = multi_choice[ich].baseUpper;
+            double infeas = 0;
+            if (value < lower - Tp)
+                infeas = value - lower;
+            if (value > upper + Tp)
+                infeas = value - upper;
+            infeas *= infeas;
+            multi_choice[ich].infeasValue = infeas;
+        }
+    }
+}
+void HDual::minor_updatePivots() {
+    MFinish *Fin = &multi_finish[multi_nFinish];
+    model->updatePivots(columnIn, rowOut, sourceOut);
+    Fin->devex /= (alphaRow * alphaRow);
+    Fin->basicValue = model->getWorkValue()[columnIn] + thetaPrimal;
+    model->updateMatrix(columnIn, columnOut);
+    Fin->columnIn = columnIn;
+    Fin->alphaRow = alphaRow;
+    model->reportPivots(columnIn, columnOut, alphaRow);
+}
+
+void HDual::minor_updateRows() {
+    model->timer.recordStart(HTICK_UPDATE_ROW_EP);
+    const HVector *Row = multi_finish[multi_nFinish].row_ep;
+    int updateRows_inDense = (Row->count < 0) || (Row->count > 0.1 * numRow);
+    if (updateRows_inDense) {
+        int multi_nTasks = 0;
+        int multi_iwhich[HSOL_THREAD_LIMIT];
+        double multi_xpivot[HSOL_THREAD_LIMIT];
+        HVector_ptr multi_vector[HSOL_THREAD_LIMIT];
+
+        /*
+         * Dense mode
+         *  1. Find which ones to do and the pivotX
+         *  2. Do all of them in task parallel
+         */
+
+        // Collect tasks
+        for (int ich = 0; ich < multi_num; ich++) {
+            if (multi_choice[ich].rowOut >= 0) {
+                HVector *next_ep = &multi_choice[ich].row_ep;
+                double pivotX = matrix->compute_dot(*next_ep, columnIn);
+                if (fabs(pivotX) < HSOL_CONST_TINY)
+                    continue;
+                multi_vector[multi_nTasks] = next_ep;
+                multi_xpivot[multi_nTasks] = -pivotX / alphaRow;
+                multi_iwhich[multi_nTasks] = ich;
+                multi_nTasks++;
+            }
+        }
+
+        // Perform tasks
+
+        for (int i = 0; i < multi_nTasks; i++) {
+            HVector_ptr nextEp = multi_vector[i];
+            const double xpivot = multi_xpivot[i];
+            nextEp->saxpy(xpivot, Row);
+            nextEp->tight();
+            multi_xpivot[i] = nextEp->norm2();
+        }
+
+        // Put weight back
+        for (int i = 0; i < multi_nTasks; i++)
+            multi_choice[multi_iwhich[i]].infeasDevex = multi_xpivot[i];
+    } else {
+        // Sparse mode: just do it sequentially
+        for (int ich = 0; ich < multi_num; ich++) {
+            if (multi_choice[ich].rowOut >= 0) {
+                HVector *next_ep = &multi_choice[ich].row_ep;
+                double pivotX = matrix->compute_dot(*next_ep, columnIn);
+                if (fabs(pivotX) < HSOL_CONST_TINY)
+                    continue;
+                next_ep->saxpy(-pivotX / alphaRow, Row);
+                next_ep->tight();
+                multi_choice[ich].infeasDevex = next_ep->norm2();
+            }
+        }
+    }
+    model->timer.recordFinish(HTICK_UPDATE_ROW_EP);
+}
+
+void HDual::major_update() {
+    /**
+     * 0. See if it's ready to perform a major update
+     */
+    if (invertHint)
+        multi_chooseAgain = 1;
+    if (!multi_chooseAgain)
+        return;
+
+    // Major update - FTRANs
+    major_updateFtranPrepare();
+    major_updateFtranParallel();
+    major_updateFtranFinal();
+
+    // Major update - check for roll back
+    for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+        MFinish *iFinish = &multi_finish[iFn];
+        HVector *iColumn = iFinish->column;
+        int iRowOut = iFinish->rowOut;
+        double alphaC = fabs(iColumn->array[iRowOut]);
+        double alphaR = fabs(iFinish->alphaRow);
+        double compare = min(alphaC, alphaR);
+        double alphaDiff = fabs(alphaC - alphaR);
+        //        int startUpdate = model->countUpdate - multi_nFinish;
+        if (alphaDiff / compare > 1e-8 && model->countUpdate > 0) {
+            cerr << "REPORT " << model->modelName << " NEED-ROLL-BACK   ";
+            cerr << model->numberIteration << " alpha = " << alphaC << " alphaR = " << alphaR
+                 << " diff = " << alphaDiff / compare << "  multi_nFinish = " << multi_nFinish
+                 << endl;
+            invertHint = 1;
+            //            if (startUpdate > 0) {
+            major_rollback();
+            return;
+            //            }
+        }
+    }
+
+    // Major update - primal and factor
+    major_updatePrimal();
+    major_updateFactor();
+}
+
+void HDual::major_updateFtranPrepare() {
+    // Prepare FTRAN BFRT buffer
+    columnBFRT.clear();
+    for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+        MFinish *Fin = &multi_finish[iFn];
+        HVector *Vec = Fin->columnBFRT;
+        matrix->collect_aj(*Vec, Fin->columnIn, Fin->thetaPrimal);
+
+        // Update this buffer by previous Row_ep
+        for (int jFn = iFn - 1; jFn >= 0; jFn--) {
+            MFinish *jFinish = &multi_finish[jFn];
+            double *jRow_epArray = &jFinish->row_ep->array[0];
+            double pivotX = 0;
+            for (int k = 0; k < Vec->count; k++) {
+                int iRow = Vec->index[k];
+                pivotX += Vec->array[iRow] * jRow_epArray[iRow];
+            }
+            if (fabs(pivotX) > HSOL_CONST_TINY) {
+                pivotX /= jFinish->alphaRow;
+                matrix->collect_aj(*Vec, jFinish->columnIn, -pivotX);
+                matrix->collect_aj(*Vec, jFinish->columnOut, pivotX);
+            }
+        }
+        columnBFRT.saxpy(1, Vec);
+    }
+
+    // Prepare regular FTRAN buffer
+    for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+        MFinish *iFinish = &multi_finish[iFn];
+        HVector *iColumn = iFinish->column;
+        iColumn->clear();
+        iColumn->packFlag = true;
+        matrix->collect_aj(*iColumn, iFinish->columnIn, 1);
+    }
+}
+
+void HDual::major_updateFtranParallel() {
+    model->timer.recordStart(HTICK_FTRAN_MIX);
+
+    // Prepare buffers
+    int multi_ntasks = 0;
+    double multi_density[HSOL_THREAD_LIMIT * 2 + 1];
+    HVector_ptr multi_vector[HSOL_THREAD_LIMIT * 2 + 1];
+    // BFRT first
+    multi_density[multi_ntasks] = columnDensity;
+    multi_vector[multi_ntasks] = &columnBFRT;
+    multi_ntasks++;
+    // Then DSE
+    for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+        multi_density[multi_ntasks] = rowdseDensity;
+        multi_vector[multi_ntasks] = multi_finish[iFn].row_ep;
+        multi_ntasks++;
+    }
+    // Then Column
+    for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+        multi_density[multi_ntasks] = columnDensity;
+        multi_vector[multi_ntasks] = multi_finish[iFn].column;
+        multi_ntasks++;
+    }
+
+    // Perform FTRAN
+
+    for (int i = 0; i < multi_ntasks; i++) {
+        HVector_ptr rhs = multi_vector[i];
+        double density = multi_density[i];
+        factor->ftran(*rhs, density);
+    }
+
+    // Update ticks
+    for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+        MFinish *Fin = &multi_finish[iFn];
+        HVector *Col = Fin->column;
+        HVector *Row = Fin->row_ep;
+        total_FT_inc_TICK += Col->pseudoTick;
+        total_FT_inc_TICK += Row->pseudoTick;
+    }
+
+    // Update rates
+    for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+        MFinish *Fin = &multi_finish[iFn];
+        HVector *Col = Fin->column;
+        HVector *Row = Fin->row_ep;
+        columnDensity = 0.95 * columnDensity + 0.05 * Col->count / numRow;
+        rowdseDensity = 0.95 * rowdseDensity + 0.05 * Row->count / numRow;
+    }
+    model->timer.recordFinish(HTICK_FTRAN_MIX);
+}
+
+void HDual::major_updateFtranFinal() {
+    model->timer.recordStart(HTICK_FTRAN_MIX);
+    int updateFTRAN_inDense = dualRHS.workCount < 0;
+    if (updateFTRAN_inDense) {
+        for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+            multi_finish[iFn].column->count = -1;
+            multi_finish[iFn].row_ep->count = -1;
+            double *myCol = &multi_finish[iFn].column->array[0];
+            double *myRow = &multi_finish[iFn].row_ep->array[0];
+            for (int jFn = 0; jFn < iFn; jFn++) {
+                int pivotRow = multi_finish[jFn].rowOut;
+                const double pivotAlpha = multi_finish[jFn].alphaRow;
+                const double *pivotArray = &multi_finish[jFn].column->array[0];
+                double pivotX1 = myCol[pivotRow];
+                double pivotX2 = myRow[pivotRow];
+
+                // The FTRAN regular buffer
+                if (fabs(pivotX1) > HSOL_CONST_TINY) {
+                    const double pivot = pivotX1 / pivotAlpha;
+
+                    for (int i = 0; i < numRow; i++)
+                        myCol[i] -= pivot * pivotArray[i];
+                    myCol[pivotRow] = pivot;
+                }
+                // The FTRAN-DSE buffer
+                if (fabs(pivotX2) > HSOL_CONST_TINY) {
+                    const double pivot = pivotX2 / pivotAlpha;
+
+                    for (int i = 0; i < numRow; i++)
+                        myRow[i] -= pivot * pivotArray[i];
+                    myRow[pivotRow] = pivot;
+                }
+            }
+        }
+    } else {
+        for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+            MFinish *Fin = &multi_finish[iFn];
+            HVector *Col = Fin->column;
+            HVector *Row = Fin->row_ep;
+            for (int jFn = 0; jFn < iFn; jFn++) {
+                MFinish *jFinish = &multi_finish[jFn];
+                int pivotRow = jFinish->rowOut;
+                double pivotX1 = Col->array[pivotRow];
+                // The FTRAN regular buffer
+                if (fabs(pivotX1) > HSOL_CONST_TINY) {
+                    pivotX1 /= jFinish->alphaRow;
+                    Col->saxpy(-pivotX1, jFinish->column);
+                    Col->array[pivotRow] = pivotX1;
+                }
+                // The FTRAN-DSE buffer
+                double pivotX2 = Row->array[pivotRow];
+                if (fabs(pivotX2) > HSOL_CONST_TINY) {
+                    pivotX2 /= jFinish->alphaRow;
+                    Row->saxpy(-pivotX2, jFinish->column);
+                    Row->array[pivotRow] = pivotX2;
+                }
+            }
+        }
+    }
+    model->timer.recordFinish(HTICK_FTRAN_MIX);
+}
+
+void HDual::major_updatePrimal() {
+    int updatePrimal_inDense = dualRHS.workCount < 0;
+    if (updatePrimal_inDense) {
+        // Update the RHS in dense
+        const double *mixArray = &columnBFRT.array[0];
+        double *rhs = &dualRHS.workArray[0];
+
+        for (int iRow = 0; iRow < numRow; iRow++) {
+            baseValue[iRow] -= mixArray[iRow];
+            const double value = baseValue[iRow];
+            const double less = baseLower[iRow] - value;
+            const double more = value - baseUpper[iRow];
+            double infeas = less > Tp ? less : (more > Tp ? more : 0);
+            rhs[iRow] = infeas * infeas;
+        }
+
+        // Update the weight in dense
+        for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+            const double pivotDevex = multi_finish[iFn].devex;
+            const double *colArray = &multi_finish[iFn].column->array[0];
+            const double *dseArray = &multi_finish[iFn].row_ep->array[0];
+            double Kai = -2 / multi_finish[iFn].alphaRow;
+            double *devex = &dualRHS.workDevex[0];
+
+            for (int iRow = 0; iRow < numRow; iRow++) {
+                const double val = colArray[iRow];
+                devex[iRow] += val * (pivotDevex * val + Kai * dseArray[iRow]);
+                if (devex[iRow] < 1e-4)
+                    devex[iRow] = 1e-4;
+            }
+        }
+    } else {
+        // Update primal and pivots
+        dualRHS.update_primal(&columnBFRT, 1);
+        dualRHS.update_infeasList(&columnBFRT);
+
+        // Update weights
+        for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+            MFinish *Fin = &multi_finish[iFn];
+            HVector *Col = Fin->column;
+            HVector *Row = Fin->row_ep;
+            double Kai = -2 / Fin->alphaRow;
+            dualRHS.update_weight(Col, Fin->devex, Kai, &Row->array[0]);
+            dualRHS.update_infeasList(Col);
+        }
+    }
+
+    // Update primal value for the pivots
+    for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+        MFinish *Fin = &multi_finish[iFn];
+        int iRow = Fin->rowOut;
+        double value = baseValue[iRow] - Fin->basicBound + Fin->basicValue;
+        dualRHS.update_pivots(iRow, value);
+    }
+
+    // Update weight value for the pivots
+    for (int iFn = 0; iFn < multi_nFinish; iFn++) {
+        const int iRow = multi_finish[iFn].rowOut;
+        const double pivotDevex = multi_finish[iFn].devex;
+        const double *colArray = &multi_finish[iFn].column->array[0];
+        const double *dseArray = &multi_finish[iFn].row_ep->array[0];
+        double Kai = -2 / multi_finish[iFn].alphaRow;
+        for (int jFn = 0; jFn < iFn; jFn++) {
+            int jRow = multi_finish[jFn].rowOut;
+            double value = colArray[jRow];
+            double devex = dualRHS.workDevex[jRow];
+            devex += value * (pivotDevex * value + Kai * dseArray[jRow]);
+            if (devex < 1e-4)
+                devex = 1e-4;
+            dualRHS.workDevex[jRow] = devex;
+        }
+        dualRHS.workDevex[iRow] = pivotDevex;
+    }
+}
+
+void HDual::major_updateFactor() {
+    /**
+     * 9. Update the factor by CFT
+     */
+    vector<int> iRows(multi_nFinish);
+    for (int iCh = 0; iCh < multi_nFinish - 1; iCh++) {
+        multi_finish[iCh].row_ep->next = multi_finish[iCh + 1].row_ep;
+        multi_finish[iCh].column->next = multi_finish[iCh + 1].column;
+        iRows[iCh] = multi_finish[iCh].rowOut;
+    }
+    iRows[multi_nFinish - 1] = multi_finish[multi_nFinish - 1].rowOut;
+    if (multi_nFinish > 0)
+        model->updateFactor(multi_finish[0].column, multi_finish[0].row_ep, iRows.data(),
+                            &invertHint);
+
+    if (total_FT_inc_TICK > total_INVERT_TICK * 1.5 && model->countUpdate > 200)
+        invertHint = 1;
+}
+
+void HDual::major_rollback() {
+    for (int iFn = multi_nFinish - 1; iFn >= 0; iFn--) {
+        MFinish *Fin = &multi_finish[iFn];
+
+        // 1. Roll back pivot
+        model->getNonbasicMove()[Fin->columnIn] = Fin->moveIn;
+        model->getNonbasicFlag()[Fin->columnIn] = 1;
+        model->getNonbasicMove()[Fin->columnOut] = 0;
+        model->getNonbasicFlag()[Fin->columnOut] = 0;
+        model->getBaseIndex()[Fin->rowOut] = Fin->columnOut;
+
+        // 2. Roll back matrix
+        model->updateMatrix(Fin->columnOut, Fin->columnIn);
+
+        // 3. Roll back flips
+        for (unsigned i = 0; i < Fin->flipList.size(); i++)
+            model->flipBound(Fin->flipList[i]);
+
+        // 4. Roll back cost
+        model->getWorkShift()[Fin->columnIn] = 0;
+        model->getWorkShift()[Fin->columnOut] = Fin->shiftOut;
+
+        // 5. The iteration count
+        model->numberIteration--;
+    }
+}
+
+// Upstream file: HDualRHS.cpp
+
+using namespace std;
+
+void HDualRHS::setup(HModel *model) {
+    workModel = model;
+    workMark.resize(workModel->getNumRow());
+    workIndex.resize(workModel->getNumRow());
+    workArray.resize(workModel->getNumRow());
+    workDevex.assign(workModel->getNumRow(), 1);
+    workDevexFull.resize(workModel->getNumTot());
+    partNum = 0;
+    partSwitch = 0;
+}
+
+void HDualRHS::setup_partition(const char *filename) {
+    ifstream reader(filename);
+    reader >> partNum >> partNumRow >> partNumCol >> partNumCut;
+    if (partNumRow != workModel->getNumRow()) {
+        partNum = 0;
+        workModel->printMessage("wrong-partition-file");
+        reader.close();
+        return;
+    }
+    workPartition.assign(workModel->getNumRow(), 0);
+    for (int i = 0; i < partNumRow; i++)
+        reader >> workPartition[i];
+    reader.close();
+    partSwitch = 1;
+}
+
+void HDualRHS::choose_normal(int *chIndex) {
+    workModel->timer.recordStart(HTICK_CHUZR1);
+    int random = workModel->random.intRandom();
+    if (workCount < 0) {
+        // DENSE mode
+        const int numRow = -workCount;
+        int randomStart = random % numRow;
+        double bestMerit = 0;
+        int bestIndex = -1;
+        for (int section = 0; section < 2; section++) {
+            const int start = (section == 0) ? randomStart : 0;
+            const int end = (section == 0) ? numRow : randomStart;
+            for (int iRow = start; iRow < end; iRow++) {
+                if (workArray[iRow] > HSOL_CONST_ZERO) {
+                    const double myInfeas = workArray[iRow];
+                    const double myWeight = workDevex[iRow];
+                    if (bestMerit * myWeight < myInfeas) {
+                        bestMerit = myInfeas / myWeight;
+                        bestIndex = iRow;
+                    }
+                }
+            }
+        }
+        *chIndex = bestIndex;
+
+    } else {
+        // SPARSE mode
+        if (workCount == 0) {
+            *chIndex = -1;
+            return;
+        }
+
+        int randomStart = random % workCount;
+        double bestMerit = 0;
+        int bestIndex = -1;
+        for (int section = 0; section < 2; section++) {
+            const int start = (section == 0) ? randomStart : 0;
+            const int end = (section == 0) ? workCount : randomStart;
+            for (int i = start; i < end; i++) {
+                int iRow = workIndex[i];
+                if (workArray[iRow] > HSOL_CONST_ZERO) {
+                    const double myInfeas = workArray[iRow];
+                    const double myWeight = workDevex[iRow];
+                    if (bestMerit * myWeight < myInfeas) {
+                        bestMerit = myInfeas / myWeight;
+                        bestIndex = iRow;
+                    }
+                }
+            }
+        }
+
+        int createListAgain = 0;
+        if (bestIndex == -1) {
+            createListAgain = workCutoff > 0;
+        } else if (bestMerit <= workCutoff * 0.99) {
+            createListAgain = 1;
+        }
+        if (createListAgain) {
+            create_infeasList(0);
+            choose_normal(&bestIndex);
+        }
+        *chIndex = bestIndex;
+    }
+    workModel->timer.recordFinish(HTICK_CHUZR1);
+}
+
+void HDualRHS::choose_multi_global(int *chIndex, int *chCount, int chLimit) {
+    workModel->timer.recordStart(HTICK_CHUZR1);
+
+    for (int i = 0; i < chLimit; i++)
+        chIndex[i] = -1;
+
+    const unsigned int chooseCHECK = chLimit * 2;
+    vector<pair<double, int> > setP;
+    setP.reserve(chooseCHECK);
+
+    if (workCount < 0) {
+        // DENSE mode
+        const int numRow = -workCount;
+        double cutoffMerit = 0;
+        for (int iRow = 0; iRow < numRow; iRow++) {
+            if (workArray[iRow] > HSOL_CONST_ZERO) {
+                const double myInfeas = workArray[iRow];
+                const double myWeight = workDevex[iRow];
+                if (cutoffMerit * myWeight < myInfeas) {
+                    // Save
+                    setP.push_back(make_pair(-myInfeas / myWeight, iRow));
+                    // Shrink
+                    if (setP.size() >= chooseCHECK) {
+                        sort(setP.begin(), setP.end());
+                        setP.resize(chLimit);
+                        cutoffMerit = -setP.back().first;
+                    }
+                }
+            }
+        }
+
+    } else {
+        // SPARSE Mode
+        double cutoffMerit = 0;
+        for (int i = 0; i < workCount; i++) {
+            int iRow = workIndex[i];
+            if (workArray[iRow] > HSOL_CONST_ZERO) {
+                const double myInfeas = workArray[iRow];
+                const double myWeight = workDevex[iRow];
+                if (cutoffMerit * myWeight < myInfeas) {
+                    // Save
+                    setP.push_back(make_pair(-myInfeas / myWeight, iRow));
+                    // Shrink
+                    if (setP.size() >= chooseCHECK) {
+                        sort(setP.begin(), setP.end());
+                        setP.resize(chLimit);
+                        cutoffMerit = -setP.back().first;
+                    }
+                }
+            }
+        }
+    }
+
+    // Store the setP
+    sort(setP.begin(), setP.end());
+    if ((int)(setP.size()) > chLimit)
+        setP.resize(chLimit);
+    *chCount = setP.size();
+    for (unsigned i = 0; i < setP.size(); i++)
+        chIndex[i] = setP[i].second;
+    workModel->timer.recordFinish(HTICK_CHUZR1);
+}
+
+void HDualRHS::choose_multi_HGauto(int *chIndex, int *chCount, int chLimit) {
+    // Automatically decide to use partition or not
+    if (partSwitch)
+        choose_multi_HGpart(chIndex, chCount, chLimit);
+    else
+        choose_multi_global(chIndex, chCount, chLimit);
+}
+
+void HDualRHS::choose_multi_HGpart(int *chIndex, int *chCount, int chLimit) {
+    workModel->timer.recordStart(HTICK_CHUZR1);
+
+    // Force to use partition method, unless doesn't exist
+    if (partNum != chLimit) {
+        choose_multi_global(chIndex, chCount, chLimit);
+        partSwitch = 0;
+        return;
+    }
+
+    // Initialise
+    for (int i = 0; i < chLimit; i++)
+        chIndex[i] = -1;
+    *chCount = 0;
+
+    int random = workModel->random.intRandom();
+    if (workCount < 0) {
+        // DENSE mode
+        const int numRow = -workCount;
+        int randomStart = random % numRow;
+        vector<double> bestMerit(chLimit, 0);
+        vector<int> bestIndex(chLimit, -1);
+        for (int section = 0; section < 2; section++) {
+            const int start = (section == 0) ? randomStart : 0;
+            const int end = (section == 0) ? numRow : randomStart;
+            for (int iRow = start; iRow < end; iRow++) {
+                if (workArray[iRow] > HSOL_CONST_ZERO) {
+                    int iPart = workPartition[iRow];
+                    const double myInfeas = workArray[iRow];
+                    const double myWeight = workDevex[iRow];
+                    if (bestMerit[iPart] * myWeight < myInfeas) {
+                        bestMerit[iPart] = myInfeas / myWeight;
+                        bestIndex[iPart] = iRow;
+                    }
+                }
+            }
+        }
+        int count = 0;
+        for (int i = 0; i < chLimit; i++) {
+            if (bestIndex[i] != -1) {
+                chIndex[count++] = bestIndex[i];
+            }
+        }
+        *chCount = count;
+
+    } else {
+        // SPARSE mode
+        if (workCount == 0) {
+            return;
+        }
+
+        int randomStart = random % workCount;
+        vector<double> bestMerit(chLimit, 0);
+        vector<int> bestIndex(chLimit, -1);
+        for (int section = 0; section < 2; section++) {
+            const int start = (section == 0) ? randomStart : 0;
+            const int end = (section == 0) ? workCount : randomStart;
+            for (int i = start; i < end; i++) {
+                int iRow = workIndex[i];
+                if (workArray[iRow] > HSOL_CONST_ZERO) {
+                    int iPart = workPartition[iRow];
+                    const double myInfeas = workArray[iRow];
+                    const double myWeight = workDevex[iRow];
+                    if (bestMerit[iPart] * myWeight < myInfeas) {
+                        bestMerit[iPart] = myInfeas / myWeight;
+                        bestIndex[iPart] = iRow;
+                    }
+                }
+            }
+        }
+        int count = 0;
+        for (int i = 0; i < chLimit; i++) {
+            if (bestIndex[i] != -1) {
+                chIndex[count++] = bestIndex[i];
+            }
+        }
+        *chCount = count;
+    }
+
+    workModel->timer.recordFinish(HTICK_CHUZR1);
+}
+
+void HDualRHS::update_primal(HVector *column, double theta) {
+    workModel->timer.recordStart(HTICK_UPDATE_PRIMAL);
+
+    const int numRow = workModel->getNumRow();
+    const int columnCount = column->count;
+    const int *columnIndex = &column->index[0];
+    const double *columnArray = &column->array[0];
+
+    const double *baseLower = workModel->getBaseLower();
+    const double *baseUpper = workModel->getBaseUpper();
+    const double Tp = workModel->dblOption[DBLOPT_PRIMAL_TOL];
+
+    double *baseValue = workModel->getBaseValue();
+
+    bool updatePrimal_inDense = columnCount < 0 || columnCount > 0.4 * numRow;
+
+    if (updatePrimal_inDense) {
+        for (int iRow = 0; iRow < numRow; iRow++) {
+            baseValue[iRow] -= theta * columnArray[iRow];
+            const double value = baseValue[iRow];
+            const double less = baseLower[iRow] - value;
+            const double more = value - baseUpper[iRow];
+            double infeas = less > Tp ? less : (more > Tp ? more : 0);
+            workArray[iRow] = infeas * infeas;
+        }
+    } else {
+        for (int i = 0; i < columnCount; i++) {
+            int iRow = columnIndex[i];
+            baseValue[iRow] -= theta * columnArray[iRow];
+            const double value = baseValue[iRow];
+            const double less = baseLower[iRow] - value;
+            const double more = value - baseUpper[iRow];
+            double infeas = less > Tp ? less : (more > Tp ? more : 0);
+            workArray[iRow] = infeas * infeas;
+        }
+    }
+
+    workModel->timer.recordFinish(HTICK_UPDATE_PRIMAL);
+}
+
+void HDualRHS::update_weight(HVector *column, double devex, double Kai, double *dseArray) {
+    workModel->timer.recordStart(HTICK_UPDATE_WEIGHT);
+
+    const int numRow = workModel->getNumRow();
+    const int columnCount = column->count;
+    const int *columnIndex = &column->index[0];
+    const double *columnArray = &column->array[0];
+
+    bool updateWeight_inDense = columnCount < 0 || columnCount > 0.4 * numRow;
+    if (updateWeight_inDense) {
+        for (int iRow = 0; iRow < numRow; iRow++) {
+            const double val = columnArray[iRow];
+            workDevex[iRow] += val * (devex * val + Kai * dseArray[iRow]);
+            if (workDevex[iRow] < 1e-4)
+                workDevex[iRow] = 1e-4;
+        }
+    } else {
+        for (int i = 0; i < columnCount; i++) {
+            const int iRow = columnIndex[i];
+            const double val = columnArray[iRow];
+            workDevex[iRow] += val * (devex * val + Kai * dseArray[iRow]);
+            if (workDevex[iRow] < 1e-4)
+                workDevex[iRow] = 1e-4;
+        }
+    }
+    workModel->timer.recordFinish(HTICK_UPDATE_WEIGHT);
+}
+
+void HDualRHS::update_pivots(int iRow, double value) {
+    const double *baseLower = workModel->getBaseLower();
+    const double *baseUpper = workModel->getBaseUpper();
+    const double Tp = workModel->dblOption[DBLOPT_PRIMAL_TOL];
+    double *baseValue = workModel->getBaseValue();
+    baseValue[iRow] = value;
+    double pivotInfeas = 0;
+    if (baseValue[iRow] < baseLower[iRow] - Tp)
+        pivotInfeas = baseValue[iRow] - baseLower[iRow];
+    if (baseValue[iRow] > baseUpper[iRow] + Tp)
+        pivotInfeas = baseValue[iRow] - baseUpper[iRow];
+    workArray[iRow] = pivotInfeas * pivotInfeas;
+}
+
+void HDualRHS::update_infeasList(HVector *column) {
+    workModel->timer.recordStart(HTICK_UPDATE_PRIMAL);
+
+    const int columnCount = column->count;
+    const int *columnIndex = &column->index[0];
+
+    // DENSE mode: disabled
+    if (workCount < 0)
+        return;
+
+    if (workCutoff <= 0) {
+        // The regular sparse way
+        for (int i = 0; i < columnCount; i++) {
+            int iRow = columnIndex[i];
+            if (workMark[iRow] == 0) {
+                if (workArray[iRow]) {
+                    workIndex[workCount++] = iRow;
+                    workMark[iRow] = 1;
+                }
+            }
+        }
+    } else {
+        // The hyper sparse way
+        for (int i = 0; i < columnCount; i++) {
+            int iRow = columnIndex[i];
+            if (workMark[iRow] == 0) {
+                if (workArray[iRow] > workDevex[iRow] * workCutoff) {
+                    workIndex[workCount++] = iRow;
+                    workMark[iRow] = 1;
+                }
+            }
+        }
+    }
+
+    workModel->timer.recordFinish(HTICK_UPDATE_PRIMAL);
+}
+
+void HDualRHS::create_infeasArray() {
+    int numRow = workModel->getNumRow();
+    const double *baseValue = workModel->getBaseValue();
+    const double *baseLower = workModel->getBaseLower();
+    const double *baseUpper = workModel->getBaseUpper();
+    const double Tp = workModel->dblOption[DBLOPT_PRIMAL_TOL];
+    for (int i = 0; i < numRow; i++) {
+        const double value = baseValue[i];
+        const double less = baseLower[i] - value;
+        const double more = value - baseUpper[i];
+        double infeas = less > Tp ? less : (more > Tp ? more : 0);
+        workArray[i] = infeas * infeas;
+    }
+}
+
+void HDualRHS::create_infeasList(double columnDensity) {
+    int numRow = workModel->getNumRow();
+    double *dwork = &workDevexFull[0];
+
+    // 1. Build the full list
+    fill_n(&workMark[0], numRow, 0);
+    workCount = 0;
+    workCutoff = 0;
+    for (int iRow = 0; iRow < numRow; iRow++) {
+        if (workArray[iRow]) {
+            workMark[iRow] = 1;
+            workIndex[workCount++] = iRow;
+        }
+    }
+
+    // 2. See if it worth to try to go sparse
+    //    (Many candidates, really sparse RHS)
+    if (workCount > max(numRow * 0.01, 500.0) && columnDensity < 0.05) {
+        int icutoff = max(workCount * 0.001, 500.0);
+        double maxMerit = 0;
+        for (int iRow = 0, iPut = 0; iRow < numRow; iRow++)
+            if (workMark[iRow]) {
+                double myMerit = workArray[iRow] / workDevex[iRow];
+                if (maxMerit < myMerit)
+                    maxMerit = myMerit;
+                dwork[iPut++] = -myMerit;
+            }
+        nth_element(dwork, dwork + icutoff, dwork + workCount);
+        double cutMerit = -dwork[icutoff];
+        workCutoff = min(maxMerit * 0.99999, cutMerit * 1.00001);
+
+        // Create again
+        fill_n(&workMark[0], numRow, 0);
+        workCount = 0;
+        for (int iRow = 0; iRow < numRow; iRow++) {
+            if (workArray[iRow] >= workDevex[iRow] * workCutoff) {
+                workIndex[workCount++] = iRow;
+                workMark[iRow] = 1;
+            }
+        }
+
+        // Reduce by drop smaller
+        if (workCount > icutoff * 1.5) {
+            // Firstly take up "icutoff" number of elements
+            int fullCount = workCount;
+            workCount = icutoff;
+            for (int i = icutoff; i < fullCount; i++) {
+                int iRow = workIndex[i];
+                if (workArray[iRow] > workDevex[iRow] * cutMerit) {
+                    workIndex[workCount++] = iRow;
+                } else {
+                    workMark[iRow] = 0;
+                }
+            }
+        }
+
+        //        cerr
+        //                << "======================================================> WORK COUNT = "
+        //                << workCount << "\t icutoff = " << icutoff << "\t maxMerit = "
+        //                << maxMerit << "\t cutMerit = " << cutMerit << endl;
+    }
+
+    // 3. If there is still too much candidates: disable them
+    if (workCount > 0.2 * numRow) {
+        workCount = -numRow;
+        workCutoff = 0;
+    }
+}
+
+// Upstream file: HDualRow.cpp
+
+using namespace std;
+
+void HDualRow::setupSlice(HModel *model, int size) {
+    // Copy pointer
+    workModel = model;
+    workSize = size;
+    workMove = model->getNonbasicMove();
+    workDual = model->getWorkDual();
+    workRange = model->getWorkRange();
+
+    // Allocate spaces
+    packCount = 0;
+    packIndex.resize(workSize);
+    packValue.resize(workSize);
+
+    workCount = 0;
+    workData.resize(workSize);
+}
+
+void HDualRow::setup(HModel *model) {
+    // Setup common vectors
+    setupSlice(model, model->getNumTot());
+    workRand = model->getWorkIntBreak();
+}
+
+void HDualRow::clear() {
+    packCount = 0;
+    workCount = 0;
+}
+
+void HDualRow::choose_makepack(const HVector *row, const int offset) {
+    /**
+     * Pack the index array to the row
+     * Can be parallel
+     */
+    const int rowCount = row->count;
+    const int *rowIndex = &row->index[0];
+    const double *rowArray = &row->array[0];
+
+    for (int i = 0; i < rowCount; i++) {
+        const int index = rowIndex[i];
+        const double value = rowArray[index];
+        packIndex[packCount] = index + offset;
+        packValue[packCount++] = value;
+    }
+}
+
+void HDualRow::choose_possible() {
+    /**
+     * Will determine the possible variables
+     * Can be parallel.
+     */
+    const double Ta = workModel->countUpdate < 10   ? 1e-9
+                      : workModel->countUpdate < 20 ? 3e-8
+                                                    : 1e-6;
+    const double Td = workModel->dblOption[DBLOPT_DUAL_TOL];
+    const int sourceOut = workDelta < 0 ? -1 : 1;
+    workTheta = HSOL_CONST_INF;
+    workCount = 0;
+    for (int i = 0; i < packCount; i++) {
+        const int iCol = packIndex[i];
+        const int move = workMove[iCol];
+        const double alpha = packValue[i] * sourceOut * move;
+        if (alpha > Ta) {
+            workData[workCount++] = make_pair(iCol, alpha);
+            const double relax = workDual[iCol] * move + Td;
+            if (workTheta * alpha > relax)
+                workTheta = relax / alpha;
+        }
+    }
+}
+
+void HDualRow::choose_joinpack(const HDualRow *otherRow) {
+    /**
+     * Will join the possible pack
+     * Must be sequentail
+     */
+    const int otherCount = otherRow->workCount;
+    const pair<int, double> *otherData = &otherRow->workData[0];
+    copy(otherData, otherData + otherCount, &workData[workCount]);
+    workCount = workCount + otherCount;
+    workTheta = min(workTheta, otherRow->workTheta);
+}
+
+void HDualRow::choose_final() {
+    /**
+     * This routine choose the dual entering variable by
+     * BFRT and EXPAND. (In sequential)
+     *
+     * It will
+     * (1) reduce the candidates as a small collection
+     * (2) choose by BFRT by going over break points
+     * (3) choose final by alpha
+     * (4) determine final flip variables
+     */
+
+    // 1. Reduce by large step BFRT
+    workModel->timer.recordStart(HTICK_CHUZC2);
+    int fullCount = workCount;
+    workCount = 0;
+    double totalChange = 0;
+    double totalDelta = fabs(workDelta);
+    double selectTheta = 10 * workTheta + 1e-7;
+    for (;;) {
+        for (int i = workCount; i < fullCount; i++) {
+            int iCol = workData[i].first;
+            double alpha = workData[i].second;
+            double tight = workMove[iCol] * workDual[iCol];
+            if (alpha * selectTheta >= tight) {
+                swap(workData[workCount++], workData[i]);
+                totalChange += workRange[iCol] * alpha;
+            }
+        }
+        selectTheta *= 10;
+        if (totalChange >= totalDelta || workCount == fullCount)
+            break;
+    }
+    workModel->timer.recordFinish(HTICK_CHUZC2);
+
+    // 2. Choose by small step BFRT
+    workModel->timer.recordStart(HTICK_CHUZC3);
+    const double Td = workModel->dblOption[DBLOPT_DUAL_TOL];
+    fullCount = workCount;
+    workCount = 0;
+    totalChange = 1e-12;
+    selectTheta = workTheta;
+    workGroup.clear();
+    workGroup.push_back(0);
+    while (selectTheta < 1e18) {
+        double remainTheta = 1e100;
+        for (int i = workCount; i < fullCount; i++) {
+            int iCol = workData[i].first;
+            double value = workData[i].second;
+            double dual = workMove[iCol] * workDual[iCol];
+            // Tight satisfy
+            if (dual <= selectTheta * value) {
+                swap(workData[workCount++], workData[i]);
+                totalChange += value * (workRange[iCol]);
+            } else if (dual + Td < remainTheta * value) {
+                remainTheta = (dual + Td) / value;
+            }
+        }
+        workGroup.push_back(workCount);
+        selectTheta = remainTheta;
+        if (totalChange >= totalDelta || workCount == fullCount)
+            break;
+    }
+
+    // 3. Choose large alpha
+    double finalCompare = 0;
+    for (int i = 0; i < workCount; i++)
+        finalCompare = max(finalCompare, workData[i].second);
+    finalCompare = min(0.1 * finalCompare, 1.0);
+    int countGroup = workGroup.size() - 1;
+    int breakGroup = -1;
+    int breakIndex = -1;
+    for (int iGroup = countGroup - 1; iGroup >= 0; iGroup--) {
+        double dMaxFinal = 0;
+        int iMaxFinal = -1;
+        for (int i = workGroup[iGroup]; i < workGroup[iGroup + 1]; i++) {
+            if (dMaxFinal < workData[i].second) {
+                dMaxFinal = workData[i].second;
+                iMaxFinal = i;
+            } else if (dMaxFinal == workData[i].second) {
+                int jCol = workData[iMaxFinal].first;
+                int iCol = workData[i].first;
+                if (workRand[iCol] < workRand[jCol]) {
+                    iMaxFinal = i;
+                }
+            }
+        }
+
+        if (workData[iMaxFinal].second > finalCompare) {
+            breakIndex = iMaxFinal;
+            breakGroup = iGroup;
+            break;
+        }
+    }
+
+    int sourceOut = workDelta < 0 ? -1 : 1;
+    workPivot = workData[breakIndex].first;
+    workAlpha = workData[breakIndex].second * sourceOut * workMove[workPivot];
+    if (workDual[workPivot] * workMove[workPivot] > 0)
+        workTheta = workDual[workPivot] / workAlpha;
+    else
+        workTheta = 0;
+
+    // 4. Determine BFRT flip index: flip all
+    fullCount = breakIndex;
+    workCount = 0;
+    for (int i = 0; i < workGroup[breakGroup]; i++) {
+        const int iCol = workData[i].first;
+        const int move = workMove[iCol];
+        workData[workCount++] = make_pair(iCol, move * workRange[iCol]);
+    }
+    if (workTheta == 0)
+        workCount = 0;
+    sort(workData.begin(), workData.begin() + workCount);
+    workModel->timer.recordFinish(HTICK_CHUZC3);
+}
+
+void HDualRow::update_flip(HVector *bfrtColumn) {
+    bfrtColumn->clear();
+    for (int i = 0; i < workCount; i++) {
+        const int iCol = workData[i].first;
+        const double change = workData[i].second;
+        workModel->flipBound(iCol);
+        workModel->getMatrix()->collect_aj(*bfrtColumn, iCol, change);
+    }
+}
+
+void HDualRow::update_dual(double theta) {
+    workModel->timer.recordStart(HTICK_UPDATE_DUAL);
+    double *workDual = workModel->getWorkDual();
+    for (int i = 0; i < packCount; i++)
+        workDual[packIndex[i]] -= theta * packValue[i];
+    workModel->timer.recordFinish(HTICK_UPDATE_DUAL);
+}
+
+void HDualRow::create_Freelist() {
+    freeList.clear();
+    const int *nonbasicFlag = workModel->getNonbasicFlag();
+    for (int i = 0; i < workModel->getNumTot(); i++) {
+        if (nonbasicFlag[i] && workRange[i] > 1.5 * HSOL_CONST_INF)
+            freeList.insert(i);
+    }
+}
+
+void HDualRow::create_Freemove(HVector *row_ep) {
+    if (!freeList.empty()) {
+        double Ta = workModel->countUpdate < 10 ? 1e-9 : workModel->countUpdate < 20 ? 3e-8 : 1e-6;
+        int sourceOut = workDelta < 0 ? -1 : 1;
+        set<int>::iterator sit;
+        for (sit = freeList.begin(); sit != freeList.end(); sit++) {
+            int iCol = *sit;
+            assert(iCol < workModel->getNumCol());
+            double alpha = workModel->getMatrix()->compute_dot(*row_ep, iCol);
+            if (fabs(alpha) > Ta) {
+                if (alpha * sourceOut > 0)
+                    workModel->getNonbasicMove()[iCol] = 1;
+                else
+                    workModel->getNonbasicMove()[iCol] = -1;
+            }
+        }
+    }
+}
+void HDualRow::delete_Freemove() {
+    if (!freeList.empty()) {
+        set<int>::iterator sit;
+        for (sit = freeList.begin(); sit != freeList.end(); sit++) {
+            int iCol = *sit;
+            assert(iCol < workModel->getNumCol());
+            workModel->getNonbasicMove()[iCol] = 0;
+        }
+    }
+}
+
+void HDualRow::delete_Freelist(int iColumn) {
+    if (!freeList.empty()) {
+        if (freeList.count(iColumn))
+            freeList.erase(iColumn);
+    }
+}
+
+// Upstream file: HFactor.cpp
+
+using namespace std;
+
+void HFactor::copyFrom(const HFactor *from) {
+    numRow = from->numRow;
+    numCol = from->numCol;
+    Astart = from->Astart;
+    Aindex = from->Aindex;
+    Avalue = from->Avalue;
+    baseIndex = from->baseIndex;
+    updateMethod = from->updateMethod;
+
+    nwork = from->nwork;
+    iwork = from->iwork;
+    dwork = from->dwork;
+
+    LpivotLookup = from->LpivotLookup;
+    LpivotIndex = from->LpivotIndex;
+    Lstart = from->Lstart;
+    Lindex = from->Lindex;
+    Lvalue = from->Lvalue;
+    LRstart = from->LRstart;
+    LRindex = from->LRindex;
+    LRvalue = from->LRvalue;
+
+    UpivotLookup = from->UpivotLookup;
+    UpivotIndex = from->UpivotIndex;
+    UpivotValue = from->UpivotValue;
+    UmeritX = from->UmeritX;
+    UtotalX = from->UtotalX;
+    Ustart = from->Ustart;
+    Ulastp = from->Ulastp;
+    Uindex = from->Uindex;
+    Uvalue = from->Uvalue;
+    URstart = from->URstart;
+    URlastp = from->URlastp;
+    URspace = from->URspace;
+    URindex = from->URindex;
+    URvalue = from->URvalue;
+
+    PFpivotValue = from->PFpivotValue;
+    PFpivotIndex = from->PFpivotIndex;
+    PFstart = from->PFstart;
+    PFindex = from->PFindex;
+    PFvalue = from->PFvalue;
+}
+
+void solveMatrixT(const int Xstart, const int Xend, const int Ystart, const int Yend,
+                  const int *Tindex, const double *Tvalue, const double Tpivot, int *RHScount,
+                  int *RHSindex, double *RHSarray) {
+
+    // Collect by X
+    double pivotX = 0;
+    for (int k = Xstart; k < Xend; k++)
+        pivotX += Tvalue[k] * RHSarray[Tindex[k]];
+
+    // Scatter by Y
+    if (fabs(pivotX) > HSOL_CONST_TINY) {
+        int workCount = *RHScount;
+
+        pivotX /= Tpivot;
+        for (int k = Ystart; k < Yend; k++) {
+            const int index = Tindex[k];
+            const double value0 = RHSarray[index];
+            const double value1 = value0 - pivotX * Tvalue[k];
+            if (value0 == 0)
+                RHSindex[workCount++] = index;
+            RHSarray[index] = (fabs(value1) < HSOL_CONST_TINY) ? HSOL_CONST_ZERO : value1;
+        }
+
+        *RHScount = workCount;
+    }
+}
+
+void solveHyper(const int Hsize, const int *Hlookup, const int *HpivotIndex,
+                const double *HpivotValue, const int *Hstart, const int *Hend, const int *Hindex,
+                const double *Hvalue, HVector *rhs) {
+
+    int RHS_Tick = rhs->pseudoTick;
+    int RHScount = rhs->count;
+    int *RHSindex = &rhs->index[0];
+    double *RHSarray = &rhs->array[0];
+
+    // Take count
+
+    // Build list
+    char *listMark = &rhs->cwork[0];
+    int *listIndex = &rhs->iwork[0];
+    int *listStack = &rhs->iwork[Hsize];
+    int listCount = 0;
+
+    int countPivot = 0;
+    int countEntry = 0;
+
+    for (int i = 0; i < RHScount; i++) {
+        // Skip touched index
+        int iTrans = Hlookup[RHSindex[i]]; // XXX: this contains a bug iTran
+        if (listMark[iTrans])              // XXX bug here
+            continue;
+
+        int Hi = iTrans;     // H matrix pivot index
+        int Hk = Hstart[Hi]; // H matrix non zero position
+        int nStack = -1;     // Usage of the stack (-1 not used)
+
+        listMark[Hi] = 1; // Mark this as touched
+
+        for (;;) {
+            if (Hk < Hend[Hi]) {
+                int Hi_sub = Hlookup[Hindex[Hk++]];
+                if (listMark[Hi_sub] == 0) {  // Go to a child
+                    listMark[Hi_sub] = 1;     // Mark as touched
+                    listStack[++nStack] = Hi; // Store current into stack
+                    listStack[++nStack] = Hk;
+                    Hi = Hi_sub; // Replace current with child
+                    Hk = Hstart[Hi];
+                    if (Hi >= Hsize) {
+                        countPivot++;
+                        countEntry += Hend[Hi] - Hstart[Hi];
+                        RHS_Tick += 10;
+                    }
+                }
+            } else {
+                listIndex[listCount++] = Hi;
+                if (nStack == -1) // Quit on empty stack
+                    break;
+                Hk = listStack[nStack--]; // Back to last in stack
+                Hi = listStack[nStack--];
+            }
+        }
+    }
+
+    rhs->fakeTick += countPivot * 20 + countEntry * 10;
+
+    // Solve with list
+    if (HpivotValue == 0) {
+        RHScount = 0;
+        for (int iList = listCount - 1; iList >= 0; iList--) {
+            int i = listIndex[iList];
+            listMark[i] = 0;
+            int pivotRow = HpivotIndex[i];
+            double pivotX = RHSarray[pivotRow];
+            if (fabs(pivotX) > HSOL_CONST_TINY) {
+                RHSindex[RHScount++] = pivotRow;
+                const int start = Hstart[i];
+                const int end = Hend[i];
+                RHS_Tick += end - start;
+                for (int k = start; k < end; k++)
+                    RHSarray[Hindex[k]] -= pivotX * Hvalue[k];
+            } else
+                RHSarray[pivotRow] = 0;
+        }
+        rhs->pseudoTick = RHS_Tick;
+        rhs->count = RHScount;
+    } else {
+        RHScount = 0;
+        for (int iList = listCount - 1; iList >= 0; iList--) {
+            int i = listIndex[iList];
+            listMark[i] = 0;
+            int pivotRow = HpivotIndex[i];
+            double pivotX = RHSarray[pivotRow];
+            if (fabs(pivotX) > HSOL_CONST_TINY) {
+                pivotX /= HpivotValue[i];
+                RHSarray[pivotRow] = pivotX;
+                RHSindex[RHScount++] = pivotRow;
+                const int start = Hstart[i];
+                const int end = Hend[i];
+                RHS_Tick += end - start;
+                for (int k = start; k < end; k++)
+                    RHSarray[Hindex[k]] -= pivotX * Hvalue[k];
+            } else
+                RHSarray[pivotRow] = 0;
+        }
+        rhs->pseudoTick = RHS_Tick;
+        rhs->count = RHScount;
+    }
+}
+
+void HFactor::setup(int numCol_, int numRow_, int *Astart_, int *Aindex_, double *Avalue_,
+                    int *baseIndex_, int updateMethod_) {
+
+    // Copy Problem size and (pointer to) coefficient matrix
+    numRow = numRow_;
+    numCol = numCol_;
+    Astart = Astart_;
+    Aindex = Aindex_;
+    Avalue = Avalue_;
+    baseIndex = baseIndex_;
+    updateMethod = updateMethod_;
+
+    // Allocate for working buffer
+    iwork.reserve(numRow * 2);
+    dwork.assign(numRow, 0);
+
+    // Find Basis matrix limit size
+    int BlimitX = 0;
+    iwork.assign(numRow + 1, 0);
+    for (int i = 0; i < numCol; i++)
+        iwork[Astart[i + 1] - Astart[i]]++;
+    // A basis contains at most numRow structural columns. Count only the
+    // remaining slots in the last degree bucket, not the entire bucket.
+    for (int i = numRow, counted = 0; i >= 0 && counted < numRow; i--) {
+        const int take = std::min(numRow - counted, iwork[i]);
+        BlimitX += i * take;
+        counted += take;
+    }
+    BlimitX += numRow;
+
+    // Allocate spaces for basis matrix, L, U factor and Update buffer
+    Bstart.resize(numRow + 1, 0);
+    Bindex.resize(BlimitX);
+    Bvalue.resize(BlimitX);
+
+    // Allocate spaces for pivot records
+    permute.resize(numRow);
+
+    // Allocate spaces for Markowitz matrices
+    MCstart.resize(numRow);
+    MCcountA.resize(numRow);
+    MCcountN.resize(numRow);
+    MCspace.resize(numRow);
+    MCminpivot.resize(numRow);
+    MCindex.resize(BlimitX * 2);
+    MCvalue.resize(BlimitX * 2);
+
+    MRstart.resize(numRow);
+    MRcount.resize(numRow);
+    MRspace.resize(numRow);
+    MRcountb4.resize(numRow);
+    MRindex.resize(BlimitX * 2);
+
+    McolumnMark.assign(numRow, 0);
+    McolumnIndex.resize(numRow);
+    McolumnArray.assign(numRow, 0);
+
+    // Allocate spaces for count-link-list
+    clinkFirst.assign(numRow + 1, -1);
+    clinkNext.resize(numRow);
+    clinkLast.resize(numRow);
+
+    rlinkFirst.assign(numRow + 1, -1);
+    rlinkNext.resize(numRow);
+    rlinkLast.resize(numRow);
+
+    // Allocate spaces for L factor
+    LpivotLookup.resize(numRow);
+    LpivotIndex.reserve(numRow);
+    Lstart.reserve(numRow + 1);
+    Lindex.reserve(BlimitX * 3);
+    Lvalue.reserve(BlimitX * 3);
+
+    LRstart.reserve(numRow + 1);
+    LRindex.reserve(BlimitX * 3);
+    LRvalue.reserve(BlimitX * 3);
+
+    // Allocate spaces for U factor
+    UpivotLookup.resize(numRow);
+    UpivotIndex.reserve(numRow + 1000);
+    UpivotValue.reserve(numRow + 1000);
+
+    Ustart.reserve(numRow + 1000 + 1);
+    Ulastp.reserve(numRow + 1000);
+    Uindex.reserve(BlimitX * 3);
+    Uvalue.reserve(BlimitX * 3);
+
+    URstart.reserve(numRow + 1000 + 1);
+    URlastp.reserve(numRow + 1000);
+    URspace.reserve(numRow + 1000);
+    URindex.reserve(BlimitX * 3);
+    URvalue.reserve(BlimitX * 3);
+
+    // Allocate spaces for Update buffer
+    PFpivotValue.reserve(1000);
+    PFpivotIndex.reserve(1000);
+    PFstart.reserve(2000 + 1);
+    PFindex.reserve(BlimitX * 4);
+    PFvalue.reserve(BlimitX * 4);
+}
+
+void HFactor::change(int updateMethod_) { updateMethod = updateMethod_; }
+
+void HFactor::build() {
+    check_deadline();
+    pseudoTick = 0;
+
+    HTimer timer;
+    timer.reset();
+
+    // Build the L, U factor
+    fakeTick = 0;
+    realTick = timer.getTick();
+    buildSimple();
+    buildKernel();
+    buildFinish();
+
+    realTick = timer.getTick() - realTick;
+
+    // I can't believe I made this bug!!!
+    pseudoTick *= 8;
+
+    //    fprintf(stderr,"realTick = %10.0f, COMPARE = %10.4f  COMPAREX = %10.4f\n", realTick,
+    //            (realTick) / (fakeTick), pseudoTick / fakeTick);
+}
+
+void HFactor::ftran(HVector &vector, double hist_dsty) const {
+    ftranL(vector, hist_dsty);
+    ftranU(vector, hist_dsty);
+}
+
+void HFactor::btran(HVector &vector, double hist_dsty) const {
+    btranU(vector, hist_dsty);
+    btranL(vector, hist_dsty);
+}
+
+void HFactor::update(HVector *aq, HVector *ep, int *iRow, int *hint) {
+    // Special case
+    if (aq->next) {
+        updateCFT(aq, ep, iRow, hint);
+        return;
+    }
+
+    if (updateMethod == UPDATE_METHOD_FT)
+        updateFT(aq, ep, *iRow, hint);
+    if (updateMethod == UPDATE_METHOD_PF)
+        updatePF(aq, ep, *iRow, hint);
+    if (updateMethod == UPDATE_METHOD_MPF)
+        updateMPF(aq, ep, *iRow, hint);
+    if (updateMethod == UPDATE_METHOD_APF)
+        updateAPF(aq, ep, *iRow, hint);
+}
+
+void HFactor::buildSimple() {
+    /**
+     * 0. Clear L and U factor
+     */
+    Lstart.clear();
+    Lstart.push_back(0);
+    Lindex.clear();
+    Lvalue.clear();
+
+    UpivotIndex.clear();
+    UpivotValue.clear();
+    Ustart.clear();
+    Ustart.push_back(0);
+    Uindex.clear();
+    Uvalue.clear();
+
+    /**
+     * 1. Prepare basis matrix and deal with unit columns
+     */
+
+    int BcountX = 0;
+    fill_n(&MRcountb4[0], numRow, 0);
+    nwork = 0;
+    for (int iCol = 0; iCol < numRow; iCol++) {
+        int iMat = baseIndex[iCol];
+        int iRow = -1;
+        if (iMat >= numCol) {
+            // 1.1 Logical column
+            // Check for double pivot
+            int lc_iRow = iMat - numCol;
+            if (MRcountb4[lc_iRow] >= 0) {
+                iRow = lc_iRow;
+            } else {
+                fprintf(stderr, "STRANGE: Found a logical column with pivot already in row %d\n",
+                        lc_iRow);
+                MRcountb4[lc_iRow]++;
+                Bindex[BcountX] = lc_iRow;
+                Bvalue[BcountX++] = 1.0;
+                iwork[nwork++] = iCol;
+            }
+        } else {
+            // 1.2 Structural column
+            int start = Astart[iMat];
+            int count = Astart[iMat + 1] - start;
+            int lc_iRow = Aindex[start];
+            // Check for unit column with double pivot
+            bool unit_column = count == 1 && Avalue[start] == 1;
+            if (unit_column && MRcountb4[lc_iRow] >= 0) {
+                iRow = lc_iRow;
+            } else {
+                if (unit_column)
+                    fprintf(stderr, "STRANGE: Found a second unit column with pivot in row %d\n",
+                            lc_iRow);
+                for (int k = start; k < start + count; k++) {
+                    MRcountb4[Aindex[k]]++;
+                    Bindex[BcountX] = Aindex[k];
+                    Bvalue[BcountX++] = Avalue[k];
+                }
+                iwork[nwork++] = iCol;
+            }
+        }
+
+        if (iRow >= 0) {
+            // 1.3 Record unit column
+            //fprintf(stderr,"Found unit column (Row, Col) = (%d, %d)\n", Lindex.size(), Uindex.size());
+            permute[iCol] = iRow;
+            Lstart.push_back(Lindex.size());
+            UpivotIndex.push_back(iRow);
+            UpivotValue.push_back(1);
+            Ustart.push_back(Uindex.size());
+            MRcountb4[iRow] = -numRow;
+            // fprintf(stderr,"Found unit column (Row, Col) = (%d, %d)\n", iRow, iCol);
+        }
+        Bstart[iCol + 1] = BcountX;
+    }
+    BtotalX = numRow - nwork + BcountX;
+    pseudoTick += (numRow - nwork) * 2;
+    pseudoTick += BcountX * 1.5;
+
+    //    count1 = 0;
+    // Comments: for pds-20, dfl001: 60 / 80
+    // Comments: when system is large: enlarge
+    // Comments: when system is small: decrease
+    fakeTick += BcountX * 60 + (numRow - nwork) * 80;
+
+    /**
+     * 2. Search for and deal with singletons
+     */
+    double t2_search = 0;
+    double t2_storeL = Lindex.size();
+    double t2_storeU = Uindex.size();
+    double t2_storep = nwork;
+    while (nwork > 0) {
+        int nworkLast = nwork;
+        nwork = 0;
+        for (int i = 0; i < nworkLast; i++) {
+            const int iCol = iwork[i];
+            const int start = Bstart[iCol];
+            const int end = Bstart[iCol + 1];
+            int pivot_k = -1;
+            int found_row_singleton = 0;
+            int count = 0;
+
+            // 2.1 Search for singleton
+            t2_search += end - start;
+            pseudoTick += (end - start) * 0.5;
+            for (int k = start; k < end; k++) {
+                const int iRow = Bindex[k];
+                if (MRcountb4[iRow] == 1) {
+                    pivot_k = k;
+                    found_row_singleton = 1;
+                    break;
+                }
+                if (MRcountb4[iRow] > 1) {
+                    pivot_k = k;
+                    count++;
+                }
+            }
+
+            if (found_row_singleton) {
+                // 2.2 Deal with row singleton
+                const double pivotX = 1 / Bvalue[pivot_k];
+                for (int section = 0; section < 2; section++) {
+                    int p0 = section == 0 ? start : pivot_k + 1;
+                    int p1 = section == 0 ? pivot_k : end;
+                    for (int k = p0; k < p1; k++) {
+                        int iRow = Bindex[k];
+                        if (MRcountb4[iRow] > 0) {
+                            Lindex.push_back(iRow);
+                            Lvalue.push_back(Bvalue[k] * pivotX);
+                        } else {
+                            Uindex.push_back(iRow);
+                            Uvalue.push_back(Bvalue[k]);
+                        }
+                        MRcountb4[iRow]--;
+                    }
+                }
+                int iRow = Bindex[pivot_k];
+                MRcountb4[iRow] = 0;
+                permute[iCol] = iRow;
+                Lstart.push_back(Lindex.size());
+
+                UpivotIndex.push_back(iRow);
+                UpivotValue.push_back(Bvalue[pivot_k]);
+                Ustart.push_back(Uindex.size());
+            } else if (count == 1) {
+                // 2.3 Deal with column singleton
+                for (int k = start; k < pivot_k; k++) {
+                    Uindex.push_back(Bindex[k]);
+                    Uvalue.push_back(Bvalue[k]);
+                }
+                for (int k = pivot_k + 1; k < end; k++) {
+                    Uindex.push_back(Bindex[k]);
+                    Uvalue.push_back(Bvalue[k]);
+                }
+
+                int iRow = Bindex[pivot_k];
+                MRcountb4[iRow] = 0;
+                permute[iCol] = iRow;
+                Lstart.push_back(Lindex.size());
+
+                UpivotIndex.push_back(iRow);
+                UpivotValue.push_back(Bvalue[pivot_k]);
+                Ustart.push_back(Uindex.size());
+            } else {
+                iwork[nwork++] = iCol;
+            }
+        }
+
+        // No singleton found in the last pass
+        pseudoTick += (nworkLast - nwork) * 2; // For pivot
+        if (nworkLast == nwork)
+            break;
+    }
+    t2_storeL = Lindex.size() - t2_storeL;
+    t2_storeU = Uindex.size() - t2_storeU;
+    t2_storep = t2_storep - nwork;
+
+    fakeTick += t2_search * 20 + (t2_storep + t2_storeL + t2_storeU) * 80;
+    pseudoTick += (Lindex.size() + Uindex.size()) * 1.5; // For factor
+
+    /**
+     * 3. Prepare the kernel parts
+     */
+    // 3.1 Prepare row links, row matrix spaces
+    rlinkFirst.assign(numRow + 1, -1);
+    MRcount.assign(numRow, 0);
+    int MRcountX = 0;
+    for (int iRow = 0; iRow < numRow; iRow++) {
+        int count = MRcountb4[iRow];
+        if (count > 0) {
+            MRstart[iRow] = MRcountX;
+            MRspace[iRow] = count * 2;
+            MRcountX += count * 2;
+            rlinkAdd(iRow, count);
+        }
+    }
+    MRindex.resize(MRcountX);
+
+    // 3.2 Prepare column links, kernel matrix
+    clinkFirst.assign(numRow + 1, -1);
+    MCindex.clear();
+    MCvalue.clear();
+    MCcountA.assign(numRow, 0);
+    MCcountN.assign(numRow, 0);
+    int MCcountX = 0;
+    for (int i = 0; i < nwork; i++) {
+        int iCol = iwork[i];
+        MCstart[iCol] = MCcountX;
+        MCspace[iCol] = (Bstart[iCol + 1] - Bstart[iCol]) * 2;
+        MCcountX += MCspace[iCol];
+        MCindex.resize(MCcountX);
+        MCvalue.resize(MCcountX);
+
+        for (int k = Bstart[iCol]; k < Bstart[iCol + 1]; k++) {
+            const int iRow = Bindex[k];
+            const double value = Bvalue[k];
+            if (MRcountb4[iRow] > 0) {
+                colInsert(iCol, iRow, value);
+                rowInsert(iCol, iRow);
+            } else {
+                colStoreN(iCol, iRow, value);
+            }
+        }
+        colFixMax(iCol);
+        clinkAdd(iCol, MCcountA[iCol]);
+    }
+
+    pseudoTick += nwork * 2; // DLL
+    pseudoTick += MCcountX;  // MATRIX
+
+    fakeTick += (numRow + nwork + MCcountX) * 40 + MRcountX * 20;
+}
+
+void HFactor::buildKernel() {
+    // Deal with the kernel part by 'n-work' pivoting
+
+    double fake_search = 0;
+    double fake_fill = 0;
+    double fake_eliminate = 0;
+
+    while (nwork-- > 0) {
+        /**
+         * 1. Search for the pivot
+         */
+        int jColPivot = -1;
+        int iRowPivot = -1;
+
+        // 1.1. Setup search merits
+        int searchLimit = min(nwork, 8);
+        int searchCount = 0;
+        double meritLimit = 1.0 * numRow * numRow;
+        double meritPivot = meritLimit;
+
+        // 1.2. Search for local singletons
+        bool foundPivot = false;
+        if (!foundPivot && clinkFirst[1] != -1) {
+            jColPivot = clinkFirst[1];
+            iRowPivot = MCindex[MCstart[jColPivot]];
+            foundPivot = true;
+        }
+        if (!foundPivot && rlinkFirst[1] != -1) {
+            iRowPivot = rlinkFirst[1];
+            jColPivot = MRindex[MRstart[iRowPivot]];
+            foundPivot = true;
+        }
+
+        // 1.3. Major search loop
+        for (int count = 2; !foundPivot && count <= numRow; count++) {
+            // 1.3.1 Search for columns
+            for (int j = clinkFirst[count]; j != -1; j = clinkNext[j]) {
+                double minpivot = MCminpivot[j];
+                int start = MCstart[j];
+                int end = start + MCcountA[j];
+                pseudoTick += MCcountA[j] * 0.3;
+                for (int k = start; k < end; k++) {
+                    if (fabs(MCvalue[k]) >= minpivot) {
+                        int i = MCindex[k];
+                        int rowCount = MRcount[i];
+                        double meritLocal = 1.0 * (count - 1) * (rowCount - 1);
+                        if (meritPivot > meritLocal) {
+                            meritPivot = meritLocal;
+                            jColPivot = j;
+                            iRowPivot = i;
+                            foundPivot = foundPivot || (rowCount < count);
+                        }
+                    }
+                }
+
+                if (searchCount++ >= searchLimit && meritPivot < meritLimit)
+                    foundPivot = true;
+                if (foundPivot)
+                    break;
+
+                fake_search += count;
+            }
+
+            // 1.3.2 Search for rows
+            for (int i = rlinkFirst[count]; i != -1; i = rlinkNext[i]) {
+                int start = MRstart[i];
+                int end = start + MRcount[i];
+                pseudoTick += MRcount[i] * 0.3;
+                for (int k = start; k < end; k++) {
+                    int j = MRindex[k];
+                    int columnCount = MCcountA[j];
+                    double meritLocal = 1.0 * (count - 1) * (columnCount - 1);
+                    if (meritLocal < meritPivot) {
+                        int ifind = MCstart[j];
+                        while (MCindex[ifind] != i)
+                            ifind++;
+                        pseudoTick += columnCount * 0.05;
+                        if (fabs(MCvalue[ifind]) >= MCminpivot[j]) {
+                            meritPivot = meritLocal;
+                            jColPivot = j;
+                            iRowPivot = i;
+                            foundPivot = foundPivot || (columnCount <= count);
+                        }
+                    }
+                }
+                if (searchCount++ >= searchLimit && meritPivot < meritLimit)
+                    foundPivot = true;
+                if (foundPivot)
+                    break;
+            }
+
+            fake_search += count;
+        }
+
+        // 1.4. If we found nothing: tell singular
+        if (!foundPivot)
+            throw runtime_error("singular-basis-matrix");
+
+        /**
+         * 2. Elimination other elements by the pivot
+         */
+
+        // XXX NEED TO UPDATE THIS
+        pseudoTick += MCcountA[jColPivot] * 2 + MCcountN[jColPivot];
+
+        // 2.1. Delete the pivot
+        double pivotX = colDelete(jColPivot, iRowPivot);
+        rowDelete(jColPivot, iRowPivot);
+        clinkDel(jColPivot);
+        rlinkDel(iRowPivot);
+        permute[jColPivot] = iRowPivot;
+
+        // 2.2. Store active pivot column to L
+        int start_A = MCstart[jColPivot];
+        int end_A = start_A + MCcountA[jColPivot];
+        int McolumnCount = 0;
+        for (int k = start_A; k < end_A; k++) {
+            const int iRow = MCindex[k];
+            const double value = MCvalue[k] / pivotX;
+            McolumnIndex[McolumnCount++] = iRow;
+            McolumnArray[iRow] = value;
+            McolumnMark[iRow] = 1;
+            Lindex.push_back(iRow);
+            Lvalue.push_back(value);
+            MRcountb4[iRow] = MRcount[iRow];
+            rowDelete(jColPivot, iRow);
+        }
+        Lstart.push_back(Lindex.size());
+        fake_fill += 2 * MCcountA[jColPivot];
+
+        // 2.3. Store non active pivot column to U
+        int end_N = start_A + MCspace[jColPivot];
+        int start_N = end_N - MCcountN[jColPivot];
+        for (int i = start_N; i < end_N; i++) {
+            Uindex.push_back(MCindex[i]);
+            Uvalue.push_back(MCvalue[i]);
+        }
+        UpivotIndex.push_back(iRowPivot);
+        UpivotValue.push_back(pivotX);
+        Ustart.push_back(Uindex.size());
+        fake_fill += end_N - start_N;
+
+        // 2.4. Loop over pivot row to eliminate other column
+        const int row_start = MRstart[iRowPivot];
+        const int row_end = row_start + MRcount[iRowPivot];
+        for (int row_k = row_start; row_k < row_end; row_k++) {
+
+            // 2.4.1. My pointer
+            int iCol = MRindex[row_k];
+            const int my_count = MCcountA[iCol];
+            const int my_start = MCstart[iCol];
+            const int my_end = my_start + my_count - 1;
+            double my_pivot = colDelete(iCol, iRowPivot);
+            colStoreN(iCol, iRowPivot, my_pivot);
+
+            // 2.4.2. Elimination on the overlapping part
+            int nFillin = McolumnCount;
+            int nCancel = 0;
+            pseudoTick += McolumnCount;
+            for (int my_k = my_start; my_k < my_end; my_k++) {
+                int iRow = MCindex[my_k];
+                double value = MCvalue[my_k];
+                if (McolumnMark[iRow]) {
+                    McolumnMark[iRow] = 0;
+                    nFillin--;
+                    value -= my_pivot * McolumnArray[iRow];
+                    if (fabs(value) < HSOL_CONST_TINY) {
+                        value = 0;
+                        nCancel++;
+                    }
+                    MCvalue[my_k] = value;
+                }
+            }
+            fake_eliminate += McolumnCount;
+            fake_eliminate += nFillin * 2;
+
+            // 2.4.3. Remove cancellation gaps
+            if (nCancel > 0) {
+                int new_end = my_start;
+                for (int my_k = my_start; my_k < my_end; my_k++) {
+                    if (MCvalue[my_k] != 0) {
+                        MCindex[new_end] = MCindex[my_k];
+                        MCvalue[new_end++] = MCvalue[my_k];
+                    } else {
+                        rowDelete(iCol, MCindex[my_k]);
+                    }
+                }
+                MCcountA[iCol] = new_end - my_start;
+            }
+
+            // 2.4.4. Insert fill-in
+            if (nFillin > 0) {
+                pseudoTick += nFillin * 5;
+                // 2.4.4.1 Check column size
+                if (MCcountA[iCol] + MCcountN[iCol] + nFillin > MCspace[iCol]) {
+                    // p1&2=active, p3&4=non active, p5=new p1, p7=new p3
+                    int p1 = MCstart[iCol];
+                    int p2 = p1 + MCcountA[iCol];
+                    int p3 = p1 + MCspace[iCol] - MCcountN[iCol];
+                    int p4 = p1 + MCspace[iCol];
+                    MCspace[iCol] += max(MCspace[iCol], nFillin);
+                    int p5 = MCstart[iCol] = MCindex.size();
+                    int p7 = p5 + MCspace[iCol] - MCcountN[iCol];
+                    MCindex.resize(p5 + MCspace[iCol]);
+                    MCvalue.resize(p5 + MCspace[iCol]);
+                    copy(&MCindex[p1], &MCindex[p2], &MCindex[p5]);
+                    copy(&MCvalue[p1], &MCvalue[p2], &MCvalue[p5]);
+                    copy(&MCindex[p3], &MCindex[p4], &MCindex[p7]);
+                    copy(&MCvalue[p3], &MCvalue[p4], &MCvalue[p7]);
+                }
+
+                // 2.4.4.2 Fill into column copy
+                for (int i = 0; i < McolumnCount; i++) {
+                    int iRow = McolumnIndex[i];
+                    if (McolumnMark[iRow])
+                        colInsert(iCol, iRow, -my_pivot * McolumnArray[iRow]);
+                }
+
+                // 2.4.4.3 Fill into the row copy
+                for (int i = 0; i < McolumnCount; i++) {
+                    int iRow = McolumnIndex[i];
+                    if (McolumnMark[iRow]) {
+                        // Expand row space
+                        if (MRcount[iRow] == MRspace[iRow]) {
+                            int p1 = MRstart[iRow];
+                            int p2 = p1 + MRcount[iRow];
+                            int p3 = MRstart[iRow] = MRindex.size();
+                            MRspace[iRow] *= 2;
+                            MRindex.resize(p3 + MRspace[iRow]);
+                            copy(&MRindex[p1], &MRindex[p2], &MRindex[p3]);
+                        }
+                        rowInsert(iCol, iRow);
+                    }
+                }
+            }
+
+            // 2.4.5. Reset pivot column mark
+            for (int i = 0; i < McolumnCount; i++)
+                McolumnMark[McolumnIndex[i]] = 1;
+
+            // 2.4.6. Fix max value and link list
+            colFixMax(iCol);
+            if (my_count != MCcountA[iCol]) {
+                clinkDel(iCol);
+                clinkAdd(iCol, MCcountA[iCol]);
+            }
+        }
+
+        // 2.5. Clear pivot column buffer
+        for (int i = 0; i < McolumnCount; i++)
+            McolumnMark[McolumnIndex[i]] = 0;
+
+        // 2.6. Correct row links for the remain active part
+        for (int i = start_A; i < end_A; i++) {
+            int iRow = MCindex[i];
+            if (MRcountb4[iRow] != MRcount[iRow]) {
+                rlinkDel(iRow);
+                rlinkAdd(iRow, MRcount[iRow]);
+            }
+        }
+    }
+    fakeTick += fake_search * 20 + fake_fill * 160 + fake_eliminate * 80;
+}
+
+void HFactor::buildFinish() {
+    // The look up table
+    for (int i = 0; i < numRow; i++)
+        UpivotLookup[UpivotIndex[i]] = i;
+    LpivotIndex = UpivotIndex;
+    LpivotLookup = UpivotLookup;
+
+    // LR space
+    int LcountX = Lindex.size();
+    LRindex.resize(LcountX);
+    LRvalue.resize(LcountX);
+
+    // LR pointer
+    iwork.assign(numRow, 0);
+    for (int k = 0; k < LcountX; k++)
+        iwork[LpivotLookup[Lindex[k]]]++;
+
+    LRstart.assign(numRow + 1, 0);
+    for (int i = 1; i <= numRow; i++)
+        LRstart[i] = LRstart[i - 1] + iwork[i - 1];
+
+    // LR elements
+    iwork.assign(&LRstart[0], &LRstart[numRow]);
+    for (int i = 0; i < numRow; i++) {
+        const int index = LpivotIndex[i];
+        for (int k = Lstart[i]; k < Lstart[i + 1]; k++) {
+            int iRow = LpivotLookup[Lindex[k]];
+            int iPut = iwork[iRow]++;
+            LRindex[iPut] = index;
+            LRvalue[iPut] = Lvalue[k];
+        }
+    }
+
+    // U pointer
+    Ulastp.assign(&Ustart[1], &Ustart[numRow + 1]);
+    Ustart.resize(numRow);
+
+    // UR space
+    int UcountX = Uindex.size();
+    int URstuffX = updateMethod == UPDATE_METHOD_FT ? 5 : 0;
+    int URcountX = UcountX + URstuffX * numRow;
+    URindex.resize(URcountX);
+    URvalue.resize(URcountX);
+
+    // UR pointer
+    URstart.assign(numRow + 1, 0);
+    URlastp.assign(numRow, 0);
+    URspace.assign(numRow, URstuffX);
+    for (int k = 0; k < UcountX; k++)
+        URlastp[UpivotLookup[Uindex[k]]]++;
+    for (int i = 1; i <= numRow; i++)
+        URstart[i] = URstart[i - 1] + URlastp[i - 1] + URstuffX;
+    URstart.resize(numRow);
+
+    // UR element
+    URlastp = URstart;
+    for (int i = 0; i < numRow; i++) {
+        const int index = UpivotIndex[i];
+        for (int k = Ustart[i]; k < Ulastp[i]; k++) {
+            int iRow = UpivotLookup[Uindex[k]];
+            int iPut = URlastp[iRow]++;
+            URindex[iPut] = index;
+            URvalue[iPut] = Uvalue[k];
+        }
+    }
+
+    // Re-factor merit
+    UmeritX = numRow + (LcountX + UcountX) * 1.5;
+    UtotalX = UcountX;
+    if (updateMethod == UPDATE_METHOD_PF)
+        UmeritX = numRow + UcountX * 4;
+    if (updateMethod == UPDATE_METHOD_MPF)
+        UmeritX = numRow + UcountX * 3;
+
+    // Clear update buffer
+    PFpivotValue.clear();
+    PFpivotIndex.clear();
+    PFstart.clear();
+    PFstart.push_back(0);
+    PFindex.clear();
+    PFvalue.clear();
+
+    // Finally, permute the base index
+    iwork.assign(baseIndex, baseIndex + numRow);
+    for (int i = 0; i < numRow; i++)
+        baseIndex[permute[i]] = iwork[i];
+
+    pseudoTick += LcountX + UcountX + numRow;
+    FtotalX = LcountX + UcountX + numRow;
+
+    fakeTick += numRow * 80 + (LcountX + UcountX) * 60;
+}
+
+void HFactor::ftranL(HVector &rhs, double hist_dsty) const {
+    const double hyperFTRANL = 0.15;
+    const double hyperCANCEL = 0.05;
+
+    if (updateMethod == UPDATE_METHOD_APF) {
+        rhs.tight();
+        rhs.pack();
+        ftranAPF(rhs);
+        rhs.tight();
+    }
+
+    double curr_dsty = 1.0 * rhs.count / numRow;
+    if (curr_dsty > hyperCANCEL || hist_dsty > hyperFTRANL) {
+        // Alias to RHS
+        int RHScount = 0;
+        int *RHSindex = &rhs.index[0];
+        double *RHSarray = &rhs.array[0];
+
+        // Alias to factor L
+        const int *Lstart = &this->Lstart[0];
+        const int *Lindex = &this->Lindex[0];
+        const double *Lvalue = &this->Lvalue[0];
+
+        // Transform
+        for (int i = 0; i < numRow; i++) {
+            int pivotRow = LpivotIndex[i];
+            const double pivotX = RHSarray[pivotRow];
+            if (fabs(pivotX) > HSOL_CONST_TINY) {
+                RHSindex[RHScount++] = pivotRow;
+                const int start = Lstart[i];
+                const int end = Lstart[i + 1];
+                for (int k = start; k < end; k++)
+                    RHSarray[Lindex[k]] -= pivotX * Lvalue[k];
+            } else
+                RHSarray[pivotRow] = 0;
+        }
+
+        // Save the count
+        rhs.count = RHScount;
+    } else {
+        solveHyper(numRow, &LpivotLookup[0], &LpivotIndex[0], 0, &Lstart[0], &Lstart[1], &Lindex[0],
+                   &Lvalue[0], &rhs);
+    }
+}
+
+void HFactor::btranL(HVector &rhs, double hist_dsty) const {
+    const double hyperBTRANL = 0.10;
+    const double hyperCANCEL = 0.05;
+
+    double curr_dsty = 1.0 * rhs.count / numRow;
+    if (curr_dsty > hyperCANCEL || hist_dsty > hyperBTRANL) {
+        // Alias to RHS
+        int RHScount = 0;
+        int *RHSindex = &rhs.index[0];
+        double *RHSarray = &rhs.array[0];
+
+        // Alias to factor L
+        const int *LRstart = &this->LRstart[0];
+        const int *LRindex = &this->LRindex[0];
+        const double *LRvalue = &this->LRvalue[0];
+
+        // Transform
+        for (int i = numRow - 1; i >= 0; i--) {
+            int pivotRow = LpivotIndex[i];
+            const double pivotX = RHSarray[pivotRow];
+            if (fabs(pivotX) > HSOL_CONST_TINY) {
+                RHSindex[RHScount++] = pivotRow;
+                RHSarray[pivotRow] = pivotX;
+                const int start = LRstart[i];
+                const int end = LRstart[i + 1];
+                for (int k = start; k < end; k++)
+                    RHSarray[LRindex[k]] -= pivotX * LRvalue[k];
+            } else
+                RHSarray[pivotRow] = 0;
+        }
+
+        // Save the count
+        rhs.count = RHScount;
+    } else {
+        solveHyper(numRow, &LpivotLookup[0], &LpivotIndex[0], 0, &LRstart[0], &LRstart[1],
+                   &LRindex[0], &LRvalue[0], &rhs);
+    }
+
+    if (updateMethod == UPDATE_METHOD_APF) {
+        btranAPF(rhs);
+        rhs.tight();
+        rhs.pack();
+    }
+}
+
+void HFactor::ftranU(HVector &rhs, double hist_dsty) const {
+    // The update part
+    if (updateMethod == UPDATE_METHOD_FT) {
+        ftranFT(rhs);
+        rhs.tight();
+        rhs.pack();
+    }
+    if (updateMethod == UPDATE_METHOD_MPF) {
+        ftranMPF(rhs);
+        rhs.tight();
+        rhs.pack();
+    }
+
+    // The regular part
+    const double hyperFTRANU = 0.10;
+    const double hyperCANCEL = 0.05;
+
+    double curr_dsty = 1.0 * rhs.count / numRow;
+    if (curr_dsty > hyperCANCEL || hist_dsty > hyperFTRANU) {
+        // Alias to non constant
+        int RHS_Tick = rhs.pseudoTick;
+        int RHScount = 0;
+        int *RHSindex = &rhs.index[0];
+        double *RHSarray = &rhs.array[0];
+
+        // Alias to the factor
+        const int *Ustart = &this->Ustart[0];
+        const int *Uend = &this->Ulastp[0];
+        const int *Uindex = &this->Uindex[0];
+        const double *Uvalue = &this->Uvalue[0];
+
+        // Transform
+        double RHS_start = RHS_Tick;
+        int UpivotCount = UpivotIndex.size();
+        for (int iLogic = UpivotCount - 1; iLogic >= 0; iLogic--) {
+            // Skip void
+            if (UpivotIndex[iLogic] == -1)
+                continue;
+
+            // Normal part
+            const int pivotRow = UpivotIndex[iLogic];
+            double pivotX = RHSarray[pivotRow];
+            if (fabs(pivotX) > HSOL_CONST_TINY) {
+                pivotX /= UpivotValue[iLogic];
+                RHSindex[RHScount++] = pivotRow;
+                RHSarray[pivotRow] = pivotX;
+                const int start = Ustart[iLogic];
+                const int end = Uend[iLogic];
+                if (iLogic >= numRow)
+                    RHS_Tick += (end - start);
+                for (int k = start; k < end; k++)
+                    RHSarray[Uindex[k]] -= pivotX * Uvalue[k];
+            } else
+                RHSarray[pivotRow] = 0;
+        }
+
+        // Save the count
+        rhs.count = RHScount;
+        rhs.pseudoTick = RHS_Tick + (UpivotCount - numRow);
+
+        rhs.fakeTick += (RHS_Tick - RHS_start) * 15 + (UpivotCount - numRow) * 10;
+
+    } else {
+        solveHyper(numRow, &UpivotLookup[0], &UpivotIndex[0], &UpivotValue[0], &Ustart[0],
+                   &Ulastp[0], &Uindex[0], &Uvalue[0], &rhs);
+    }
+
+    if (updateMethod == UPDATE_METHOD_PF) {
+        ftranPF(rhs);
+        rhs.tight();
+        rhs.pack();
+    }
+}
+
+void HFactor::btranU(HVector &rhs, double hist_dsty) const {
+    if (updateMethod == UPDATE_METHOD_PF) {
+        btranPF(rhs);
+    }
+
+    // The regular part
+    const double hyperBTRANU = 0.15;
+    const double hyperCANCEL = 0.05;
+
+    double curr_dsty = 1.0 * rhs.count / numRow;
+    if (curr_dsty > hyperCANCEL || hist_dsty > hyperBTRANU) {
+        // Alias to non constant
+        int RHS_Tick = rhs.pseudoTick;
+        int RHScount = 0;
+        int *RHSindex = &rhs.index[0];
+        double *RHSarray = &rhs.array[0];
+
+        // Alias to the factor
+        const int *URstart = &this->URstart[0];
+        const int *URend = &this->URlastp[0];
+        const int *URindex = &this->URindex[0];
+        const double *URvalue = &this->URvalue[0];
+
+        // Transform
+        double RHS_start = RHS_Tick;
+
+        int UpivotCount = UpivotIndex.size();
+        for (int iLogic = 0; iLogic < UpivotCount; iLogic++) {
+            // Skip void
+            if (UpivotIndex[iLogic] == -1)
+                continue;
+
+            // Normal part
+            const int pivotRow = UpivotIndex[iLogic];
+            double pivotX = RHSarray[pivotRow];
+            if (fabs(pivotX) > HSOL_CONST_TINY) {
+                pivotX /= UpivotValue[iLogic];
+                RHSindex[RHScount++] = pivotRow;
+                RHSarray[pivotRow] = pivotX;
+                const int start = URstart[iLogic];
+                const int end = URend[iLogic];
+                if (iLogic >= numRow)
+                    RHS_Tick += end - start;
+                for (int k = start; k < end; k++)
+                    RHSarray[URindex[k]] -= pivotX * URvalue[k];
+            } else
+                RHSarray[pivotRow] = 0;
+        }
+
+        // Save the count
+        rhs.count = RHScount;
+        rhs.pseudoTick = RHS_Tick + (UpivotCount - numRow);
+
+        rhs.fakeTick += (RHS_Tick - RHS_start) * 15 + (UpivotCount - numRow) * 10;
+
+    } else {
+        solveHyper(numRow, &UpivotLookup[0], &UpivotIndex[0], &UpivotValue[0], &URstart[0],
+                   &URlastp[0], &URindex[0], &URvalue[0], &rhs);
+    }
+
+    // The update part
+    if (updateMethod == UPDATE_METHOD_FT) {
+        rhs.tight();
+        rhs.pack();
+        btranFT(rhs);
+        rhs.tight();
+    }
+    if (updateMethod == UPDATE_METHOD_MPF) {
+        rhs.tight();
+        rhs.pack();
+        btranMPF(rhs);
+        rhs.tight();
+    }
+}
+
+void HFactor::ftranFT(HVector &vector) const {
+    // Alias to PF buffer
+    const int PFpivotCount = PFpivotIndex.size();
+    const int *PFpivotIndex = &this->PFpivotIndex[0];
+    const int *PFstart = &this->PFstart[0];
+    const int *PFindex = &this->PFindex[0];
+    const double *PFvalue = &this->PFvalue[0];
+
+    // Alias to non constant
+    int RHS_tick = vector.pseudoTick;
+    int RHScount = vector.count;
+    int *RHSindex = &vector.index[0];
+    double *RHSarray = &vector.array[0];
+
+    // Forwardly apply row ETA
+    for (int i = 0; i < PFpivotCount; i++) {
+        int iRow = PFpivotIndex[i];
+        double value0 = RHSarray[iRow];
+        double value1 = value0;
+        const int start = PFstart[i];
+        const int end = PFstart[i + 1];
+        RHS_tick += end - start;
+        for (int k = start; k < end; k++)
+            value1 -= RHSarray[PFindex[k]] * PFvalue[k];
+        // This would skip the situation where they are both zeros
+        if (value0 || value1) {
+            if (value0 == 0)
+                RHSindex[RHScount++] = iRow;
+            RHSarray[iRow] = (fabs(value1) < HSOL_CONST_TINY) ? HSOL_CONST_ZERO : value1;
+        }
+    }
+
+    // Save count back
+    vector.count = RHScount;
+    vector.pseudoTick = RHS_tick + PFpivotCount * 0.5;
+
+    vector.fakeTick += PFpivotCount * 20 + PFstart[PFpivotCount] * 5;
+    if (PFstart[PFpivotCount] / (PFpivotCount + 1) < 5)
+        vector.fakeTick += PFstart[PFpivotCount] * 5;
+}
+
+void HFactor::btranFT(HVector &vector) const {
+    // Alias to PF buffer
+    const int PFpivotCount = PFpivotIndex.size();
+    const int *PFpivotIndex = &this->PFpivotIndex[0];
+    const int *PFstart = &this->PFstart[0];
+    const int *PFindex = &this->PFindex[0];
+    const double *PFvalue = &this->PFvalue[0];
+
+    // Alias to non constant
+    int RHS_tick = vector.pseudoTick;
+    int RHScount = vector.count;
+    int *RHSindex = &vector.index[0];
+    double *RHSarray = &vector.array[0];
+
+    // Backwardly apply row ETA
+    double RHS_start = RHS_tick;
+    for (int i = PFpivotCount - 1; i >= 0; i--) {
+        int pivotRow = PFpivotIndex[i];
+        double pivotX = RHSarray[pivotRow];
+        if (pivotX) {
+            const int start = PFstart[i];
+            const int end = PFstart[i + 1];
+            RHS_tick += end - start;
+            for (int k = start; k < end; k++) {
+                int iRow = PFindex[k];
+                double value0 = RHSarray[iRow];
+                double value1 = value0 - pivotX * PFvalue[k];
+                if (value0 == 0)
+                    RHSindex[RHScount++] = iRow;
+                RHSarray[iRow] = (fabs(value1) < HSOL_CONST_TINY) ? HSOL_CONST_ZERO : value1;
+            }
+        }
+    }
+
+    vector.fakeTick += (RHS_tick - RHS_start) * 15 + PFpivotCount * 10;
+
+    // Save count back
+    vector.pseudoTick = RHS_tick + PFpivotCount * 0.3;
+    vector.count = RHScount;
+}
+
+void HFactor::ftranPF(HVector &vector) const {
+    // Alias to PF buffer
+    const int PFpivotCount = PFpivotIndex.size();
+    const int *PFpivotIndex = &this->PFpivotIndex[0];
+    const double *PFpivotValue = &this->PFpivotValue[0];
+    const int *PFstart = &this->PFstart[0];
+    const int *PFindex = &this->PFindex[0];
+    const double *PFvalue = &this->PFvalue[0];
+
+    // Alias to non constant
+    int RHScount = vector.count;
+    int *RHSindex = &vector.index[0];
+    double *RHSarray = &vector.array[0];
+
+    // Forwardly
+    for (int i = 0; i < PFpivotCount; i++) {
+        int pivotRow = PFpivotIndex[i];
+        double pivotX = RHSarray[pivotRow];
+        if (fabs(pivotX) > HSOL_CONST_TINY) {
+            pivotX /= PFpivotValue[i];
+            RHSarray[pivotRow] = pivotX;
+            for (int k = PFstart[i]; k < PFstart[i + 1]; k++) {
+                const int index = PFindex[k];
+                const double value0 = RHSarray[index];
+                const double value1 = value0 - pivotX * PFvalue[k];
+                if (value0 == 0)
+                    RHSindex[RHScount++] = index;
+                RHSarray[index] = (fabs(value1) < HSOL_CONST_TINY) ? HSOL_CONST_ZERO : value1;
+            }
+        }
+    }
+
+    // Save count
+    vector.count = RHScount;
+}
+
+void HFactor::btranPF(HVector &vector) const {
+    // Alias to PF buffer
+    const int PFpivotCount = PFpivotIndex.size();
+    const int *PFpivotIndex = &this->PFpivotIndex[0];
+    const double *PFpivotValue = &this->PFpivotValue[0];
+    const int *PFstart = &this->PFstart[0];
+    const int *PFindex = &this->PFindex[0];
+    const double *PFvalue = &this->PFvalue[0];
+
+    // Alias to non constant
+    int RHScount = vector.count;
+    int *RHSindex = &vector.index[0];
+    double *RHSarray = &vector.array[0];
+
+    // Backwardly
+    for (int i = PFpivotCount - 1; i >= 0; i--) {
+        int pivotRow = PFpivotIndex[i];
+        double pivotX = RHSarray[pivotRow];
+        for (int k = PFstart[i]; k < PFstart[i + 1]; k++)
+            pivotX -= PFvalue[k] * RHSarray[PFindex[k]];
+        pivotX /= PFpivotValue[i];
+
+        if (RHSarray[pivotRow] == 0)
+            RHSindex[RHScount++] = pivotRow;
+        RHSarray[pivotRow] = (fabs(pivotX) < HSOL_CONST_TINY) ? 1e-100 : pivotX;
+    }
+
+    // Save count
+    vector.count = RHScount;
+}
+
+void HFactor::ftranMPF(HVector &vector) const {
+    // Alias to non constant
+    int RHScount = vector.count;
+    int *RHSindex = &vector.index[0];
+    double *RHSarray = &vector.array[0];
+
+    // Forwardly
+    int PFpivotCount = PFpivotValue.size();
+    for (int i = 0; i < PFpivotCount; i++) {
+        solveMatrixT(PFstart[i * 2 + 1], PFstart[i * 2 + 2], PFstart[i * 2], PFstart[i * 2 + 1],
+                     &PFindex[0], &PFvalue[0], PFpivotValue[i], &RHScount, RHSindex, RHSarray);
+    }
+
+    // Remove cancellation
+    vector.count = RHScount;
+}
+
+void HFactor::btranMPF(HVector &vector) const {
+    // Alias to non constant
+    int RHScount = vector.count;
+    int *RHSindex = &vector.index[0];
+    double *RHSarray = &vector.array[0];
+
+    // Backwardly
+    for (int i = PFpivotValue.size() - 1; i >= 0; i--) {
+        solveMatrixT(PFstart[i * 2], PFstart[i * 2 + 1], PFstart[i * 2 + 1], PFstart[i * 2 + 2],
+                     &PFindex[0], &PFvalue[0], PFpivotValue[i], &RHScount, RHSindex, RHSarray);
+    }
+
+    // Remove cancellation
+    vector.count = RHScount;
+}
+
+void HFactor::ftranAPF(HVector &vector) const {
+    // Alias to non constant
+    int RHScount = vector.count;
+    int *RHSindex = &vector.index[0];
+    double *RHSarray = &vector.array[0];
+
+    // Backwardly
+    int PFpivotCount = PFpivotValue.size();
+    for (int i = PFpivotCount - 1; i >= 0; i--) {
+        solveMatrixT(PFstart[i * 2 + 1], PFstart[i * 2 + 2], PFstart[i * 2], PFstart[i * 2 + 1],
+                     &PFindex[0], &PFvalue[0], PFpivotValue[i], &RHScount, RHSindex, RHSarray);
+    }
+
+    // Remove cancellation
+    vector.count = RHScount;
+}
+
+void HFactor::btranAPF(HVector &vector) const {
+    // Alias to non constant
+    int RHScount = vector.count;
+    int *RHSindex = &vector.index[0];
+    double *RHSarray = &vector.array[0];
+
+    // Forwardly
+    int PFpivotCount = PFpivotValue.size();
+    for (int i = 0; i < PFpivotCount; i++) {
+        solveMatrixT(PFstart[i * 2], PFstart[i * 2 + 1], PFstart[i * 2 + 1], PFstart[i * 2 + 2],
+                     &PFindex[0], &PFvalue[0], PFpivotValue[i], &RHScount, RHSindex, RHSarray);
+    }
+    vector.count = RHScount;
+}
+
+void HFactor::updateCFT(HVector *aq, HVector *ep, int *iRow, int *hint) {
+
+    /*
+     * In the major update loop, the prefix
+     *
+     * c(p) = current working pivot
+     * p(p) = previous pivot  (0 =< pp < cp)
+     */
+
+    int numUpdate = 0;
+    for (HVector *vec = aq; vec != 0; vec = vec->next)
+        numUpdate++;
+
+    vector<HVector *> aqWork(numUpdate);
+    vector<HVector *> epWork(numUpdate);
+
+    for (int i = 0; i < numUpdate; i++) {
+        aqWork[i] = aq;
+        epWork[i] = ep;
+        aq = aq->next;
+        ep = ep->next;
+    }
+
+    // Pivot related buffers
+    int PFnp0 = PFpivotIndex.size();
+    vector<int> pLogic(numUpdate);
+    vector<double> pValue(numUpdate);
+    vector<double> pAlpha(numUpdate);
+    for (int cp = 0; cp < numUpdate; cp++) {
+        int cRow = iRow[cp];
+        int iLogic = UpivotLookup[cRow];
+        pLogic[cp] = iLogic;
+        pValue[cp] = UpivotValue[iLogic];
+        pAlpha[cp] = aqWork[cp]->array[cRow];
+    }
+
+    // Temporary U pointers
+    vector<int> Tstart(numUpdate + 1);
+    vector<double> Tpivot(numUpdate);
+    Tstart[0] = Uindex.size();
+
+    // Logically sorted previous row_ep
+    vector<pair<int, int> > sorted_pp;
+
+    // Major update loop
+    for (int cp = 0; cp < numUpdate; cp++) {
+        // 1. Expand partial FTRAN result to buffer
+        iwork.clear();
+        for (int i = 0; i < aqWork[cp]->packCount; i++) {
+            int index = aqWork[cp]->packIndex[i];
+            double value = aqWork[cp]->packValue[i];
+            iwork.push_back(index);
+            dwork[index] = value;
+        }
+
+        // 2. Update partial FTRAN result by recent FT matrix
+        for (int pp = 0; pp < cp; pp++) {
+            int pRow = iRow[pp];
+            double value = dwork[pRow];
+            int PFpp = pp + PFnp0;
+            for (int i = PFstart[PFpp]; i < PFstart[PFpp + 1]; i++)
+                value -= dwork[PFindex[i]] * PFvalue[i];
+            iwork.push_back(pRow); // OK to duplicate
+            dwork[pRow] = value;
+        }
+
+        // 3. Store the partial FTRAN result to matirx U
+        double ppaq = dwork[iRow[cp]]; // pivot of the partial aq
+        dwork[iRow[cp]] = 0;
+        int UcountX = Tstart[cp];
+        int UstartX = UcountX;
+        for (unsigned i = 0; i < iwork.size(); i++) {
+            int index = iwork[i];
+            double value = dwork[index];
+            dwork[index] = 0; // This effectively removes all duplication
+            if (fabs(value) > HSOL_CONST_TINY) {
+                Uindex.push_back(index);
+                Uvalue.push_back(value);
+            }
+        }
+        UcountX = Uindex.size();
+        Tstart[cp + 1] = UcountX;
+        Tpivot[cp] = pValue[cp] * pAlpha[cp];
+
+        // 4. Expand partial BTRAN result to buffer
+        iwork.clear();
+        for (int i = 0; i < epWork[cp]->packCount; i++) {
+            int index = epWork[cp]->packIndex[i];
+            double value = epWork[cp]->packValue[i];
+            iwork.push_back(index);
+            dwork[index] = value;
+        }
+
+        // 5. Delete logical later rows (in logical order)
+        for (int isort = 0; isort < cp; isort++) {
+            int pp = sorted_pp[isort].second;
+            int pRow = iRow[pp];
+            double multiplier = -pValue[pp] * dwork[pRow];
+            if (fabs(dwork[pRow]) > HSOL_CONST_TINY) {
+                for (int i = 0; i < epWork[pp]->packCount; i++) {
+                    int index = epWork[pp]->packIndex[i];
+                    double value = epWork[pp]->packValue[i];
+                    iwork.push_back(index);
+                    dwork[index] += value * multiplier;
+                }
+            }
+            dwork[pRow] = 0; // Force to be 0
+        }
+
+        // 6. Update partial BTRAN result by recent U columns
+        for (int pp = 0; pp < cp; pp++) {
+            int kpivot = iRow[pp];
+            double value = dwork[kpivot];
+            for (int k = Tstart[pp]; k < Tstart[pp + 1]; k++)
+                value -= dwork[Uindex[k]] * Uvalue[k];
+            value /= Tpivot[pp];
+            iwork.push_back(kpivot);
+            dwork[kpivot] = value; // Again OK to duplicate
+        }
+
+        // 6.x compute current alpha
+        double thex = 0;
+        for (int k = UstartX; k < UcountX; k++) {
+            int index = Uindex[k];
+            double value = Uvalue[k];
+            thex += dwork[index] * value;
+        }
+        Tpivot[cp] = ppaq + thex * pValue[cp];
+
+        // 7. Store BTRAN result to FT elimination, update logic helper
+        dwork[iRow[cp]] = 0;
+        double pivotX = -pValue[cp];
+        for (unsigned i = 0; i < iwork.size(); i++) {
+            int index = iwork[i];
+            double value = dwork[index];
+            dwork[index] = 0;
+            if (fabs(value) > HSOL_CONST_TINY) {
+                PFindex.push_back(index);
+                PFvalue.push_back(value * pivotX);
+            }
+        }
+        PFpivotIndex.push_back(iRow[cp]);
+        FtotalX += PFindex.size() - PFstart.back() + 1;
+        UtotalX += PFindex.size() - PFstart.back();
+        PFstart.push_back(PFindex.size());
+
+        // 8. Update the sorted ep
+        sorted_pp.push_back(make_pair(pLogic[cp], cp));
+        sort(sorted_pp.begin(), sorted_pp.end());
+    }
+
+    // Now modify the U matrix
+    for (int cp = 0; cp < numUpdate; cp++) {
+        // 1. Delete pivotal row from U
+        int cIndex = iRow[cp];
+        int cLogic = pLogic[cp];
+        FtotalX -= URlastp[cLogic] - URstart[cLogic];
+        UtotalX -= URlastp[cLogic] - URstart[cLogic];
+        for (int k = URstart[cLogic]; k < URlastp[cLogic]; k++) {
+            // Find the pivotal position
+            int iLogic = UpivotLookup[URindex[k]];
+            int iFind = Ustart[iLogic];
+            int iLast = --Ulastp[iLogic];
+            for (; iFind <= iLast; iFind++)
+                if (Uindex[iFind] == cIndex)
+                    break;
+            // Put last to find, and delete last
+            Uindex[iFind] = Uindex[iLast];
+            Uvalue[iFind] = Uvalue[iLast];
+        }
+
+        // 2. Delete pivotal column from UR
+        FtotalX -= Ulastp[cLogic] - Ustart[cLogic];
+        UtotalX -= Ulastp[cLogic] - Ustart[cLogic];
+        for (int k = Ustart[cLogic]; k < Ulastp[cLogic]; k++) {
+            // Find the pivotal position
+            int iLogic = UpivotLookup[Uindex[k]];
+            int iFind = URstart[iLogic];
+            int iLast = --URlastp[iLogic];
+            for (; iFind <= iLast; iFind++)
+                if (URindex[iFind] == cIndex)
+                    break;
+            // Put last to find, and delete last
+            URspace[iLogic]++;
+            URindex[iFind] = URindex[iLast];
+            URvalue[iFind] = URvalue[iLast];
+        }
+
+        // 3. Insert the (stored) partial FTRAN to the row matrix
+        int UstartX = Tstart[cp];
+        int UendX = Tstart[cp + 1];
+        FtotalX += UendX - UstartX + 1;
+        UtotalX += UendX - UstartX;
+        // Store column as UR elements
+        for (int k = UstartX; k < UendX; k++) {
+            // Which ETA file
+            int iLogic = UpivotLookup[Uindex[k]];
+
+            // Move row to the end if necessary
+            if (URspace[iLogic] == 0) {
+                // Make pointers
+                int row_start = URstart[iLogic];
+                int row_count = URlastp[iLogic] - row_start;
+                int new_start = URindex.size();
+                int new_space = row_count * 1.1 + 5;
+
+                // Check matrix UR
+                URindex.resize(new_start + new_space);
+                URvalue.resize(new_start + new_space);
+
+                // Move elements
+                int iFrom = row_start;
+                int iEnd = row_start + row_count;
+                int iTo = new_start;
+                copy(&URindex[iFrom], &URindex[iEnd], &URindex[iTo]);
+                copy(&URvalue[iFrom], &URvalue[iEnd], &URvalue[iTo]);
+
+                // Save new pointers
+                URstart[iLogic] = new_start;
+                URlastp[iLogic] = new_start + row_count;
+                URspace[iLogic] = new_space - row_count;
+            }
+
+            // Put into the next available space
+            URspace[iLogic]--;
+            int iPut = URlastp[iLogic]++;
+            URindex[iPut] = cIndex;
+            URvalue[iPut] = Uvalue[k];
+        }
+
+        // 4. Save pointers
+        Ustart.push_back(UstartX);
+        Ulastp.push_back(UendX);
+
+        URstart.push_back(URstart[cLogic]);
+        URlastp.push_back(URstart[cLogic]);
+        URspace.push_back(URspace[cLogic] + URlastp[cLogic] - URstart[cLogic]);
+
+        UpivotLookup[cIndex] = UpivotIndex.size();
+        UpivotIndex[cLogic] = -1;
+        UpivotIndex.push_back(cIndex);
+        UpivotValue.push_back(Tpivot[cp]);
+    }
+
+    //    // See if we want refactor
+    //    if (UtotalX > UmeritX && PFpivotIndex.size() > 100)
+    //        *hint = 1;
+}
+
+void HFactor::updateFT(HVector *aq, HVector *ep, int iRow, int *hint) {
+    // Store pivot
+    int pLogic = UpivotLookup[iRow];
+    double pivot = UpivotValue[pLogic];
+    double alpha = aq->array[iRow];
+    UpivotIndex[pLogic] = -1;
+
+    // Delete pivotal row from U
+    FtotalX -= URlastp[pLogic] - URstart[pLogic];
+    for (int k = URstart[pLogic]; k < URlastp[pLogic]; k++) {
+        // Find the pivotal position
+        int iLogic = UpivotLookup[URindex[k]];
+        int iFind = Ustart[iLogic];
+        int iLast = --Ulastp[iLogic];
+        for (; iFind <= iLast; iFind++)
+            if (Uindex[iFind] == iRow)
+                break;
+        // Put last to find, and delete last
+        Uindex[iFind] = Uindex[iLast];
+        Uvalue[iFind] = Uvalue[iLast];
+    }
+
+    // Delete pivotal column from UR
+    FtotalX -= Ulastp[pLogic] - Ustart[pLogic];
+    for (int k = Ustart[pLogic]; k < Ulastp[pLogic]; k++) {
+        // Find the pivotal position
+        int iLogic = UpivotLookup[Uindex[k]];
+        int iFind = URstart[iLogic];
+        int iLast = --URlastp[iLogic];
+        for (; iFind <= iLast; iFind++)
+            if (URindex[iFind] == iRow)
+                break;
+        // Put last to find, and delete last
+        URspace[iLogic]++;
+        URindex[iFind] = URindex[iLast];
+        URvalue[iFind] = URvalue[iLast];
+    }
+
+    // Store column to U
+    Ustart.push_back(Uindex.size());
+    for (int i = 0; i < aq->packCount; i++)
+        if (aq->packIndex[i] != iRow) {
+            Uindex.push_back(aq->packIndex[i]);
+            Uvalue.push_back(aq->packValue[i]);
+        }
+    Ulastp.push_back(Uindex.size());
+    int UstartX = Ustart.back();
+    int UendX = Ulastp.back();
+    UtotalX += UendX - UstartX + 1;
+    FtotalX += UendX - UstartX + 1;
+
+    // Store column as UR elements
+    for (int k = UstartX; k < UendX; k++) {
+        // Which ETA file
+        int iLogic = UpivotLookup[Uindex[k]];
+
+        // Move row to the end if necessary
+        if (URspace[iLogic] == 0) {
+            // Make pointers
+            int row_start = URstart[iLogic];
+            int row_count = URlastp[iLogic] - row_start;
+            int new_start = URindex.size();
+            int new_space = row_count * 1.1 + 5;
+
+            // Check matrix UR
+            URindex.resize(new_start + new_space);
+            URvalue.resize(new_start + new_space);
+
+            // Move elements
+            int iFrom = row_start;
+            int iEnd = row_start + row_count;
+            int iTo = new_start;
+            copy(&URindex[iFrom], &URindex[iEnd], &URindex[iTo]);
+            copy(&URvalue[iFrom], &URvalue[iEnd], &URvalue[iTo]);
+
+            // Save new pointers
+            URstart[iLogic] = new_start;
+            URlastp[iLogic] = new_start + row_count;
+            URspace[iLogic] = new_space - row_count;
+        }
+
+        // Put into the next available space
+        URspace[iLogic]--;
+        int iPut = URlastp[iLogic]++;
+        URindex[iPut] = iRow;
+        URvalue[iPut] = Uvalue[k];
+    }
+
+    // Store UR pointers
+    URstart.push_back(URstart[pLogic]);
+    URlastp.push_back(URstart[pLogic]);
+    URspace.push_back(URspace[pLogic] + URlastp[pLogic] - URstart[pLogic]);
+
+    // Update pivot count
+    UpivotLookup[iRow] = UpivotIndex.size();
+    UpivotIndex.push_back(iRow);
+    UpivotValue.push_back(pivot * alpha);
+
+    // Store row_ep as R matrix
+    for (int i = 0; i < ep->packCount; i++) {
+        if (ep->packIndex[i] != iRow) {
+            PFindex.push_back(ep->packIndex[i]);
+            PFvalue.push_back(-ep->packValue[i] * pivot);
+        }
+    }
+    UtotalX += PFindex.size() - PFstart.back();
+    FtotalX += PFindex.size() - PFstart.back() + 1;
+
+    // Store R matrix pivot
+    PFpivotIndex.push_back(iRow);
+    PFstart.push_back(PFindex.size());
+
+    // Update total countX
+    UtotalX -= Ulastp[pLogic] - Ustart[pLogic];
+    UtotalX -= URlastp[pLogic] - URstart[pLogic];
+
+    //    // See if we want refactor
+    //    if (UtotalX > UmeritX && PFpivotIndex.size() > 100)
+    //        *hint = 1;
+}
+
+void HFactor::updatePF(HVector *aq, HVector *ep, int iRow, int *hint) {
+    // Check space
+    const int columnCount = aq->packCount;
+    const int *columnIndex = &aq->packIndex[0];
+    const double *columnArray = &aq->packValue[0];
+
+    // Copy the pivotal column
+    for (int i = 0; i < columnCount; i++) {
+        int index = columnIndex[i];
+        double value = columnArray[i];
+        if (index != iRow) {
+            PFindex.push_back(index);
+            PFvalue.push_back(value);
+        }
+    }
+
+    // Save pivot
+    PFpivotIndex.push_back(iRow);
+    PFpivotValue.push_back(aq->array[iRow]);
+    PFstart.push_back(PFindex.size());
+
+    // Check refactor
+    UtotalX += aq->packCount;
+    if (UtotalX > UmeritX)
+        *hint = 1;
+    FtotalX += aq->packCount;
+}
+
+void HFactor::updateMPF(HVector *aq, HVector *ep, int iRow, int *hint) {
+    int PFcountX0 = PFindex.size();
+
+    // Store elements
+    for (int i = 0; i < aq->packCount; i++) {
+        PFindex.push_back(aq->packIndex[i]);
+        PFvalue.push_back(aq->packValue[i]);
+    }
+    int pLogic = UpivotLookup[iRow];
+    int UstartX = Ustart[pLogic];
+    int UendX = Ustart[pLogic + 1];
+    for (int k = UstartX; k < UendX; k++) {
+        PFindex.push_back(Uindex[k]);
+        PFvalue.push_back(-Uvalue[k]);
+    }
+    PFindex.push_back(iRow);
+    PFvalue.push_back(-UpivotValue[pLogic]);
+    PFstart.push_back(PFindex.size());
+
+    for (int i = 0; i < ep->packCount; i++) {
+        PFindex.push_back(ep->packIndex[i]);
+        PFvalue.push_back(ep->packValue[i]);
+    }
+    PFstart.push_back(PFindex.size());
+
+    // Store pivot
+    PFpivotValue.push_back(aq->array[iRow]);
+
+    // Refactor or not
+    UtotalX += aq->packCount + ep->packCount;
+    FtotalX += PFindex.size() - PFcountX0;
+    if (UtotalX > UmeritX)
+        *hint = 1;
+}
+
+void HFactor::updateAPF(HVector *aq, HVector *ep, int iRow, int *hint) {
+    int PFcountX0 = PFindex.size();
+
+    // Store elements
+    for (int i = 0; i < aq->packCount; i++) {
+        PFindex.push_back(aq->packIndex[i]);
+        PFvalue.push_back(aq->packValue[i]);
+    }
+
+    int columnOut = baseIndex[iRow];
+    if (columnOut >= numCol) {
+        PFindex.push_back(columnOut - numCol);
+        PFvalue.push_back(-1);
+    } else {
+        for (int k = Astart[columnOut]; k < Astart[columnOut + 1]; k++) {
+            PFindex.push_back(Aindex[k]);
+            PFvalue.push_back(-Avalue[k]);
+        }
+    }
+    PFstart.push_back(PFindex.size());
+
+    for (int i = 0; i < ep->packCount; i++) {
+        PFindex.push_back(ep->packIndex[i]);
+        PFvalue.push_back(ep->packValue[i]);
+    }
+    PFstart.push_back(PFindex.size());
+    FtotalX += PFindex.size() - PFcountX0;
+
+    // Store pivot
+    PFpivotValue.push_back(aq->array[iRow]);
+}
+
+// Upstream file: HMatrix.cpp
+
+void HMatrix::setup(int numCol_, int numRow_, const int *Astart_, const int *Aindex_,
+                    const double *Avalue_) {
+    // Copy A
+    numCol = numCol_;
+    numRow = numRow_;
+    Astart.assign(Astart_, Astart_ + numCol_ + 1);
+
+    int AcountX = Astart_[numCol_];
+    Aindex.assign(Aindex_, Aindex_ + AcountX);
+    Avalue.assign(Avalue_, Avalue_ + AcountX);
+
+    // Build row copy - pointers
+    ARstart.resize(numRow + 1);
+    AR_Nend.assign(numRow, 0);
+    for (int k = 0; k < AcountX; k++)
+        AR_Nend[Aindex[k]]++;
+    ARstart[0] = 0;
+    for (int i = 1; i <= numRow; i++)
+        ARstart[i] = ARstart[i - 1] + AR_Nend[i - 1];
+    for (int i = 0; i < numRow; i++)
+        AR_Nend[i] = ARstart[i];
+
+    // Build row copy - elements
+    ARindex.resize(AcountX);
+    ARvalue.resize(AcountX);
+    for (int iCol = 0; iCol < numCol; iCol++) {
+        for (int k = Astart[iCol]; k < Astart[iCol + 1]; k++) {
+            int iRow = Aindex[k];
+            int iPut = AR_Nend[iRow]++;
+            ARindex[iPut] = iCol;
+            ARvalue[iPut] = Avalue[k];
+        }
+    }
+}
+
+void HMatrix::update(int columnIn, int columnOut) {
+    if (columnIn < numCol) {
+        for (int k = Astart[columnIn]; k < Astart[columnIn + 1]; k++) {
+            int iRow = Aindex[k];
+            int iFind = ARstart[iRow];
+            int iSwap = --AR_Nend[iRow];
+            while (ARindex[iFind] != columnIn)
+                iFind++;
+            swap(ARindex[iFind], ARindex[iSwap]);
+            swap(ARvalue[iFind], ARvalue[iSwap]);
+        }
+    }
+
+    if (columnOut < numCol) {
+        for (int k = Astart[columnOut]; k < Astart[columnOut + 1]; k++) {
+            int iRow = Aindex[k];
+            int iFind = AR_Nend[iRow];
+            int iSwap = AR_Nend[iRow]++;
+            while (ARindex[iFind] != columnOut)
+                iFind++;
+            swap(ARindex[iFind], ARindex[iSwap]);
+            swap(ARvalue[iFind], ARvalue[iSwap]);
+        }
+    }
+}
+
+double HMatrix::compute_dot(HVector &vector, int iCol) const {
+    double result = 0;
+    if (iCol < numCol) {
+        for (int k = Astart[iCol]; k < Astart[iCol + 1]; k++)
+            result += vector.array[Aindex[k]] * Avalue[k];
+    } else {
+        result = vector.array[iCol - numCol];
+    }
+    return result;
+}
+
+void HMatrix::collect_aj(HVector &vector, int iCol, double multi) const {
+    if (iCol < numCol) {
+        for (int k = Astart[iCol]; k < Astart[iCol + 1]; k++) {
+            int index = Aindex[k];
+            double value0 = vector.array[index];
+            double value1 = value0 + multi * Avalue[k];
+            if (value0 == 0)
+                vector.index[vector.count++] = index;
+            vector.array[index] = (fabs(value1) < HSOL_CONST_TINY) ? HSOL_CONST_ZERO : value1;
+        }
+    } else {
+        int index = iCol - numCol;
+        double value0 = vector.array[index];
+        double value1 = value0 + multi;
+        if (value0 == 0)
+            vector.index[vector.count++] = index;
+        vector.array[index] = (fabs(value1) < HSOL_CONST_TINY) ? HSOL_CONST_ZERO : value1;
+    }
+}
+
+void HMatrix::price_by_col(HVector &row_ap, HVector &row_ep) const {
+    // Alias
+    int ap_count = 0;
+    int *ap_index = &row_ap.index[0];
+    double *ap_array = &row_ap.array[0];
+    const double *ep_array = &row_ep.array[0];
+
+    // Computation
+    for (int iCol = 0; iCol < numCol; iCol++) {
+        double value = 0;
+        for (int k = Astart[iCol]; k < Astart[iCol + 1]; k++) {
+            value += ep_array[Aindex[k]] * Avalue[k];
+        }
+        if (fabs(value) > HSOL_CONST_TINY) {
+            ap_array[iCol] = value;
+            ap_index[ap_count++] = iCol;
+        }
+    }
+    row_ap.count = ap_count;
+}
+
+void HMatrix::price_by_row(HVector &row_ap, HVector &row_ep) const {
+    // Alias
+    int ap_count = 0;
+    int *ap_index = &row_ap.index[0];
+    double *ap_array = &row_ap.array[0];
+    const int ep_count = row_ep.count;
+    const int *ep_index = &row_ep.index[0];
+    const double *ep_array = &row_ep.array[0];
+
+    // Computation
+    for (int i = 0; i < ep_count; i++) {
+        int iRow = ep_index[i];
+        double multi = ep_array[iRow];
+        for (int k = ARstart[iRow]; k < AR_Nend[iRow]; k++) {
+            int index = ARindex[k];
+            double value0 = ap_array[index];
+            double value1 = value0 + multi * ARvalue[k];
+            if (value0 == 0)
+                ap_index[ap_count++] = index;
+            ap_array[index] = (fabs(value1) < HSOL_CONST_TINY) ? HSOL_CONST_ZERO : value1;
+        }
+    }
+
+    // Try to remove cancellation
+    const int apcount1 = ap_count;
+    ap_count = 0;
+    for (int i = 0; i < apcount1; i++) {
+        const int index = ap_index[i];
+        const double value = ap_array[index];
+        if (fabs(value) > HSOL_CONST_TINY) {
+            ap_index[ap_count++] = index;
+        } else {
+            ap_array[index] = 0;
+        }
+    }
+    row_ap.count = ap_count;
+}
+
+void HMatrix::compute_vecT_matB(const double *vec, const int *base, HVector *result) {
+    result->clear();
+    int resultCount = 0;
+    int *resultIndex = &result->index[0];
+    double *resultArray = &result->array[0];
+    for (int i = 0; i < numRow; i++) {
+        int iCol = base[i];
+        double value = 0;
+        if (iCol < numCol) {
+            for (int k = Astart[iCol]; k < Astart[iCol + 1]; k++)
+                value += vec[Aindex[k]] * Avalue[k];
+        } else {
+            value = vec[iCol - numCol];
+        }
+        if (fabs(value) > HSOL_CONST_TINY) {
+            resultArray[i] = value;
+            resultIndex[resultCount++] = i;
+        }
+    }
+    result->count = resultCount;
+}
+
+void HMatrix::compute_matB_vec(const double *vec, const int *base, HVector *result) {
+    result->clear();
+    int resultCount = 0;
+    int *resultIndex = &result->index[0];
+    double *resultArray = &result->array[0];
+
+    for (int i = 0; i < numRow; i++) {
+        int iCol = base[i];
+        double value = vec[i];
+        if (fabs(value) > HSOL_CONST_TINY) {
+            if (iCol < numCol) {
+                for (int k = Astart[iCol]; k < Astart[iCol + 1]; k++)
+                    resultArray[Aindex[k]] += value * Avalue[k];
+            } else {
+                resultArray[iCol - numCol] += value;
+            }
+        }
+    }
+
+    for (int i = 0; i < numRow; i++) {
+        if (fabs(resultArray[i]) > HSOL_CONST_TINY) {
+            resultIndex[resultCount++] = i;
+        } else {
+            resultArray[i] = 0;
+        }
+    }
+    result->count = resultCount;
+}
+
+// Upstream file: HModel.cpp
+
+using namespace std;
+
+HModel::HModel() {
+    intOption[INTOPT_PRINT_FLAG] = 0;     // no print
+    intOption[INTOPT_TRANSPOSE_FLAG] = 0; // no transpose
+    intOption[INTOPT_SCALE_FLAG] = 1;     // do scale
+    intOption[INTOPT_TIGHT_FLAG] = 1;     // do tight
+    intOption[INTOPT_PERMUTE_FLAG] = 0;   // no permute
+    intOption[INTOPT_PERTURB_FLAG] = 1;   // do perturb
+
+    dblOption[DBLOPT_PRIMAL_TOL] = 1e-7;
+    dblOption[DBLOPT_DUAL_TOL] = 1e-7;
+    dblOption[DBLOPT_PAMI_CUTOFF] = 0.95;
+
+    strOption[STROPT_PARTITION_FILE] = "";
+}
+
+void HModel::setup(const char *filename) {
+    // Setup timer
+    timer.reset();
+    totalTime = 0;
+    problemStatus = -1;
+    numberIteration = 0;
+    modelName = filename;
+
+    // Load the model
+    setup_loadMPS(filename);
+
+    // Check size
+    numTot = numCol + numRow;
+    if (numRow == 0)
+        return;
+
+    // Setup random buffers: shuffle the break
+    intBreak.resize(numTot);
+    for (int i = 0; i < numTot; i++)
+        intBreak[i] = i;
+    for (int i = numTot - 1; i >= 1; i--) {
+        int j = random.intRandom() % (i + 1);
+        swap(intBreak[i], intBreak[j]);
+    }
+    dblXpert.resize(numTot);
+    for (int i = 0; i < numTot; i++)
+        dblXpert[i] = random.dblRandom();
+
+    // Setup other part
+    setup_transposeLP();
+    setup_scaleMatrix();
+    //    setup_tightenBound();
+    //    setup_shuffleColumn();
+    setup_allocWorking();
+
+    // Initialize the values
+    initCost();
+    initBound();
+    initValue();
+
+    // Save the input time
+    totalTime += timer.getTime();
+}
+
+bool load_mpsLine(FILE *file, int lmax, char *line, char *flag, double *data) {
+    int F1 = 1, F2 = 4, F3 = 14, F4 = 24, F5 = 39, F6 = 49;
+
+    // check the buffer
+    if (flag[1]) {
+        flag[1] = 0;
+        memcpy(&data[2], &line[F5], 8);
+        data[0] = atof(&line[F6]);
+        return true;
+    }
+
+    // try to read some to the line
+    for (;;) {
+        // Line input
+        fgets(line, lmax, file);
+
+        // Line trim   -- to delete tailing white spaces
+        int lcnt = strlen(line) - 1;
+        while (isspace(line[lcnt]) && lcnt >= 0)
+            lcnt--;
+        if (lcnt <= 0 || line[0] == '*')
+            continue;
+
+        // Line expand -- to get data easier
+        lcnt++;
+        while (lcnt < F4)
+            line[lcnt++] = ' '; // For row and bound row name
+        if (lcnt == F4)
+            line[lcnt++] = '0'; // For bound value
+        line[lcnt] = '\0';
+
+        // Done with section symbol
+        if (line[0] != ' ') {
+            flag[0] = line[0];
+            return false;
+        }
+
+        // Read major symbol & name
+        flag[0] = line[F1 + 1] == ' ' ? line[F1] : line[F1 + 1];
+        memcpy(&data[1], &line[F2], 8);
+
+        // Read 1st minor name & value to output
+        memcpy(&data[2], &line[F3], 8);
+        data[0] = atof(&line[F4]);
+
+        // Keep 2nd minor name & value for future
+        if (lcnt > F5)
+            flag[1] = 1;
+        break;
+    }
+
+    return true;
+}
+
+void HModel::setup_loadMPS(const char *filename) {
+    // MPS file buffer
+    numRow = 0;
+    numCol = 0;
+    objOffset = 0;
+    FILE *file = fopen(filename, "r");
+    if (file == 0) {
+        return;
+    }
+
+    // Input buffer
+    const int lmax = 128;
+    char line[lmax];
+    char flag[2] = {0, 0};
+    double data[3];
+
+    // Load NAME and ROWS
+    load_mpsLine(file, lmax, line, flag, data);
+    load_mpsLine(file, lmax, line, flag, data);
+
+    vector<char> rowType;
+    map<double, int> rowIndex;
+    double objName = 0;
+    while (load_mpsLine(file, lmax, line, flag, data)) {
+        if (flag[0] == 'N' && objName == 0) {
+            objName = data[1];
+        } else {
+            rowType.push_back(flag[0]);
+            rowIndex[data[1]] = numRow++;
+        }
+    }
+
+    // Load COLUMNS
+    map<double, int> colIndex;
+    double lastName = 0;
+    while (load_mpsLine(file, lmax, line, flag, data)) {
+        if (lastName != data[1]) { // New column
+            lastName = data[1];
+            colIndex[data[1]] = numCol++;
+            colCost.push_back(0);
+            Astart.push_back(Aindex.size());
+        }
+        if (data[2] == objName) // Cost
+            colCost.back() = data[0];
+        else if (data[0] != 0) {
+            Aindex.push_back(rowIndex[data[2]]);
+            Avalue.push_back(data[0]);
+        }
+    }
+    Astart.push_back(Aindex.size());
+
+    // Load RHS
+    vector<double> RHS(numRow, 0);
+    while (load_mpsLine(file, lmax, line, flag, data)) {
+        if (data[2] != objName) {
+            int iRow = rowIndex[data[2]];
+            RHS[iRow] = data[0];
+        } else {
+            objOffset = data[0]; // Objective offset
+        }
+    }
+
+    // Load RANGES
+    rowLower.resize(numRow);
+    rowUpper.resize(numRow);
+    if (flag[0] == 'R') {
+        while (load_mpsLine(file, lmax, line, flag, data)) {
+            int iRow = rowIndex[data[2]];
+            if (rowType[iRow] == 'L' || (rowType[iRow] == 'E' && data[0] < 0)) {
+                rowLower[iRow] = RHS[iRow] - fabs(data[0]);
+                rowUpper[iRow] = RHS[iRow];
+            } else {
+                rowUpper[iRow] = RHS[iRow] + fabs(data[0]);
+                rowLower[iRow] = RHS[iRow];
+            }
+            rowType[iRow] = 'X';
+        }
+    }
+
+    // Setup bounds for row without 'RANGE'
+    for (int iRow = 0; iRow < numRow; iRow++) {
+        switch (rowType[iRow]) {
+        case 'L':
+            rowLower[iRow] = -HSOL_CONST_INF;
+            rowUpper[iRow] = RHS[iRow];
+            break;
+        case 'G':
+            rowLower[iRow] = RHS[iRow];
+            rowUpper[iRow] = +HSOL_CONST_INF;
+            break;
+        case 'E':
+            rowLower[iRow] = RHS[iRow];
+            rowUpper[iRow] = RHS[iRow];
+            break;
+        case 'N':
+            rowLower[iRow] = -HSOL_CONST_INF;
+            rowUpper[iRow] = +HSOL_CONST_INF;
+            break;
+        case 'X':
+            break;
+        }
+    }
+
+    // Load BOUNDS
+    colLower.assign(numCol, 0);
+    colUpper.assign(numCol, HSOL_CONST_INF);
+    if (flag[0] == 'B') {
+        while (load_mpsLine(file, lmax, line, flag, data)) {
+            int iCol = colIndex[data[2]];
+
+            switch (flag[0]) {
+            case 'O': /*LO*/
+                colLower[iCol] = data[0];
+                break;
+            case 'I': /*MI*/
+                colLower[iCol] = -HSOL_CONST_INF;
+                break;
+            case 'L': /*PL*/
+                colUpper[iCol] = HSOL_CONST_INF;
+                break;
+            case 'X': /*FX*/
+                colLower[iCol] = data[0];
+                colUpper[iCol] = data[0];
+                break;
+            case 'R': /*FR*/
+                colLower[iCol] = -HSOL_CONST_INF;
+                colUpper[iCol] = HSOL_CONST_INF;
+                break;
+            case 'P': /*UP*/
+                colUpper[iCol] = data[0];
+                if (colLower[iCol] == 0 && data[0] < 0)
+                    colLower[iCol] = -HSOL_CONST_INF;
+                break;
+            }
+        }
+    }
+
+    // Load ENDATA and close file
+    fclose(file);
+}
+
+void HModel::setup_transposeLP() {
+    if (intOption[INTOPT_TRANSPOSE_FLAG] == 0)
+        return;
+
+    int transposeCancelled = 0;
+    if (1.0 * numCol / numRow > 0.2) {
+        //        cerr << "transpose-cancelled-by-ratio" << endl;
+        transposeCancelled = 1;
+        return;
+    }
+
+    // Convert primal cost to dual bound
+    const double inf = HSOL_CONST_INF;
+    vector<double> dualRowLower(numCol);
+    vector<double> dualRowUpper(numCol);
+    for (int j = 0; j < numCol; j++) {
+        double lower = colLower[j];
+        double upper = colUpper[j];
+
+        /*
+         * Primal      Dual
+         * Free        row = c
+         * x > 0       row < c
+         * x < 0       row > c
+         * x = 0       row free
+         * other       cancel
+         */
+
+        if (lower == -inf && upper == inf) {
+            dualRowLower[j] = colCost[j];
+            dualRowUpper[j] = colCost[j];
+        } else if (lower == 0 && upper == inf) {
+            dualRowLower[j] = -inf;
+            dualRowUpper[j] = colCost[j];
+        } else if (lower == -inf && upper == 0) {
+            dualRowLower[j] = colCost[j];
+            dualRowUpper[j] = +inf;
+        } else if (lower == 0 && upper == 0) {
+            dualRowLower[j] = -inf;
+            dualRowUpper[j] = +inf;
+        } else {
+            transposeCancelled = 1;
+            break;
+        }
+    }
+
+    // Check flag
+    if (transposeCancelled == 1) {
+        //        cerr << "transpose-cancelled-by-column" << endl;
+        return;
+    }
+
+    // Convert primal row bound to dual variable cost
+    vector<double> dualColLower(numRow);
+    vector<double> dualColUpper(numRow);
+    vector<double> dualCost(numRow);
+    for (int i = 0; i < numRow; i++) {
+        double lower = rowLower[i];
+        double upper = rowUpper[i];
+
+        /*
+         * Primal      Dual
+         * row = b     Free
+         * row < b     y < 0
+         * row > b     y > 0
+         * row free    y = 0
+         * other       cancel
+         */
+
+        if (lower == upper) {
+            dualColLower[i] = -inf;
+            dualColUpper[i] = +inf;
+            dualCost[i] = -lower;
+        } else if (lower == -inf && upper != inf) {
+            dualColLower[i] = -inf;
+            dualColUpper[i] = 0;
+            dualCost[i] = -upper;
+        } else if (lower != -inf && upper == inf) {
+            dualColLower[i] = 0;
+            dualColUpper[i] = +inf;
+            dualCost[i] = -lower;
+        } else if (lower == -inf && upper == inf) {
+            dualColLower[i] = 0;
+            dualColUpper[i] = 0;
+            dualCost[i] = 0;
+        } else {
+            transposeCancelled = 1;
+            break;
+        }
+    }
+
+    // Check flag
+    if (transposeCancelled == 1) {
+        //        cerr << "transpose-cancelled-by-row" << endl;
+        return;
+    }
+
+    // We can now really transpose things
+    vector<int> iwork(numRow, 0);
+    vector<int> ARstart(numRow + 1, 0);
+    int AcountX = Aindex.size();
+    vector<int> ARindex(AcountX);
+    vector<double> ARvalue(AcountX);
+    for (int k = 0; k < AcountX; k++)
+        iwork[Aindex[k]]++;
+    for (int i = 1; i <= numRow; i++)
+        ARstart[i] = ARstart[i - 1] + iwork[i - 1];
+    for (int i = 0; i < numRow; i++)
+        iwork[i] = ARstart[i];
+    for (int iCol = 0; iCol < numCol; iCol++) {
+        for (int k = Astart[iCol]; k < Astart[iCol + 1]; k++) {
+            int iRow = Aindex[k];
+            int iPut = iwork[iRow]++;
+            ARindex[iPut] = iCol;
+            ARvalue[iPut] = Avalue[k];
+        }
+    }
+
+    // Transpose the problem!
+    swap(numRow, numCol);
+    Astart.swap(ARstart);
+    Aindex.swap(ARindex);
+    Avalue.swap(ARvalue);
+    colLower.swap(dualColLower);
+    colUpper.swap(dualColUpper);
+    rowLower.swap(dualRowLower);
+    rowUpper.swap(dualRowUpper);
+    colCost.swap(dualCost);
+    //    cerr << "problem-transposed" << endl;
+}
+
+void HModel::setup_scaleMatrix() {
+    if (intOption[INTOPT_SCALE_FLAG] == 0)
+        return;
+
+    // Reset all scaling to 1
+    vector<double> colScale(numCol, 1);
+    vector<double> rowScale(numRow, 1);
+
+    // Find out min0 / max0, skip on if in [0.2, 5]
+    const double inf = HSOL_CONST_INF;
+    double min0 = inf, max0 = 0;
+    for (int k = 0, AnX = Astart[numCol]; k < AnX; k++) {
+        double value = fabs(Avalue[k]);
+        min0 = min(min0, value);
+        max0 = max(max0, value);
+    }
+    if (min0 >= 0.2 && max0 <= 5)
+        return;
+
+    // See if we want to include cost include if min-cost < 0.1
+    double minc = inf;
+    for (int i = 0; i < numCol; i++)
+        if (colCost[i])
+            minc = min(minc, fabs(colCost[i]));
+    bool doCost = minc < 0.1;
+
+    // Search up to 6 times
+    vector<double> rowMin(numRow, inf);
+    vector<double> rowMax(numRow, 1 / inf);
+    for (int search_count = 0; search_count < 6; search_count++) {
+        // Find column scale, prepare row data
+        for (int iCol = 0; iCol < numCol; iCol++) {
+            // For column scale (find)
+            double colMin = inf;
+            double colMax = 1 / inf;
+            double myCost = fabs(colCost[iCol]);
+            if (doCost && myCost != 0)
+                colMin = min(colMin, myCost), colMax = max(colMax, myCost);
+            for (int k = Astart[iCol]; k < Astart[iCol + 1]; k++) {
+                double value = fabs(Avalue[k]) * rowScale[Aindex[k]];
+                colMin = min(colMin, value), colMax = max(colMax, value);
+            }
+            colScale[iCol] = 1 / sqrt(colMin * colMax);
+
+            // For row scale (only collect)
+            for (int k = Astart[iCol]; k < Astart[iCol + 1]; k++) {
+                int iRow = Aindex[k];
+                double value = fabs(Avalue[k]) * colScale[iCol];
+                rowMin[iRow] = min(rowMin[iRow], value);
+                rowMax[iRow] = max(rowMax[iRow], value);
+            }
+        }
+
+        // For row scale (find)
+        for (int iRow = 0; iRow < numRow; iRow++)
+            rowScale[iRow] = 1 / sqrt(rowMin[iRow] * rowMax[iRow]);
+        rowMin.assign(numRow, inf);
+        rowMax.assign(numRow, 1 / inf);
+    }
+
+    // Make it numerical better
+    const double ln2 = log(2.0);
+    for (int iCol = 0; iCol < numCol; iCol++)
+        colScale[iCol] = pow(2.0, floor(log(colScale[iCol]) / ln2 + 0.5));
+    for (int iRow = 0; iRow < numRow; iRow++)
+        rowScale[iRow] = pow(2.0, floor(log(rowScale[iRow]) / ln2 + 0.5));
+
+    // Apply scaling to matrix and bounds
+    for (int iCol = 0; iCol < numCol; iCol++)
+        for (int k = Astart[iCol]; k < Astart[iCol + 1]; k++)
+            Avalue[k] *= (colScale[iCol] * rowScale[Aindex[k]]);
+
+    for (int iCol = 0; iCol < numCol; iCol++) {
+        colLower[iCol] /= colLower[iCol] == -inf ? 1 : colScale[iCol];
+        colUpper[iCol] /= colUpper[iCol] == +inf ? 1 : colScale[iCol];
+        colCost[iCol] *= colScale[iCol];
+    }
+    for (int iRow = 0; iRow < numRow; iRow++) {
+        rowLower[iRow] *= rowLower[iRow] == -inf ? 1 : rowScale[iRow];
+        rowUpper[iRow] *= rowUpper[iRow] == +inf ? 1 : rowScale[iRow];
+    }
+}
+
+void HModel::setup_tightenBound() {
+    if (intOption[INTOPT_TIGHT_FLAG] == 0)
+        return;
+
+    // Make a AR copy
+    vector<int> iwork(numRow, 0);
+    vector<int> ARstart(numRow + 1, 0);
+    int AcountX = Aindex.size();
+    vector<int> ARindex(AcountX);
+    vector<double> ARvalue(AcountX);
+    for (int k = 0; k < AcountX; k++)
+        iwork[Aindex[k]]++;
+    for (int i = 1; i <= numRow; i++)
+        ARstart[i] = ARstart[i - 1] + iwork[i - 1];
+    for (int i = 0; i < numRow; i++)
+        iwork[i] = ARstart[i];
+    for (int iCol = 0; iCol < numCol; iCol++) {
+        for (int k = Astart[iCol]; k < Astart[iCol + 1]; k++) {
+            int iRow = Aindex[k];
+            int iPut = iwork[iRow]++;
+            ARindex[iPut] = iCol;
+            ARvalue[iPut] = Avalue[k];
+        }
+    }
+
+    // Save column bounds
+    vector<double> colLower0 = colLower;
+    vector<double> colUpper0 = colUpper;
+
+    double big_B = 1e10;
+    int iPass = 0;
+    for (;;) {
+        int numberChanged = 0;
+        for (int iRow = 0; iRow < numRow; iRow++) {
+            // SKIP free rows
+            if (rowLower[iRow] < -big_B && rowUpper[iRow] > big_B)
+                continue;
+
+            // possible row
+            int ninfU = 0;
+            int ninfL = 0;
+            double xmaxU = 0.0;
+            double xminL = 0.0;
+            int myStart = ARstart[iRow];
+            int myEnd = ARstart[iRow + 1];
+            // Compute possible lower and upper ranges
+
+            for (int k = myStart; k < myEnd; ++k) {
+                int iCol = ARindex[k];
+                double value = ARvalue[k];
+                double upper = value > 0 ? colUpper[iCol] : -colLower[iCol];
+                double lower = value > 0 ? colLower[iCol] : -colUpper[iCol];
+                value = fabs(value);
+                if (upper < big_B)
+                    xmaxU += upper * value;
+                else
+                    ++ninfU;
+                if (lower > -big_B)
+                    xminL += lower * value;
+                else
+                    ++ninfL;
+            }
+
+            // Build in a margin of error
+            xmaxU += 1.0e-8 * fabs(xmaxU);
+            xminL -= 1.0e-8 * fabs(xminL);
+
+            double xminLmargin = (fabs(xminL) > 1.0e8) ? 1e-12 * fabs(xminL) : 0;
+            double xmaxUmargin = (fabs(xmaxU) > 1.0e8) ? 1e-12 * fabs(xmaxU) : 0;
+
+            // Skip redundant row : also need to consider U < L  case
+            double comp_U = xmaxU + ninfU * 1.0e31;
+            double comp_L = xminL - ninfL * 1.0e31;
+            if (comp_U <= rowUpper[iRow] + 1e-7 && comp_L >= rowLower[iRow] - 1e-7)
+                continue;
+
+            double row_L = rowLower[iRow];
+            double row_U = rowUpper[iRow];
+
+            // Now see if we can tighten column bounds
+            for (int k = myStart; k < myEnd; ++k) {
+                double value = ARvalue[k];
+                int iCol = ARindex[k];
+                double col_L = colLower[iCol];
+                double col_U = colUpper[iCol];
+                double new_L = -HSOL_CONST_INF;
+                double new_U = +HSOL_CONST_INF;
+
+                if (value > 0.0) {
+                    if (row_L > -big_B && ninfU <= 1 && (ninfU == 0 || col_U > +big_B))
+                        new_L = (row_L - xmaxU) / value + (1 - ninfU) * col_U - xmaxUmargin;
+                    if (row_U < +big_B && ninfL <= 1 && (ninfL == 0 || col_L < -big_B))
+                        new_U = (row_U - xminL) / value + (1 - ninfL) * col_L + xminLmargin;
+                } else {
+                    if (row_L > -big_B && ninfU <= 1 && (ninfU == 0 || col_L < -big_B))
+                        new_U = (row_L - xmaxU) / value + (1 - ninfU) * col_L + xmaxUmargin;
+                    if (row_U < +big_B && ninfL <= 1 && (ninfL == 0 || col_U > +big_B))
+                        new_L = (row_U - xminL) / value + (1 - ninfL) * col_U - xminLmargin;
+                }
+
+                if (new_U < col_U - 1.0e-12 && new_U < big_B) {
+                    colUpper[iCol] = max(new_U, col_L);
+                    numberChanged++;
+                }
+                if (new_L > col_L + 1.0e-12 && new_L > -big_B) {
+                    colLower[iCol] = min(new_L, col_U);
+                    numberChanged++;
+                }
+            }
+        }
+
+        if (numberChanged == 0)
+            break;
+        iPass++;
+        if (iPass > 10)
+            break;
+    }
+
+    double useTolerance = 1.0e-3;
+    for (int iCol = 0; iCol < numCol; iCol++) {
+        if (colUpper0[iCol] > colLower0[iCol] + useTolerance) {
+            const double relax = 100.0 * useTolerance;
+            if (colUpper[iCol] - colLower[iCol] < useTolerance + 1.0e-8) {
+                colLower[iCol] = max(colLower0[iCol], colLower[iCol] - relax);
+                colUpper[iCol] = min(colUpper0[iCol], colUpper[iCol] + relax);
+            } else {
+                if (colUpper[iCol] < colUpper0[iCol]) {
+                    colUpper[iCol] = min(colUpper[iCol] + relax, colUpper0[iCol]);
+                }
+                if (colLower[iCol] > colLower0[iCol]) {
+                    colLower[iCol] = min(colLower[iCol] - relax, colLower0[iCol]);
+                }
+            }
+        }
+    }
+}
+
+void HModel::setup_shuffleColumn() {
+    if (intOption[INTOPT_PERMUTE_FLAG] == 0)
+        return;
+
+    // 1. Shuffle the column index
+    HRandom localRandom;
+    for (int i = 0; i < 10; i++)
+        localRandom.intRandom();
+    vector<int> iFrom(numCol);
+    for (int i = 0; i < numCol; i++)
+        iFrom[i] = i;
+    for (int i = numCol - 1; i >= 1; i--) {
+        int j = localRandom.intRandom() % (i + 1);
+        swap(iFrom[i], iFrom[j]);
+    }
+
+    // 2. Save original copy
+    vector<int> start = Astart;
+    vector<int> index = Aindex;
+    vector<double> value = Avalue;
+    vector<double> lower = colLower;
+    vector<double> upper = colUpper;
+    vector<double> xcost = colCost;
+    vector<int> ibreak = intBreak;
+    vector<double> dxpert = dblXpert;
+
+    // 3. Generate the permuted matrix
+    int countX = 0;
+    for (int i = 0; i < numCol; i++) {
+        int ifrom = iFrom[i];
+        Astart[i] = countX;
+        for (int k = start[ifrom]; k < start[ifrom + 1]; k++) {
+            Aindex[countX] = index[k];
+            Avalue[countX] = value[k];
+            countX++;
+        }
+        colLower[i] = lower[ifrom];
+        colUpper[i] = upper[ifrom];
+        colCost[i] = xcost[ifrom];
+        intBreak[i] = ibreak[ifrom];
+        dblXpert[i] = dxpert[ifrom];
+    }
+    assert(Astart[numCol] == countX);
+}
+
+void HModel::setup_allocWorking() {
+    // Setup starting base
+    basicIndex.resize(numRow);
+    for (int iRow = 0; iRow < numRow; iRow++)
+        basicIndex[iRow] = iRow + numCol;
+    nonbasicFlag.assign(numTot, 0);
+    nonbasicMove.resize(numTot);
+    for (int i = 0; i < numCol; i++)
+        nonbasicFlag[i] = 1;
+
+    // Matrix, factor
+    matrix.setup(numCol, numRow, &Astart[0], &Aindex[0], &Avalue[0]);
+    factor.setup(numCol, numRow, &Astart[0], &Aindex[0], &Avalue[0], &basicIndex[0]);
+    limitUpdate = 5000;
+
+    // Setup other buffer
+    buffer.setup(numRow);
+    bufferLong.setup(numCol);
+
+    // Setup bounds and solution spaces
+    workCost.resize(numTot);
+    workDual.resize(numTot);
+    workShift.assign(numTot, 0);
+
+    workLower.resize(numTot);
+    workUpper.resize(numTot);
+    workRange.resize(numTot);
+    workValue.resize(numTot);
+
+    baseLower.resize(numRow);
+    baseUpper.resize(numRow);
+    baseValue.resize(numRow);
+}
+
+void HModel::initCost(int perturb) {
+    // Copy the cost
+    for (int i = 0; i < numCol; i++)
+        workCost[i] = colCost[i];
+    for (int i = numCol; i < numTot; i++)
+        workCost[i] = 0;
+    workShift.assign(numTot, 0);
+
+    // See if we want to skip perturbation
+    problemPerturbed = 0;
+    if (perturb == 0 || intOption[INTOPT_PERTURB_FLAG] == 0)
+        return;
+    problemPerturbed = 1;
+
+    // Perturb the original costs, scale down if is too big
+    double bigc = 0;
+    for (int i = 0; i < numCol; i++)
+        bigc = max(bigc, fabs(workCost[i]));
+    if (bigc > 100)
+        bigc = sqrt(sqrt(bigc));
+
+    // If there's few boxed variables, we will just use Simple perturbation
+    double boxedRate = 0;
+    for (int i = 0; i < numTot; i++)
+        boxedRate += (workRange[i] < 1e30);
+    boxedRate /= numTot;
+    if (boxedRate < 0.01)
+        bigc = min(bigc, 1.0);
+    if (bigc < 1) {
+        //        bigc = sqrt(bigc);
+    }
+
+    // Determine the perturbation base
+    double base = 5e-7 * bigc;
+
+    // Now do the perturbation
+    for (int i = 0; i < numCol; i++) {
+        double lower = colLower[i];
+        double upper = colUpper[i];
+        double xpert = (fabs(workCost[i]) + 1) * base * (1 + dblXpert[i]);
+        if (lower == -HSOL_CONST_INF && upper == HSOL_CONST_INF) {
+            // Free - no perturb
+        } else if (upper == HSOL_CONST_INF) { // Lower
+            workCost[i] += xpert;
+        } else if (lower == -HSOL_CONST_INF) { // Upper
+            workCost[i] += -xpert;
+        } else if (lower != upper) { // Boxed
+            workCost[i] += (workCost[i] >= 0) ? xpert : -xpert;
+        } else {
+            // Fixed - no perturb
+        }
+    }
+
+    for (int i = numCol; i < numTot; i++) {
+        workCost[i] += (0.5 - dblXpert[i]) * 1e-12;
+    }
+}
+
+void HModel::initBound(int phase) {
+    // Copy bounds
+    for (int i = 0; i < numCol; i++) {
+        workLower[i] = colLower[i];
+        workUpper[i] = colUpper[i];
+    }
+    for (int i = 0, j = numCol; i < numRow; i++, j++) {
+        workLower[j] = -rowUpper[i];
+        workUpper[j] = -rowLower[i];
+    }
+
+    // Change to dual phase 1 bound
+    if (phase == 1) {
+        const double inf = HSOL_CONST_INF;
+        for (int i = 0; i < numTot; i++) {
+            if (workLower[i] == -inf && workUpper[i] == inf) {
+                // Won't change for row variables: they should never
+                // Become non basic
+                if (i >= numCol)
+                    continue;
+                workLower[i] = -1000, workUpper[i] = 1000; // FREE
+            } else if (workLower[i] == -inf) {
+                workLower[i] = -1, workUpper[i] = 0; // UPPER
+            } else if (workUpper[i] == inf) {
+                workLower[i] = 0, workUpper[i] = 1; // LOWER
+            } else {
+                workLower[i] = 0, workUpper[i] = 0; // BOXED or FIXED
+            }
+        }
+    }
+
+    // Work out ranges
+    for (int i = 0; i < numTot; i++)
+        workRange[i] = workUpper[i] - workLower[i];
+}
+
+void HModel::initValue() {
+    for (int i = 0; i < numTot; i++) {
+        if (nonbasicFlag[i]) {
+            if (workLower[i] == workUpper[i]) {
+                // Fixed
+                workValue[i] = workLower[i];
+                nonbasicMove[i] = 0;
+            } else if (workLower[i] != -HSOL_CONST_INF) {
+                // Lower
+                workValue[i] = workLower[i];
+                nonbasicMove[i] = 1;
+            } else if (workUpper[i] != +HSOL_CONST_INF) {
+                // UPPER
+                workValue[i] = workUpper[i];
+                nonbasicMove[i] = -1;
+            } else {
+                // FREE
+                workValue[i] = 0;
+                nonbasicMove[i] = 0;
+            }
+        } else {
+            nonbasicMove[i] = 0;
+        }
+    }
+}
+
+void HModel::computeFactor() {
+    try {
+        factor.build();
+    } catch (runtime_error &error) {
+        cerr << error.what() << endl;
+        problemStatus = 3;
+        // TODO Change to return
+        throw runtime_error("HSOL basis factorization failed");
+    }
+    countUpdate = 0;
+}
+
+void HModel::computeDual() {
+    buffer.clear();
+    for (int iRow = 0; iRow < numRow; iRow++) {
+        buffer.index[iRow] = iRow;
+        buffer.array[iRow] = workCost[basicIndex[iRow]] + workShift[basicIndex[iRow]];
+    }
+    buffer.count = numRow;
+    factor.btran(buffer, 1);
+
+    bufferLong.clear();
+    matrix.price_by_col(bufferLong, buffer);
+    for (int i = 0; i < numCol; i++)
+        workDual[i] = workCost[i] - bufferLong.array[i];
+    for (int i = numCol; i < numTot; i++)
+        workDual[i] = workCost[i] - buffer.array[i - numCol];
+}
+
+void HModel::computeDualInfeasInDual(int *dualInfeasCount) {
+    int workCount = 0;
+    const double inf = HSOL_CONST_INF;
+    const double tau_d = dblOption[DBLOPT_DUAL_TOL];
+    for (int i = 0; i < numTot; i++) {
+        // Only for non basic variables
+        if (!nonbasicFlag[i])
+            continue;
+        // Free
+        if (workLower[i] == -inf && workUpper[i] == inf)
+            workCount += (fabs(workDual[i]) >= tau_d);
+        // In dual, assuming that boxed variables will be flipped
+        if (workLower[i] == -inf || workUpper[i] == inf)
+            workCount += (nonbasicMove[i] * workDual[i] <= -tau_d);
+    }
+    *dualInfeasCount = workCount;
+}
+
+void HModel::computeDualInfeasInPrimal(int *dualInfeasCount) {
+    int workCount = 0;
+    const double inf = HSOL_CONST_INF;
+    const double tau_d = dblOption[DBLOPT_DUAL_TOL];
+    for (int i = 0; i < numTot; i++) {
+        // Only for non basic variables
+        if (!nonbasicFlag[i])
+            continue;
+        // Free
+        if (workLower[i] == -inf && workUpper[i] == inf)
+            workCount += (fabs(workDual[i]) >= tau_d);
+        // In primal don't assume flip
+        workCount += (nonbasicMove[i] * workDual[i] <= -tau_d);
+    }
+    *dualInfeasCount = workCount;
+}
+
+void HModel::correctDual(int *freeInfeasCount) {
+    const double tau_d = dblOption[DBLOPT_DUAL_TOL];
+    const double inf = HSOL_CONST_INF;
+    int workCount = 0;
+    for (int i = 0; i < numTot; i++) {
+        if (nonbasicFlag[i]) {
+            if (workLower[i] == -inf && workUpper[i] == inf) {
+                // FREE variable
+                workCount += (fabs(workDual[i]) >= tau_d);
+            } else if (nonbasicMove[i] * workDual[i] <= -tau_d) {
+                if (workLower[i] != -inf && workUpper[i] != inf) {
+                    // Boxed variable = flip
+                    flipBound(i);
+                } else {
+                    // Other variable = shift
+                    problemPerturbed = 1;
+                    if (nonbasicMove[i] == 1) {
+                        double dual = (1 + random.dblRandom()) * tau_d;
+                        double shift = dual - workDual[i];
+                        workDual[i] = dual;
+                        workCost[i] = workCost[i] + shift;
+                    } else {
+                        double dual = -(1 + random.dblRandom()) * tau_d;
+                        double shift = dual - workDual[i];
+                        workDual[i] = dual;
+                        workCost[i] = workCost[i] + shift;
+                    }
+                }
+            }
+        }
+    }
+
+    *freeInfeasCount = workCount;
+}
+
+void HModel::computePrimal() {
+    buffer.clear();
+    for (int i = 0; i < numTot; i++)
+        if (nonbasicFlag[i] && workValue[i] != 0)
+            matrix.collect_aj(buffer, i, workValue[i]);
+    factor.ftran(buffer, 1);
+    for (int i = 0; i < numRow; i++) {
+        int iCol = basicIndex[i];
+        baseValue[i] = -buffer.array[i];
+        baseLower[i] = workLower[iCol];
+        baseUpper[i] = workUpper[iCol];
+    }
+}
+
+void HModel::computeObject(int phase) {
+    objective = 0;
+    for (int i = 0; i < numTot; i++)
+        if (nonbasicFlag[i])
+            objective += workValue[i] * workDual[i];
+    if (phase != 1)
+        objective -= objOffset;
+}
+
+void HModel::shiftCost(int iCol, double amount) {
+    problemPerturbed = 1;
+    assert(workShift[iCol] == 0);
+    workShift[iCol] = amount;
+}
+
+void HModel::shiftBack(int iCol) {
+    workDual[iCol] -= workShift[iCol];
+    workShift[iCol] = 0;
+}
+
+void HModel::flipBound(int iCol) {
+    const int move = nonbasicMove[iCol] = -nonbasicMove[iCol];
+    workValue[iCol] = move == 1 ? workLower[iCol] : workUpper[iCol];
+}
+
+void HModel::updateFactor(HVector *column, HVector *row_ep, int *iRow, int *hint) {
+    timer.recordStart(HTICK_UPDATE_FACTOR);
+    factor.update(column, row_ep, iRow, hint);
+    if (countUpdate >= limitUpdate)
+        *hint = 1;
+    timer.recordFinish(HTICK_UPDATE_FACTOR);
+}
+
+void HModel::updateMatrix(int columnIn, int columnOut) {
+    timer.recordStart(HTICK_UPDATE_FACTOR);
+    matrix.update(columnIn, columnOut);
+    timer.recordFinish(HTICK_UPDATE_FACTOR);
+}
+
+void HModel::updatePivots(int columnIn, int rowOut, int sourceOut) {
+    int columnOut = basicIndex[rowOut];
+
+    // Incoming variable
+    basicIndex[rowOut] = columnIn;
+    nonbasicFlag[columnIn] = 0;
+    nonbasicMove[columnIn] = 0;
+    baseLower[rowOut] = workLower[columnIn];
+    baseUpper[rowOut] = workUpper[columnIn];
+
+    // Outgoing variable
+    nonbasicFlag[columnOut] = 1;
+    if (workLower[columnOut] == workUpper[columnOut]) {
+        workValue[columnOut] = workLower[columnOut];
+        nonbasicMove[columnOut] = 0;
+    } else if (sourceOut == -1) {
+        workValue[columnOut] = workLower[columnOut];
+        nonbasicMove[columnOut] = 1;
+    } else {
+        workValue[columnOut] = workUpper[columnOut];
+        nonbasicMove[columnOut] = -1;
+    }
+
+    countUpdate++;
+}
+
+void HModel::changeUpdate(int updateMethod) { factor.change(updateMethod); }
+
+void HModel::reportPivots(int columnIn, int columnOut, double alpha) {
+    if (columnIn >= 0)
+        numberIteration++;
+    historyColumnIn.push_back(columnIn);
+    historyColumnOut.push_back(columnOut);
+    historyAlpha.push_back(alpha);
+}
+
+void HModel::reportStatus(int status) { problemStatus = status; }
+
+void HModel::printMessage(const char *message) {
+    if (intOption[INTOPT_PRINT_FLAG])
+        fprintf(stderr, "%s\n", message);
+}
+
+void HModel::printObject() {
+    if (intOption[INTOPT_PRINT_FLAG])
+        fprintf(stderr, "%10d  %20.10e\n", numberIteration, objective);
+}
+
+void HModel::printResult() {
+    if (problemStatus == 0) {
+        fprintf(stderr, "HsolRpIt - OPTIMAL %16s %20.10e %10d %10.3f\n", modelName.c_str(),
+                objective, numberIteration, totalTime);
+        fprintf(stderr, "grep_HsolRpIt - OPTIMAL,%16s,%20.10e,%10d,%10.3f,0\n", modelName.c_str(),
+                objective, numberIteration, totalTime);
+    } else {
+        fprintf(stderr, "HsolRpIt - NOT-OPT status = %d\n", problemStatus);
+        fprintf(stderr, "grep_HsolRpIt - NOT-OPT,%16s,%20.10e,%10d,%10.3f,%d\n", modelName.c_str(),
+                objective, numberIteration, totalTime, problemStatus);
+    }
+}
+
+void HModel::printProgress() {
+    //    return;
+    //    static double nextReport = 0;
+    //    double currentTime = timer.getTime();
+    //    if (currentTime >= nextReport) {
+    //        computeObject();
+    //        fprintf(stderr,"PROGRESS %16s %20.10e %10d %10.3f\n", modelName.c_str(),
+    //                objective, numberIteration, timer.getTime());
+    //        if (currentTime < 50) {
+    //            nextReport = ((int) (5 * currentTime + 1)) / 5.0 - 0.00001;
+    //        } else if (currentTime < 500) {
+    //            nextReport = ((int) (currentTime + 1)) - 0.00001;
+    //        } else {
+    //            nextReport = ((int) (0.2 * currentTime + 1)) / 0.2 - 0.00001;
+    //        }
+    //    }
+}
+
+void HModel::writePivots(const char *suffix) {
+    string filename = "z-" + modelName + "-" + suffix;
+    ofstream output(filename.c_str());
+    int count = historyColumnIn.size();
+    output << modelName << " " << count << "\t" << totalTime << endl;
+    output << setprecision(12);
+    for (int i = 0; i < count; i++) {
+        output << historyColumnIn[i] << "\t";
+        output << historyColumnOut[i] << "\t";
+        output << historyAlpha[i] << endl;
+    }
+    output.close();
+}
+
+void HModel::writeMPS(const char *filename) {}
+
+// Upstream file: HPrimal.cpp
+
+using namespace std;
+
+void HPrimal::solvePhase2(HModel *ptr_model) {
+    // Copy size
+    model = ptr_model;
+    numCol = model->getNumCol();
+    numRow = model->getNumRow();
+    numTot = model->getNumTot();
+
+    // Setup update limits
+    limitUpdate = min(100 + numRow / 100, 1000);
+    countUpdate = 0;
+
+    // Setup local vectors
+    column.setup(numRow);
+    row_ep.setup(numRow);
+    row_ap.setup(numCol);
+    columnDensity = 0;
+    row_epDensity = 0;
+
+    // Setup other buffers
+
+    model->printMessage("primal-start");
+
+    for (;;) {
+        primalRebuild();
+
+        for (;;) {
+            primalChooseColumn();
+            if (columnIn == -1)
+                break;
+
+            primalChooseRow();
+            if (rowOut == -1) {
+                break;
+            }
+            primalUpdate();
+            if (invertHint)
+                break;
+        }
+
+        // Fresh factorization required
+        if (countUpdate == 0)
+            break;
+    }
+    if (columnIn == -1) {
+        model->printMessage("primal-optimal");
+        model->printMessage("problem-optimal");
+        model->reportStatus(LP_Status_Optimal);
+    } else {
+        model->printMessage("primal-unbounded");
+        model->reportStatus(LP_Status_Unbounded);
+    }
+}
+
+void HPrimal::primalRebuild() {
+    check_deadline();
+    model->reportPivots(-1, -1, 0); // Indicate REINVERT
+
+    // Rebuild model->factor - only if we got updates
+    invertHint = 0;
+    if (countUpdate > 0) {
+        model->computeFactor();
+        countUpdate = 0;
+    }
+
+    model->computeDual();
+    model->computePrimal();
+    model->computeObject();
+    model->printObject();
+}
+
+void HPrimal::primalChooseColumn() {
+    check_deadline();
+    columnIn = -1;
+    double bestInfeas = 0;
+    const int *jFlag = model->getNonbasicFlag();
+    const int *jMove = model->getNonbasicMove();
+    double *workDual = model->getWorkDual();
+    const double *workLower = model->getWorkLower();
+    const double *workUpper = model->getWorkUpper();
+    const double dualTolerance = model->dblOption[DBLOPT_DUAL_TOL];
+
+    for (int iCol = 0; iCol < numTot; iCol++) {
+        if (jFlag[iCol] && fabs(workDual[iCol]) > dualTolerance) {
+            // Always take free
+            // TODO: if we found free,
+            // Then deal with it in dual phase 1
+            if (workLower[iCol] == -HSOL_CONST_INF && workUpper[iCol] == HSOL_CONST_INF) {
+                columnIn = iCol;
+                break;
+            }
+            // Then look at dual infeasible
+            if (jMove[iCol] * workDual[iCol] < -dualTolerance) {
+                if (bestInfeas < fabs(workDual[iCol])) {
+                    bestInfeas = fabs(workDual[iCol]);
+                    columnIn = iCol;
+                }
+            }
+        }
+    }
+}
+
+void HPrimal::primalChooseRow() {
+    const double *baseLower = model->getBaseLower();
+    const double *baseUpper = model->getBaseUpper();
+    double *baseValue = model->getBaseValue();
+    const double primalTolerance = model->dblOption[DBLOPT_PRIMAL_TOL];
+
+    // Compute pivot column
+    column.clear();
+    column.packFlag = true;
+    model->getMatrix()->collect_aj(column, columnIn, 1);
+    model->getFactor()->ftran(column, columnDensity);
+    columnDensity = 0.95 * columnDensity + 0.05 * column.count / numRow;
+
+    // Initialize
+    rowOut = -1;
+
+    // Choose column pass 1
+    double alphaTol = countUpdate < 10 ? 1e-9 : countUpdate < 20 ? 1e-8 : 1e-7;
+    const int *jMove = model->getNonbasicMove();
+    int moveIn = jMove[columnIn];
+    if (moveIn == 0) {
+        // If there's still free in the N
+        // We would report not-solved
+        // Need to handle free
+    }
+    double relaxTheta = 1e100;
+    for (int i = 0; i < column.count; i++) {
+        int index = column.index[i];
+        double alpha = column.array[index] * moveIn;
+        if (alpha > alphaTol) {
+            double relaxSpace = baseValue[index] - baseLower[index] + primalTolerance;
+            if (relaxSpace < relaxTheta * alpha)
+                relaxTheta = relaxSpace / alpha;
+        } else if (alpha < -alphaTol) {
+            double relaxSpace = baseValue[index] - baseUpper[index] - primalTolerance;
+            if (relaxSpace > relaxTheta * alpha)
+                relaxTheta = relaxSpace / alpha;
+        }
+    }
+
+    // Choose column pass 2
+    double bestAlpha = 0;
+    for (int i = 0; i < column.count; i++) {
+        int index = column.index[i];
+        double alpha = column.array[index] * moveIn;
+        if (alpha > alphaTol) {
+            double tightSpace = baseValue[index] - baseLower[index];
+            if (tightSpace < relaxTheta * alpha) {
+                if (bestAlpha < alpha) {
+                    bestAlpha = alpha;
+                    rowOut = index;
+                }
+            }
+        } else if (alpha < -alphaTol) {
+            double tightSpace = baseValue[index] - baseUpper[index];
+            if (tightSpace > relaxTheta * alpha) {
+                if (bestAlpha < -alpha) {
+                    bestAlpha = -alpha;
+                    rowOut = index;
+                }
+            }
+        }
+    }
+}
+
+void HPrimal::primalUpdate() {
+    int *jMove = model->getNonbasicMove();
+    double *workDual = model->getWorkDual();
+    const double *workLower = model->getWorkLower();
+    const double *workUpper = model->getWorkUpper();
+    const double *baseLower = model->getBaseLower();
+    const double *baseUpper = model->getBaseUpper();
+    double *workValue = model->getWorkValue();
+    double *baseValue = model->getBaseValue();
+    const double primalTolerance = model->dblOption[DBLOPT_PRIMAL_TOL];
+
+    // Compute thetaPrimal
+    int moveIn = jMove[columnIn];
+    int columnOut = model->getBaseIndex()[rowOut];
+    double alpha = column.array[rowOut];
+    double thetaPrimal = 0;
+    if (alpha * moveIn > 0) {
+        // Lower bound
+        thetaPrimal = (baseValue[rowOut] - baseLower[rowOut]) / alpha;
+    } else {
+        // Upper bound
+        thetaPrimal = (baseValue[rowOut] - baseUpper[rowOut]) / alpha;
+    }
+
+    // 1. Make sure it is inside bounds or just flip bound
+    double lowerIn = workLower[columnIn];
+    double upperIn = workUpper[columnIn];
+    double valueIn = workValue[columnIn] + thetaPrimal;
+    bool flipped = false;
+    if (jMove[columnIn] == 1) {
+        if (valueIn > upperIn + primalTolerance) {
+            // Flip to upper
+            workValue[columnIn] = upperIn;
+            thetaPrimal = upperIn - lowerIn;
+            flipped = true;
+            jMove[columnIn] = -1;
+        }
+    } else if (jMove[columnIn] == -1) {
+        if (valueIn < lowerIn - primalTolerance) {
+            // Flip to lower
+            workValue[columnIn] = lowerIn;
+            thetaPrimal = lowerIn - upperIn;
+            flipped = true;
+            jMove[columnIn] = 1;
+        }
+    }
+
+    for (int i = 0; i < column.count; i++) {
+        int index = column.index[i];
+        baseValue[index] -= thetaPrimal * column.array[index];
+    }
+
+    // If flipped, then no need touch the pivots
+    if (flipped) {
+        return;
+    }
+
+    // Pivot in
+    int sourceOut = alpha * moveIn > 0 ? -1 : 1;
+    model->updatePivots(columnIn, rowOut, sourceOut);
+
+    baseValue[rowOut] = valueIn;
+
+    // Check for any possible infeasible
+    for (int iRow = 0; iRow < numRow; iRow++) {
+        if (baseValue[iRow] < baseLower[iRow] - primalTolerance) {
+            invertHint = 1;
+        } else if (baseValue[iRow] > baseUpper[iRow] + primalTolerance) {
+            invertHint = 1;
+        }
+    }
+
+    // 2. Now we can update the dual
+    row_ep.clear();
+    row_ap.clear();
+    row_ep.count = 1;
+    row_ep.index[0] = rowOut;
+    row_ep.array[rowOut] = 1;
+    row_ep.packFlag = true;
+    model->getFactor()->btran(row_ep, row_epDensity);
+    model->getMatrix()->price_by_row(row_ap, row_ep);
+    row_epDensity = 0.95 * row_epDensity + 0.05 * row_ep.count / numRow;
+
+    double thetaDual = workDual[columnIn] / alpha;
+    for (int i = 0; i < row_ap.count; i++) {
+        int iCol = row_ap.index[i];
+        workDual[iCol] -= thetaDual * row_ap.array[iCol];
+    }
+    for (int i = 0; i < row_ep.count; i++) {
+        int iGet = row_ep.index[i];
+        int iCol = iGet + numCol;
+        workDual[iCol] -= thetaDual * row_ep.array[iGet];
+    }
+
+    // Dual for the pivot
+    workDual[columnIn] = 0;
+    workDual[columnOut] = -thetaDual;
+
+    // Update model->factor basis
+    model->updateFactor(&column, &row_ep, &rowOut, &invertHint);
+    model->updateMatrix(columnIn, columnOut);
+    if (++countUpdate >= limitUpdate)
+        invertHint = true;
+
+    model->reportPivots(columnIn, columnOut, alpha);
+}
+
+// Upstream file: HVector.cpp
+
+void HVector::setup(int size_) {
+    size = size_;
+    count = 0;
+    index.resize(size);
+    array.assign(size, 0);
+    cwork.assign(size + 6400, 0); // MAX invert
+    iwork.assign(size * 4, 0);
+
+    packCount = 0;
+    packIndex.resize(size);
+    packValue.resize(size);
+}
+
+void HVector::clear() {
+    int clearVector_inDense = count < 0 || count > size * 0.3;
+    if (clearVector_inDense) {
+        array.assign(size, 0);
+    } else {
+        for (int i = 0; i < count; i++)
+            array[index[i]] = 0;
+    }
+    packFlag = false;
+    count = 0;
+    pseudoTick = 0;
+    fakeTick = 0;
+    next = 0;
+}
+
+void HVector::tight() {
+    int totalCount = 0;
+    for (int i = 0; i < count; i++) {
+        const int my_index = index[i];
+        const double value = array[my_index];
+        if (fabs(value) > HSOL_CONST_TINY) {
+            index[totalCount++] = my_index;
+        } else {
+            array[my_index] = 0;
+        }
+    }
+    count = totalCount;
+}
+
+void HVector::pack() {
+    if (packFlag) {
+        packFlag = false;
+        packCount = 0;
+
+        for (int i = 0; i < count; i++) {
+            const int ipack = index[i];
+            packIndex[packCount] = ipack;
+            packValue[packCount] = array[ipack];
+            packCount++;
+        }
+    }
+}
+
+void HVector::copy(const HVector *from) {
+    clear();
+    fakeTick = from->fakeTick;
+    pseudoTick = from->pseudoTick;
+    const int fromCount = count = from->count;
+    const int *fromIndex = &from->index[0];
+    const double *fromArray = &from->array[0];
+    for (int i = 0; i < fromCount; i++) {
+        const int iFrom = fromIndex[i];
+        const double xFrom = fromArray[iFrom];
+        index[i] = iFrom;
+        array[iFrom] = xFrom;
+    }
+}
+
+double HVector::norm2() {
+    const int workCount = count;
+    const int *workIndex = &index[0];
+    const double *workArray = &array[0];
+
+    double result = 0;
+    for (int i = 0; i < workCount; i++) {
+        double value = workArray[workIndex[i]];
+        result += value * value;
+    }
+    return result;
+}
+
+void HVector::saxpy(const double pivotX, const HVector *pivot) {
+    int workCount = count;
+    int *workIndex = &index[0];
+    double *workArray = &array[0];
+
+    const int pivotCount = pivot->count;
+    const int *pivotIndex = &pivot->index[0];
+    const double *pivotArray = &pivot->array[0];
+
+    for (int k = 0; k < pivotCount; k++) {
+        const int iRow = pivotIndex[k];
+        const double x0 = workArray[iRow];
+        const double x1 = x0 + pivotX * pivotArray[iRow];
+        if (x0 == 0)
+            workIndex[workCount++] = iRow;
+        workArray[iRow] = (fabs(x1) < HSOL_CONST_TINY) ? HSOL_CONST_ZERO : x1;
+    }
+    count = workCount;
+}
+
+}
+// Adapter for this project's max-profit packing LPs: A*x <= 1, lower <= x <= upper.
+// Each column is stored as the row indices whose coefficients equal one.
+// One active solve per process; intended for the single-core CMS solver.
+namespace embedded_hsol {
+struct Result {
+    // Upstream status: 0 optimal, 1 infeasible, 2 unbounded, 3 singular, 4 failure.
+    // Adapter status 5 means the caller's deadline was reached.
+    int status = 4;
+    int iterations = 0;
+    double objective = 0;
+    double solve_seconds = 0;
+    std::vector<double> primal, dual;
+};
+inline Result solve(int rows, const std::vector<std::vector<int>> &column_rows,
+                    const std::vector<double> &profit, const std::vector<double> &lower,
+                    const std::vector<double> &upper,
+                    std::chrono::steady_clock::time_point deadline) {
+    Result result;
+    const size_t cols = profit.size();
+    if (rows < 0 || column_rows.size() != cols || lower.size() != cols || upper.size() != cols)
+        return result;
+    for (size_t j = 0; j < cols; ++j) {
+        if (!std::isfinite(profit[j]) || !std::isfinite(lower[j]) || lower[j] < 0 ||
+            std::isnan(upper[j]))
+            return result;
+        if (lower[j] > upper[j]) {
+            result.status = 1;
+            return result;
+        }
+        for (int row : column_rows[j])
+            if (row < 0 || row >= rows)
+                return result;
+    }
+    if (cols == 0) {
+        result.status = 0;
+        result.dual.assign(rows, 0);
+        return result;
+    }
+    struct DeadlineScope {
+        std::chrono::steady_clock::time_point old;
+        explicit DeadlineScope(std::chrono::steady_clock::time_point next)
+            : old(hsol_embed::caller_deadline) {
+            hsol_embed::caller_deadline = next;
+        }
+        ~DeadlineScope() { hsol_embed::caller_deadline = old; }
+    } deadline_scope(deadline);
+    try {
+        hsol_embed::check_deadline();
+        hsol_embed::HModel model;
+        model.numRow = rows;
+        model.numCol = static_cast<int>(cols);
+        model.numTot = rows + static_cast<int>(cols);
+        model.objOffset = 0;
+        model.timer.reset();
+        model.totalTime = 0;
+        model.problemStatus = -1;
+        model.numberIteration = 0;
+        model.modelName = "route-bank";
+        model.intOption[hsol_embed::INTOPT_SCALE_FLAG] = 0;
+        model.rowLower.assign(rows, -hsol_embed::HSOL_CONST_INF);
+        model.rowUpper.assign(rows, 1.0);
+        model.colLower = lower;
+        model.colUpper = upper;
+        size_t nonzeros = 0;
+        for (const auto &indices : column_rows)
+            nonzeros += indices.size();
+        model.colCost.reserve(cols);
+        model.Astart.reserve(cols + 1);
+        model.Aindex.reserve(nonzeros);
+        model.Avalue.reserve(nonzeros);
+        for (size_t j = 0; j < cols; ++j) {
+            model.colCost.push_back(-profit[j]);
+            model.Astart.push_back(static_cast<int>(model.Aindex.size()));
+            for (int row : column_rows[j]) {
+                model.Aindex.push_back(row);
+                model.Avalue.push_back(1.0);
+            }
+            if (!std::isfinite(model.colUpper[j]))
+                model.colUpper[j] = hsol_embed::HSOL_CONST_INF;
+        }
+        model.Astart.push_back(static_cast<int>(model.Aindex.size()));
+        if (model.Aindex.empty()) { // No row coefficient restricts any variable.
+            result.primal = lower;
+            result.dual.assign(rows, 0);
+            for (size_t j = 0; j < cols; ++j) {
+                if (profit[j] > 0 && !std::isfinite(upper[j])) {
+                    result.status = 2;
+                    return result;
+                }
+                result.primal[j] = profit[j] > 0 ? upper[j] : lower[j];
+                result.objective += profit[j] * result.primal[j];
+            }
+            result.status = 0;
+            return result;
+        }
+        model.intBreak.resize(model.numTot);
+        std::iota(model.intBreak.begin(), model.intBreak.end(), 0);
+        for (int i = model.numTot - 1; i >= 1; --i) {
+            int j = model.random.intRandom() % (i + 1);
+            std::swap(model.intBreak[i], model.intBreak[j]);
+        }
+        model.dblXpert.resize(model.numTot);
+        for (double &value : model.dblXpert)
+            value = model.random.dblRandom();
+        model.setup_allocWorking();
+        model.initCost();
+        model.initBound();
+        model.initValue();
+        hsol_embed::check_deadline();
+        hsol_embed::HDual solver;
+        auto start = std::chrono::steady_clock::now();
+        solver.solve(&model, hsol_embed::HDUAL_VARIANT_PLAIN, 1);
+        result.solve_seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        result.status = model.problemStatus;
+        result.iterations = model.numberIteration;
+        if (result.status == hsol_embed::LP_Status_Optimal) {
+            auto values = model.workValue;
+            for (int i = 0; i < rows; ++i)
+                values[model.basicIndex[i]] = model.baseValue[i];
+            result.primal.assign(values.begin(), values.begin() + cols);
+            result.dual.resize(rows);
+            for (int i = 0; i < rows; ++i)
+                result.dual[i] = model.workDual[cols + i];
+            for (size_t j = 0; j < cols; ++j)
+                result.objective += result.primal[j] * profit[j];
+        }
+    } catch (const hsol_embed::DeadlineReached &) {
+        result.status = 5;
+    } catch (const std::exception &) {
+        result.status = 4;
+    }
+    return result;
+}
+} // namespace embedded_hsol
+
+// Passenger-parcel routing: generate routes, select a compatible fleet, then improve it.
+// Layout: settings/data -> declarations -> pipeline/search -> helper implementations.
+// Node IDs are one-based; taxi and request indices are zero-based. Tabs use width 4.
+#pragma GCC optimize("O3", "unroll-loops")
+#include <bits/stdc++.h>
+using namespace std;
+
+using Clock = chrono::steady_clock;
+using Seconds = chrono::seconds;
+using Milliseconds = chrono::milliseconds;
+using IntVector = vector<int>;
+using UInt64 = uint64_t;
+using Real = double;
+using RealVector = vector<Real>;
+using IndexVector = vector<size_t>;
+using Deadline = Clock::time_point;
+using Route = IntVector;
+using Fleet = vector<Route>;
+
+// --- Settings: numerical tolerances and random streams ---
+Real INF = numeric_limits<Real>::infinity();
+const Real FEASIBILITY_EPSILON = 1e-8, IMPROVEMENT_EPSILON = 1e-9, PIVOT_EPSILON = 1e-9,
+           LP_FEASIBILITY_EPSILON = 1e-7, BOUND_RELATIVE_EPSILON = 1e-10;
+// Fixed increment gives repeatable phase-specific random streams.
+const UInt64 SEED_STRIDE = 0x9e3779b97f4a7c15ULL;
+
+// --- Settings: search effort ---
+// Fleet-size thresholds count taxis, not requests or nodes.
+constexpr int SMALL_FLEET_TAXI_LIMIT = 48; // Enable repeated selection and pricing above this size.
+constexpr int GROUP_MASTER_TAXI_LIMIT = 64;
+constexpr int LONG_GENERATION_TAXI_LIMIT = 64;
+constexpr int LARGE_FLEET_TAXI_LIMIT = 96;
+
+// Phase budgets in seconds, with the output margin included in the search deadline.
+constexpr int SEARCH_SECONDS = 299;
+constexpr int INITIAL_LARGE_DFS_SECONDS = 2;
+constexpr int INITIAL_SMALL_DFS_SECONDS = 40;
+constexpr int INITIAL_SELECTION_SECONDS = 20;
+constexpr int LARGE_GENERATION_RESERVE_SECONDS = 8;
+constexpr int SMALL_GENERATION_RESERVE_SECONDS = 4;
+constexpr int SMALL_GENERATION_SECONDS = 100;
+constexpr int SELECTION_ROUND_SECONDS = 6;
+constexpr int REBUILD_ROUND_SECONDS = 6;
+constexpr int PRICING_GUARD_SECONDS = 2;
+constexpr int PRICED_GENERATION_SECONDS = 3;
+constexpr int FINAL_SELECTION_RESERVE_SECONDS = 2;
+constexpr int FINAL_SELECTION_SECONDS = 80;
+constexpr int FINAL_POLISH_CYCLES = 2;
+
+// Route generation and randomized rebuilding.
+constexpr int DEFAULT_BANK_ROUTE_LIMIT = 1000;
+constexpr int LARGE_FLEET_BANK_LIMIT = 400;
+constexpr int DFS_PREFIX_LIMIT = 1000000;
+constexpr int DFS_CLOCK_INTERVAL = 64;
+constexpr int LANDMARK_LIMIT = 8;
+constexpr int LANDMARK_CLOCK_INTERVAL = 64;
+constexpr Real LANDMARK_MAX_SECONDS = .6;
+constexpr Real LANDMARK_BUDGET_FRACTION = .25;
+constexpr int REBUILD_RESTART_INTERVAL = 8;
+constexpr Real REBUILD_PROFIT_RETENTION = .995;
+constexpr int REBUILD_POLISH_INTERVAL = 2;
+constexpr int MIN_REMOVED_REQUESTS = 4;
+constexpr int REQUEST_REMOVAL_DIVISOR = 12;
+constexpr int TAXI_REMOVAL_DIVISOR = 12;
+constexpr int PRICED_BANK_STARTS = 3;
+constexpr int PRICED_MOVE_LIMIT = 48;
+constexpr int PRICED_RESTART_LIMIT = 8;
+
+// LP, group selection, and request pricing.
+constexpr int SIMPLEX_ITERATION_LIMIT = 10000;
+constexpr int SIMPLEX_CLOCK_MASK =
+    7; // Check time every eight iterations, including iteration zero.
+constexpr int GROUP_MIN_TAXIS = 8;
+constexpr int GROUP_TAXI_INCREMENT = 4;
+constexpr int GROUP_WIDTH_LEVELS = 4;
+constexpr int GROUP_RANDOM_SEED_CANDIDATES = 24;
+constexpr int GROUP_OVERLAP_CANDIDATES = 32;
+constexpr int GROUP_ROUTE_CANDIDATES = 64;
+constexpr int GROUP_SOLVE_MILLISECONDS = 150;
+constexpr int GROUP_STAGNATION_ROUNDS_PER_TAXI = 12;
+constexpr int RANKED_LP_SECONDS = 6;
+constexpr int RANKED_FIRST_SOLVE_SECONDS = 4;
+constexpr int RANKED_WIDE_SOLVE_SECONDS = 6;
+constexpr int RANKED_GROUP_GUARD_MILLISECONDS = 100;
+constexpr int PRICE_ITERATION_LIMIT = 192;
+constexpr Real PRICE_STEP_FACTOR = .7;
+
+// --- Data structures ---
+struct Request {
+    int pickup_node, delivery_node;
+    bool is_passenger;
+    Real weight, pickup_earliest, pickup_latest, delivery_earliest, delivery_latest, service_time,
+        revenue;
+};
+
+// Each taxi keeps its best route for each sorted set of served requests.
+struct StoredRoute {
+    IntVector route;
+    Real profit;
+};
+
+struct Instance {
+    int taxi_count, passenger_count, parcel_count, node_count, request_count;
+    IntVector taxi_origin;
+    RealVector taxi_capacity, travel_time, travel_cost;
+    vector<Request> requests;
+    IntVector node_request, is_delivery;
+};
+
+// A master column is one complete taxi route and the requests it covers.
+struct MasterColumn {
+    size_t taxi;
+    IntVector requests;
+    Real profit;
+};
+
+struct MasterResult {
+    IntVector selected_columns;
+    Real profit = 0;
+    bool timed_out = false;
+};
+
+struct PackingMatrix {
+    const vector<MasterColumn> *columns;
+    vector<IntVector> column_rows;
+    IndexVector row_resources;
+    size_t dimension = 0, taxi_count;
+};
+
+// Revised simplex state: basis inverse, basic values, and resource dual prices.
+struct BackendLPData {
+    RealVector primal;
+    bool infeasible = false;
+};
+struct PackingLP {
+    const PackingMatrix *matrix;
+    size_t row_count;
+    RealVector basis_inverse, basic_values, dual_prices, right_hand_sides, bound_signs;
+    IndexVector basis_columns;
+    vector<unsigned char> in_basis;
+    IntVector column_bound_rows;
+    bool timed_out = false;
+    shared_ptr<const BackendLPData> backend;
+    RealVector backend_lower, backend_upper;
+};
+
+// Positive, globally unique route versions invalidate move caches after every update.
+struct SearchState {
+    Fleet routes;
+    IntVector request_owner;
+    RealVector route_profit;
+    vector<UInt64> route_version;
+    Real profit = 0;
+};
+
+// Both positions refer to the original route; insert delivery before pickup.
+struct InsertionChoice {
+    int request = -1, taxi = -1, pickup_position = 0, delivery_position = 0;
+    Real profit_delta = -INF;
+};
+
+// A segment maps first-node arrival a to max(a + duration, earliest_departure).
+// Arrival must be <= latest_arrival; load extrema include the empty prefix.
 struct Segment {
-    std::size_t first = 0, last = 0;
-    double duration = 0;
-    double ready = -std::numeric_limits<double>::infinity();
-    double latest_input = std::numeric_limits<double>::infinity();
-    double cost = 0;
-    double load_change = 0, min_load = 0, max_load = 0;
+    int first_node = 0, last_node = 0;
+    Real duration = 0, earliest_departure = -INF, latest_arrival = INF, load_change = 0,
+         minimum_load = 0, maximum_load = 0;
     bool feasible = true;
 };
 
-Segment single_node(const Instance& instance, std::size_t node);
-Segment join(const Instance& instance, const Segment& left, const Segment& right);
-
-// One composition kernel for persistent route summaries and temporary checks.
-// The cost-free specialization keeps feasibility scans free of cost accesses.
-template<bool WithCost>
-inline void append_segment(const Instance& in, Segment& s, const Segment& next) {
-    const double travel = in.time(s.last, next.first);
-    const double old_change = s.load_change, old_duration = s.duration, old_ready = s.ready;
-    if constexpr (WithCost) s.cost = s.cost + in.cost(s.last, next.first) + next.cost;
-    s.feasible = s.feasible && next.feasible && old_ready + travel <= next.latest_input;
-    s.latest_input = std::min(s.latest_input, next.latest_input - travel - old_duration);
-    s.duration = old_duration + travel + next.duration;
-    s.ready = std::max(old_ready + travel + next.duration, next.ready);
-    s.min_load = std::min(s.min_load, old_change + next.min_load);
-    s.max_load = std::max(s.max_load, old_change + next.max_load);
-    s.load_change = old_change + next.load_change;
-    s.last = next.last;
-}
-
-class RouteCache {
-public:
-    RouteCache() = default;
-    RouteCache(const Instance& instance, std::size_t taxi,
-               const std::vector<std::size_t>& route);
-    // Refill or copy logical contents while retaining allocated buffers.
-    void rebuild(const Instance& instance, std::size_t taxi,
-                 const std::vector<std::size_t>& route);
-    void clear();
-    void copy_from(const RouteCache& other);
-
-    Segment range(const Instance& instance, std::size_t first,
-                                std::size_t last) const; // inclusive
-    bool boundary_allowed(const Instance& instance,
-                                        std::size_t position) const;
-    double cost() const { return cost_; }
-    std::uint64_t version() const { return version_; }
-    const std::vector<std::size_t>& nodes() const { return nodes_; }
-
-private:
-    std::vector<std::size_t> nodes_;
-    std::vector<Segment> singles_;
-    std::vector<std::vector<Segment>> table_;
-    double cost_ = 0;
-    std::uint64_t version_ = 0;
+// Disjoint sparse table: join two summaries to query any contiguous route range.
+struct RouteSegmentCache {
+    Route nodes;
+    vector<Segment> node_segments;
+    vector<vector<Segment>> range_table;
 };
 
-// Builds a virtual route from a constant number of existing segments and new
-// nodes. No route vector is copied while enumerating candidate positions.
-template<bool WithCost>
-class SegmentAccumulator {
-public:
-    SegmentAccumulator(const Instance& in, std::size_t taxi, const RouteCache& route)
-        : in_(in), taxi_(taxi), route_(route) {}
-    void range(std::size_t first, std::size_t end) {
-        if constexpr (WithCost) { if (first == end) return; }
-        else { if (first >= end) return; }
-        segment(route_.range(in_, first, end - 1));
-    }
-    void node(std::size_t id) { segment(single_node(in_, id)); }
-    void segment(const Segment& next) {
-        if (summary_) append_segment<WithCost>(in_, *summary_, next);
-        else summary_ = next;
-    }
-    // Keep the existing RouteCandidate interface at its call sites.
-    void add_range(std::size_t first, std::size_t end) { range(first, end); }
-    void add_segment(const Segment& next) { segment(next); }
-    void add_node(std::size_t id) { node(id); }
-    bool feasible() const {
-        if (!summary_) return true;
-        const auto& s = *summary_;
-        if constexpr (WithCost) {
-            const double arrival = in_.time(taxi_, s.first);
-            // Preserve RouteCandidate's original comparisons, including its
-            // floating-point edge behavior; FastRouteCheck uses the <= form.
-            return !(!s.feasible || arrival > s.latest_input || s.min_load < -1e-8 ||
-                s.max_load > in_.taxis[taxi_].parcel_capacity + 1e-8);
-        } else {
-            return s.feasible && in_.time(taxi_, s.first) <= s.latest_input && s.min_load >= -1e-8 &&
-                s.max_load <= in_.taxis[taxi_].parcel_capacity + 1e-8;
-        }
-    }
-    std::optional<double> cost_if_feasible() const {
-        static_assert(WithCost);
-        if (!feasible()) return std::nullopt;
-        return summary_ ? in_.cost(taxi_, summary_->first) + summary_->cost : 0.0;
-    }
-
-private:
-    const Instance& in_;
-    std::size_t taxi_;
-    const RouteCache& route_;
-    std::optional<Segment> summary_;
-};
-using RouteCandidate = SegmentAccumulator<true>;
-} // namespace soict::alns
-
-// END include/search/alns/RouteCache.hpp
-
-#include <algorithm>
-#include <atomic>
-#include <cmath>
-
-namespace soict::alns {
-namespace {
-std::atomic<std::uint64_t> next_route_version{1};
-double service(const Instance& in, std::size_t node) {
-    const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();
-
-    if (node < k + 2 * n) return in.passengers[(node - k) % n].service;
-    return in.parcels[(node - k - 2 * n) % m].service;
-}
-double load_delta(const Instance& in, std::size_t node) {
-    const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();
-    if (node < k + 2 * n) return 0;
-    const auto j = (node - k - 2 * n) % m;
-    return node < k + 2 * n + m ? in.parcels[j].weight : -in.parcels[j].weight;
-}
-} // namespace
-
-Segment single_node(const Instance& in, std::size_t node) {
-    Segment s;
-    // Even an event without a time window requires a finite arrival. The
-    // final departure after service may overflow when no later event exists.
-    s.latest_input = std::numeric_limits<double>::max();
-    s.first = s.last = node;
-    s.duration = service(in, node);
-    const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();
-    const Window* window = nullptr;
-    if (node < k + n) window = &in.passengers[node - k].pickup;
-    else if (node >= k + 2 * n && node < k + 2 * n + m)
-        window = &in.parcels[node - k - 2 * n].pickup;
-    else if (node >= k + 2 * n + m)
-        window = &in.parcels[node - k - 2 * n - m].delivery;
-    if (window) {
-        s.ready = window->earliest + s.duration;
-        s.latest_input = window->latest;
-    }
-    s.load_change = load_delta(in, node);
-    s.min_load = std::min(0.0, s.load_change);
-    s.max_load = std::max(0.0, s.load_change);
-    return s;
-}
-
-Segment join(const Instance& in, const Segment& a, const Segment& b) {
-    Segment s = a;
-    append_segment<true>(in, s, b);
-    return s;
-}
-
-RouteCache::RouteCache(const Instance& in, std::size_t taxi,
-                       const std::vector<std::size_t>& route) {
-    rebuild(in, taxi, route);
-}
-
-void RouteCache::clear() {
-    nodes_.clear(); singles_.clear();
-    for (auto& level : table_) level.clear();
-    cost_ = 0;
-    version_ = 0;
-}
-
-void RouteCache::copy_from(const RouteCache& other) {
-    if (this == &other) return;
-    nodes_ = other.nodes_;
-    singles_ = other.singles_;
-    if (table_.size() < other.table_.size()) table_.resize(other.table_.size());
-    for (std::size_t i = 0; i < other.table_.size(); ++i) table_[i] = other.table_[i];
-    for (std::size_t i = other.table_.size(); i < table_.size(); ++i) table_[i].clear();
-    cost_ = other.cost_;
-    version_ = other.version_;
-}
-
-void RouteCache::rebuild(const Instance& in, std::size_t taxi,
-                          const std::vector<std::size_t>& route) {
-    if (&route != &nodes_) nodes_ = route;
-    singles_.clear(); for (auto& level : table_) level.clear();
-    cost_ = 0;
-    version_ = next_route_version.fetch_add(1, std::memory_order_relaxed);
-    const auto size = route.size();
-    singles_.reserve(size);
-    std::size_t previous = taxi;
-    for (const auto node : route) {
-        singles_.push_back(single_node(in, node));
-        cost_ += in.cost(previous, node);
-        previous = node;
-    }
-    // Disjoint sparse table: associative, order-preserving range summary in O(1).
-    std::size_t level_index = 0;
-    for (std::size_t half = 1; half < size; half *= 2, ++level_index) {
-        if (level_index == table_.size()) table_.emplace_back();
-        auto& level = table_[level_index];
-        level.resize(size);
-        const std::size_t block = half * 2;
-        for (std::size_t start = 0; start < size; start += block) {
-            const auto mid = std::min(start + half, size);
-            const auto end = std::min(start + block, size);
-            if (mid > start) {
-                level[mid - 1] = singles_[mid - 1];
-                for (auto i = mid - 1; i > start; --i)
-                    level[i - 1] = join(in, singles_[i - 1], level[i]);
-            }
-            if (mid < end) {
-                level[mid] = singles_[mid];
-                for (auto i = mid + 1; i < end; ++i)
-                    level[i] = join(in, level[i - 1], singles_[i]);
-            }
-        }
-        if (half > size / 2) break;
-    }
-}
-
-Segment RouteCache::range(const Instance& in, std::size_t first, std::size_t last) const {
-
-    if (first == last) return singles_[first];
-    const auto level = soict_bit_width(first ^ last) - 1;
-    return join(in, table_[level][first], table_[level][last]);
-}
-
-bool RouteCache::boundary_allowed(const Instance& in, std::size_t pos) const {
-    if (pos > nodes_.size()) return false;
-    if (pos == 0) return true;
-    const auto preceding = nodes_[pos - 1], k = in.taxis.size();
-    return preceding < k || preceding >= k + in.passengers.size();
-}
-
-} // namespace soict::alns
-
-// END src/search/alns/RouteCache.cpp
-
-// BEGIN src/search/alns/SearchState.cpp
-
-// BEGIN include/search/alns/SearchState.hpp
-
-#include <memory>
-#include <optional>
-#include <cstdint>
-#include <vector>
-
-namespace soict::alns {
-class EmptyTaxiIndex;
-class InsertionScratch;
-
-// Request ids 0..N-1 are passengers; N..N+M-1 are parcels.
-struct RequestLocation {
-    int taxi = -1;
-    std::size_t pickup = 0, dropoff = 0;
+// Cache request/taxi insertions until that taxi's route version changes.
+struct InsertionCache {
+    vector<vector<UInt64>> route_version;
+    vector<vector<InsertionChoice>> choices;
 };
 
-class SearchState {
-public:
-    SearchState(const Instance& instance, Solution solution,
-                std::shared_ptr<InsertionScratch> insertion_scratch = {});
-    void copy_from(const SearchState& other);
-    Solution solution() const;
-    const RouteCache& cache(std::size_t taxi) const;
-    const std::vector<std::size_t>& active_taxis() const {
-        return active_taxis_;
-    }
-    bool is_active(std::size_t taxi) const {
-        return taxi < routes_by_taxi_.size() && !routes_by_taxi_[taxi].nodes().empty();
-    }
-    std::size_t taxi_count() const { return instance_->taxis.size(); }
-    const RequestLocation& location(std::size_t request) const {
-        return locations_[request];
-    }
-    std::size_t request_count() const { return locations_.size(); }
-    std::size_t passenger_count() const { return instance_->passengers.size(); }
-    std::size_t served_count() const;
-    double benefit() const { return benefit_; }
-    // State copies share this workspace; insertion scans within a solve are
-    // sequential. Scratch contents are not part of the solution or its caches.
-    InsertionScratch& insertion_scratch() const {
-        return *insertion_scratch_;
-    }
-    const std::shared_ptr<InsertionScratch>& insertion_scratch_handle() const {
-        return insertion_scratch_;
-    }
-    double revenue(std::size_t request) const;
-    const Instance& instance() const { return *instance_; }
-    std::size_t pickup_node(std::size_t request) const;
-    const std::shared_ptr<const EmptyTaxiIndex>& empty_taxi_index() const {
-        return empty_taxi_index_;
-    }
-    void set_empty_taxi_index(std::shared_ptr<const EmptyTaxiIndex> index) {
-        empty_taxi_index_ = std::move(index);
-    }
-    std::optional<double> removal_gain(std::size_t request) const;
-    std::optional<double> insertion_gain(std::size_t request,
-        std::size_t taxi, std::size_t pickup_boundary,
-        std::size_t delivery_boundary) const;
-
-    bool remove(std::size_t request);
-    // Remove complete requests from one taxi atomically. Intermediate shortcut
-    // routes need not be feasible on directed/nonmetric travel times.
-    bool remove_requests(std::size_t taxi, const std::vector<std::size_t>& requests);
-    bool insert(std::size_t request, std::size_t taxi,
-                std::size_t pickup_boundary, std::size_t delivery_boundary);
-    bool relocate_within_route(std::size_t request, std::size_t pickup_boundary,
-                               std::size_t delivery_boundary);
-    // Positions refer to the route after removing outgoing's two endpoints.
-    // Only the completed replacement must be feasible and improve benefit.
-    bool replace_request(std::size_t outgoing, std::size_t incoming,
-                         std::size_t pickup_boundary, std::size_t delivery_boundary);
-    // Exchange served requests across taxis, keeping passenger endpoints adjacent.
-    bool swap_requests(std::size_t first, std::size_t second);
-    // Reject invalid/non-improving exchanges without modifying either route.
-    bool exchange_route_suffixes(std::size_t taxi_a, std::size_t cut_a,
-                                 std::size_t taxi_b, std::size_t cut_b);
-
-private:
-    const Instance* instance_;
-    std::shared_ptr<InsertionScratch> insertion_scratch_;
-    // Empty routes retain their buffers for subsequent activation.
-    std::vector<RouteCache> routes_by_taxi_;
-    // Ordered iteration preserves move tie order and repair-cache sorting.
-    std::vector<std::size_t> active_taxis_;
-    std::vector<RequestLocation> locations_;
-    struct RemovalEntry {
-        std::uint64_t route_version = 0;
-        std::optional<double> gain;
-    };
-    mutable std::vector<RemovalEntry> removal_cache_;
-    std::shared_ptr<const EmptyTaxiIndex> empty_taxi_index_;
-    double benefit_ = 0;
-    std::vector<std::size_t> route_scratch_;
-    RouteCache relocation_check_;
-    void rebuild_route(std::size_t taxi, const std::vector<std::size_t>& route);
-    void commit_validated_route(std::size_t taxi, RouteCache& updated, double gain);
-    void commit_route_pair(std::size_t taxi_a, RouteCache new_a,
-                           std::size_t taxi_b, RouteCache new_b, double gain);
-    void set_active(std::size_t taxi, bool active);
-    std::size_t dropoff_node(std::size_t request) const;
-    void locate_route(std::size_t taxi);
-};
-} // namespace soict::alns
-
-// END include/search/alns/SearchState.hpp
-
-// BEGIN include/search/alns/InsertionScratch.hpp
-
-#include <cstddef>
-#include <limits>
-#include <vector>
-
-namespace soict::alns {
-// Sequential insertion scans share one fixed allocation for the whole solve.
-// A route contains at most two service nodes per request. The extra two slots
-// cover every insertion gap and the parcel suffix's infinity sentinel.
-class InsertionScratch {
-public:
-    struct Buffers {
-        double* pickup;
-        double* delivery;
-        double* adjacent;
-        double* suffix;
-    };
-
-    explicit InsertionScratch(std::size_t requests)
-        : stride_(checked_stride(requests)), storage_(4 * stride_) {}
-    std::size_t max_route_nodes() const { return stride_ - 2; }
-
-    Buffers buffers(std::size_t route_nodes) {
-
-        auto* data = storage_.data();
-        return {data, data + stride_, data + 2 * stride_, data + 3 * stride_};
-    }
-
-private:
-    static std::size_t checked_stride(std::size_t requests) {
-
-        return 2 * requests + 2;
-    }
-    std::size_t stride_;
-    // Never resized: scan results own their values and do not retain pointers.
-    std::vector<double> storage_;
-};
-} // namespace soict::alns
-
-// END include/search/alns/InsertionScratch.hpp
-
-// BEGIN include/search/alns/FastRouteCheck.hpp
-
-
-namespace soict::alns {
-// Fixed-size feasibility accumulator for a move's unchanged route pieces.
-// A piece maps arrival x to departure max(x + duration, ready). Joining pieces
-// keeps that map, the latest admissible input, and the parcel-load extrema.
-// Travel cost is deliberately absent: each move computes it from changed arcs.
-using FastRouteCheck = SegmentAccumulator<false>;
-} // namespace soict::alns
-
-// END include/search/alns/FastRouteCheck.hpp
-
-// BEGIN include/search/alns/MoveCost.hpp
-#include <cstddef>
-#include <vector>
-
-namespace soict::alns {
-// A route viewed before or after removing one request's two endpoints.
-// Reading a virtual position takes O(1), with no copied node vector.
-struct RouteView {
-    const std::vector<std::size_t>& nodes;
-    std::size_t pickup_removed = 0, delivery_removed = 0;
-    bool removed = false;
-
-    std::size_t size() const { return nodes.size() - (removed ? 2 : 0); }
-    std::size_t node(std::size_t position) const {
-        if (!removed) return nodes[position];
-        if (position < pickup_removed) return nodes[position];
-        if (position < delivery_removed - 1) return nodes[position + 1];
-        return nodes[position + 2];
-    }
-};
-
-// Exact travel-cost saving from deleting two ordered endpoints. The adjacent
-// case replaces one chain; the separated case replaces two independent arcs.
-inline double removal_savings_cost(const Instance& in, std::size_t taxi,
-    const std::vector<std::size_t>& nodes, std::size_t pickup_at,
-    std::size_t delivery_at) {
-    const auto pickup = nodes[pickup_at], delivery = nodes[delivery_at];
-    const auto before_pickup = pickup_at ? nodes[pickup_at - 1] : taxi;
-    if (delivery_at == pickup_at + 1) {
-        double saving = in.cost(before_pickup, pickup) + in.cost(pickup, delivery);
-        if (delivery_at + 1 < nodes.size()) {
-            const auto after = nodes[delivery_at + 1];
-            saving += in.cost(delivery, after) - in.cost(before_pickup, after);
-        }
-        return saving;
-    }
-    const auto after_pickup = nodes[pickup_at + 1];
-    const auto before_delivery = nodes[delivery_at - 1];
-    double saving = in.cost(before_pickup, pickup) + in.cost(pickup, after_pickup)
-                  - in.cost(before_pickup, after_pickup)
-                  + in.cost(before_delivery, delivery);
-    if (delivery_at + 1 < nodes.size()) {
-        const auto after_delivery = nodes[delivery_at + 1];
-        saving += in.cost(delivery, after_delivery)
-                - in.cost(before_delivery, after_delivery);
-    }
-    return saving;
-}
-
-// Exact directed travel-cost increase caused by replacing one or two arcs.
-// A position at route end has no outgoing arc because routes do not return.
-inline double single_insertion_cost(const Instance& in, std::size_t taxi,
-    const RouteView& route, std::size_t at, std::size_t node) {
-    const auto previous = at ? route.node(at - 1) : taxi;
-    double delta = in.cost(previous, node);
-    if (at < route.size()) {
-        const auto next = route.node(at);
-        delta += in.cost(node, next) - in.cost(previous, next);
-    }
-    return delta;
-}
-
-inline double adjacent_insertion_cost(const Instance& in, std::size_t taxi,
-    const RouteView& route, std::size_t at, std::size_t pickup, std::size_t delivery) {
-    const auto previous = at ? route.node(at - 1) : taxi;
-    double delta = in.cost(previous, pickup) + in.cost(pickup, delivery);
-    if (at < route.size()) {
-        const auto next = route.node(at);
-        delta += in.cost(delivery, next) - in.cost(previous, next);
-    }
-    return delta;
-}
-
-inline double separated_insertion_cost(const Instance& in, std::size_t taxi,
-    const RouteView& route, std::size_t pickup_at, std::size_t delivery_at,
-    std::size_t pickup, std::size_t delivery) {
-    if (pickup_at == delivery_at)
-        return adjacent_insertion_cost(in, taxi, route, pickup_at, pickup, delivery);
-    return single_insertion_cost(in, taxi, route, pickup_at, pickup) +
-           single_insertion_cost(in, taxi, route, delivery_at, delivery);
-}
-} // namespace soict::alns
-
-// END include/search/alns/MoveCost.hpp
-
-// BEGIN include/search/alns/RequestData.hpp
-
-#include <limits>
-
-namespace soict::alns {
-
-// Common request view used by route generation and local-search support.
-// Request ids list passengers first, then parcels.
-struct RequestData {
-    std::size_t pickup = 0, delivery = 0;
-    double ready = 0, latest = 0;
-    double drop_ready = 0, drop_latest = 0;
-    double service = 0, revenue = 0, weight = 0;
-};
-
-inline RequestData request_data(const Instance& in, std::size_t request) {
-    const auto n = in.passengers.size();
-    if (request < n) {
-        const auto& p = in.passengers[request];
-        return {in.passenger_pickup(request), in.passenger_dropoff(request),
-                p.pickup.earliest, p.pickup.latest, 0,
-                std::numeric_limits<double>::infinity(), p.service, p.revenue, 0};
-    }
-    const auto& p = in.parcels[request - n];
-    return {in.parcel_pickup(request - n), in.parcel_dropoff(request - n),
-            p.pickup.earliest, p.pickup.latest, p.delivery.earliest,
-            p.delivery.latest, p.service, p.revenue, p.weight};
-}
-
-inline std::size_t request_id(const Instance& in, std::size_t node) {
-    const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();
-    return node < k + 2 * n ? (node - k) % n : n + (node - k - 2 * n) % m;
-}
-
-} // namespace soict::alns
-
-// END include/search/alns/RequestData.hpp
-
-#include <algorithm>
-#include <cmath>
-#include <utility>
-
-namespace soict::alns {
-SearchState::SearchState(const Instance& in, Solution solution,
-                         std::shared_ptr<InsertionScratch> insertion_scratch)
-    : instance_(&in), insertion_scratch_(insertion_scratch ? std::move(insertion_scratch) :
-          std::make_shared<InsertionScratch>(in.passengers.size() + in.parcels.size())),
-      routes_by_taxi_(in.taxis.size()),
-      locations_(in.passengers.size() + in.parcels.size()),
-      removal_cache_(locations_.size()) {
-
-    active_taxis_.reserve(in.taxis.size());
-    const auto evaluation = solution.evaluate(in);
-
-    benefit_ = evaluation.benefit;
-    for (std::size_t k = 0; k < solution.routes.size(); ++k)
-        if (!solution.routes[k].empty()) rebuild_route(k, solution.routes[k]);
-}
-
-void SearchState::copy_from(const SearchState& other) {
-    if (this == &other) return;
-
-    // Rebuild versions are globally unique; version 0 denotes a cleared route.
-    // Equal versions on the same instance/taxi already contain identical data.
-    for (std::size_t taxi = 0; taxi < routes_by_taxi_.size(); ++taxi)
-        if (routes_by_taxi_[taxi].version() != other.routes_by_taxi_[taxi].version())
-            routes_by_taxi_[taxi].copy_from(other.routes_by_taxi_[taxi]);
-    active_taxis_.reserve(taxi_count());
-    active_taxis_ = other.active_taxis_;
-    locations_ = other.locations_;
-    removal_cache_ = other.removal_cache_;
-    empty_taxi_index_ = other.empty_taxi_index_;
-    benefit_ = other.benefit_;
-}
-
-
-
-Solution SearchState::solution() const {
-    Solution result;
-    result.routes.resize(instance_->taxis.size());
-    for (const auto taxi : active_taxis_) result.routes[taxi] = cache(taxi).nodes();
-    return result;
-}
-
-const RouteCache& SearchState::cache(std::size_t taxi) const {
-    static const RouteCache empty;
-    return taxi < routes_by_taxi_.size() ? routes_by_taxi_[taxi] : empty;
-}
-
-std::size_t SearchState::served_count() const {
-    return std::count_if(locations_.begin(), locations_.end(),
-                         [](const auto& location) { return location.taxi >= 0; });
-}
-
-double SearchState::revenue(std::size_t request) const {
-    const auto n = instance_->passengers.size();
-    return request < n ? instance_->passengers[request].revenue :
-                         instance_->parcels[request - n].revenue;
-}
-std::size_t SearchState::pickup_node(std::size_t request) const {
-    const auto n = instance_->passengers.size();
-    return request < n ? instance_->passenger_pickup(request) :
-                         instance_->parcel_pickup(request - n);
-}
-std::size_t SearchState::dropoff_node(std::size_t request) const {
-    const auto n = instance_->passengers.size();
-    return request < n ? instance_->passenger_dropoff(request) :
-                         instance_->parcel_dropoff(request - n);
-}
-
-void SearchState::rebuild_route(std::size_t taxi, const std::vector<std::size_t>& route) {
-    const auto& in = *instance_;
-    for (const auto node : cache(taxi).nodes()) locations_[request_id(*instance_, node)] = {};
-    auto& slot = routes_by_taxi_[taxi];
-    if (route.empty()) {
-        slot.clear();
-        set_active(taxi, false);
-    } else {
-        slot.rebuild(in, taxi, route);
-        set_active(taxi, true);
-    }
-    locate_route(taxi);
-}
-
-void SearchState::set_active(std::size_t taxi, bool active) {
-    const auto where = std::lower_bound(active_taxis_.begin(), active_taxis_.end(), taxi);
-    const bool was_active = where != active_taxis_.end() && *where == taxi;
-    if (active && !was_active) active_taxis_.insert(where, taxi);
-    else if (!active && was_active) active_taxis_.erase(where);
-}
-
-void SearchState::locate_route(std::size_t taxi) {
-    const auto& route = cache(taxi).nodes();
-    for (std::size_t p = 0; p < route.size(); ++p) {
-        const auto node = route[p], request = request_id(*instance_, node);
-        auto& loc = locations_[request];
-        loc.taxi = static_cast<int>(taxi);
-        if (node == pickup_node(request)) loc.pickup = p;
-        else loc.dropoff = p;
-    }
-}
-
-std::optional<double> SearchState::removal_gain(std::size_t request) const {
-    const auto loc = location(request);
-    if (loc.taxi < 0) return std::nullopt;
-    const auto taxi = static_cast<std::size_t>(loc.taxi);
-    const auto& old_cache = cache(taxi);
-    auto& entry = removal_cache_[request];
-    if (entry.route_version == old_cache.version()) return entry.gain;
-    const auto size = old_cache.nodes().size();
-    FastRouteCheck candidate(*instance_, taxi, old_cache);
-    candidate.range(0, loc.pickup);
-    candidate.range(loc.pickup + 1, loc.dropoff);
-    candidate.range(loc.dropoff + 1, size);
-    entry.route_version = old_cache.version();
-    entry.gain = candidate.feasible() ? std::optional<double>(
-        removal_savings_cost(*instance_, taxi, old_cache.nodes(),
-                             loc.pickup, loc.dropoff) - revenue(request)) : std::nullopt;
-    return entry.gain;
-}
-
-std::optional<double> SearchState::insertion_gain(std::size_t request,
-    std::size_t taxi, std::size_t a, std::size_t b) const {
-    if (request >= request_count() || location(request).taxi >= 0 || taxi >= taxi_count())
-        return std::nullopt;
-    const auto& route_cache = cache(taxi);
-    const auto size = route_cache.nodes().size();
-    const bool passenger = request < instance_->passengers.size();
-    if (a > b || b > size || (passenger && a != b) ||
-        !route_cache.boundary_allowed(*instance_, a) ||
-        !route_cache.boundary_allowed(*instance_, b)) return std::nullopt;
-    if (!passenger && instance_->parcels[request - instance_->passengers.size()].weight >
-                          instance_->taxis[taxi].parcel_capacity + 1e-8) return std::nullopt;
-    FastRouteCheck candidate(*instance_, taxi, route_cache);
-    candidate.range(0, a);
-    candidate.node(pickup_node(request));
-    if (!passenger) candidate.range(a, b);
-    candidate.node(dropoff_node(request));
-    candidate.range(b, size);
-    if (!candidate.feasible()) return std::nullopt;
-    const RouteView view{route_cache.nodes()};
-    const auto cost = passenger ? adjacent_insertion_cost(*instance_, taxi, view,
-        a, pickup_node(request), dropoff_node(request)) :
-        separated_insertion_cost(*instance_, taxi, view, a, b,
-            pickup_node(request), dropoff_node(request));
-    return revenue(request) - cost;
-}
-
-bool SearchState::remove(std::size_t request) {
-    const auto gain = removal_gain(request);
-    if (!gain) return false;
-    const auto loc = location(request);
-    const auto taxi = static_cast<std::size_t>(loc.taxi);
-    auto& route = route_scratch_;
-    route = cache(taxi).nodes();
-    route.erase(route.begin() + loc.dropoff);
-    route.erase(route.begin() + loc.pickup);
-    benefit_ += *gain;
-    rebuild_route(taxi, route);
-    return true;
-}
-
-bool SearchState::remove_requests(std::size_t taxi, const std::vector<std::size_t>& requests) {
-    if (taxi >= taxi_count() || requests.empty()) return false;
-    const auto& old = cache(taxi);
-    std::vector<bool> excluded(old.nodes().size(), false);
-    double lost_revenue = 0;
-    for (const auto request : requests) {
-        if (request >= request_count()) return false;
-        const auto loc = location(request);
-        if (loc.taxi != static_cast<int>(taxi) || excluded[loc.pickup]) return false;
-        excluded[loc.pickup] = excluded[loc.dropoff] = true;
-        lost_revenue += revenue(request);
-    }
-    RouteCandidate candidate(*instance_, taxi, old);
-    auto& route = route_scratch_;
-    route.clear();
-    for (std::size_t first = 0; first < old.nodes().size();) {
-        if (excluded[first]) { ++first; continue; }
-        auto end = first + 1;
-        while (end < old.nodes().size() && !excluded[end]) ++end;
-        candidate.add_range(first, end);
-        route.insert(route.end(), old.nodes().begin() + first, old.nodes().begin() + end);
-        first = end;
-    }
-    const auto new_cost = candidate.cost_if_feasible();
-    if (!new_cost) return false;
-    benefit_ += old.cost() - *new_cost - lost_revenue;
-    rebuild_route(taxi, route);
-    return true;
-}
-
-bool SearchState::insert(std::size_t request, std::size_t taxi,
-                         std::size_t a, std::size_t b) {
-    const auto gain = insertion_gain(request, taxi, a, b);
-    if (!gain) return false;
-    auto& route = route_scratch_;
-    route = cache(taxi).nodes();
-    route.insert(route.begin() + b, dropoff_node(request));
-    route.insert(route.begin() + a, pickup_node(request));
-    benefit_ += *gain;
-    rebuild_route(taxi, route);
-    return true;
-}
-
-bool SearchState::relocate_within_route(std::size_t request, std::size_t a,
-                                       std::size_t b) {
-    if (request >= request_count() || location(request).taxi < 0) return false;
-    const auto taxi = static_cast<std::size_t>(location(request).taxi);
-    const auto old_cost = cache(taxi).cost();
-    auto& route = route_scratch_;
-    route = cache(taxi).nodes();
-    const auto loc = location(request);
-    route.erase(route.begin() + loc.dropoff);
-    route.erase(route.begin() + loc.pickup);
-    const bool passenger = request < passenger_count();
-    if (a > b || b > route.size() || (passenger && a != b)) return false;
-    const auto boundary_allowed = [&](std::size_t position) {
-        if (!position) return true;
-        const auto preceding = route[position - 1], k = instance_->taxis.size();
-        return preceding < k || preceding >= k + passenger_count();
-    };
-    if (!boundary_allowed(a) || !boundary_allowed(b)) return false;
-    if (!passenger && instance_->parcels[request - passenger_count()].weight >
-                          instance_->taxis[taxi].parcel_capacity + 1e-8) return false;
-    route.insert(route.begin() + b, dropoff_node(request));
-    route.insert(route.begin() + a, pickup_node(request));
-    relocation_check_.rebuild(*instance_, taxi, route);
-    RouteCandidate candidate(*instance_, taxi, relocation_check_);
-    candidate.add_range(0, route.size());
-    const auto cost = candidate.cost_if_feasible();
-    if (!cost) return false;
-    commit_validated_route(taxi, relocation_check_, old_cost - *cost);
-    return true;
-}
-
-bool SearchState::replace_request(std::size_t outgoing, std::size_t incoming,
-                                  std::size_t a, std::size_t b) {
-    if (outgoing >= request_count() || incoming >= request_count() ||
-        location(outgoing).taxi < 0 || location(incoming).taxi >= 0) return false;
-    const auto loc = location(outgoing);
-    const auto taxi = static_cast<std::size_t>(loc.taxi);
-    const auto old_cost = cache(taxi).cost();
-    auto& route = route_scratch_;
-    route = cache(taxi).nodes();
-    route.erase(route.begin() + loc.dropoff);
-    route.erase(route.begin() + loc.pickup);
-    const bool passenger = incoming < passenger_count();
-    if (a > b || b > route.size() || (passenger && a != b)) return false;
-    const auto boundary_allowed = [&](std::size_t position) {
-        return !position || route[position - 1] >= taxi_count() + passenger_count();
-    };
-    if (!boundary_allowed(a) || !boundary_allowed(b)) return false;
-    route.insert(route.begin() + b, dropoff_node(incoming));
-    route.insert(route.begin() + a, pickup_node(incoming));
-    relocation_check_.rebuild(*instance_, taxi, route);
-    RouteCandidate candidate(*instance_, taxi, relocation_check_);
-    candidate.add_range(0, route.size());
-    const auto cost = candidate.cost_if_feasible();
-    if (!cost) return false;
-    const double gain = revenue(incoming) - revenue(outgoing) + old_cost - *cost;
-    if (gain <= 1e-9) return false;
-    commit_validated_route(taxi, relocation_check_, gain);
-    return true;
-}
-
-void SearchState::commit_validated_route(std::size_t taxi, RouteCache& updated,
-                                        double gain) {
-    auto& slot = routes_by_taxi_[taxi];
-    for (const auto node : slot.nodes()) locations_[request_id(*instance_, node)] = {};
-    const bool active = !updated.nodes().empty();
-    // Keep the validated version and reuse the old route's buffers next time.
-    std::swap(slot, updated);
-    set_active(taxi, active);
-    if (!active) slot.clear();
-    locate_route(taxi);
-    benefit_ += gain;
-}
-
-bool SearchState::swap_requests(std::size_t first, std::size_t second) {
-    if (first >= request_count() || second >= request_count()) return false;
-    if (second < first) std::swap(first, second);
-    const auto a = location(first), b = location(second);
-    if (a.taxi < 0 || b.taxi < 0 || a.taxi == b.taxi) return false;
-    const auto make_route = [&](std::size_t outgoing, std::size_t incoming) {
-        const auto loc = location(outgoing);
-        auto nodes = cache(loc.taxi).nodes();
-        nodes.erase(nodes.begin() + loc.dropoff);
-        nodes.erase(nodes.begin() + loc.pickup);
-        const auto delivery_boundary = incoming < passenger_count() ? loc.pickup : loc.dropoff - 1;
-        nodes.insert(nodes.begin() + delivery_boundary, dropoff_node(incoming));
-        nodes.insert(nodes.begin() + loc.pickup, pickup_node(incoming));
-        return nodes;
-    };
-    const auto nodes_a = make_route(first, second), nodes_b = make_route(second, first);
-    RouteCache new_a(*instance_, a.taxi, nodes_a), new_b(*instance_, b.taxi, nodes_b);
-    RouteCandidate checked_a(*instance_, a.taxi, new_a), checked_b(*instance_, b.taxi, new_b);
-    checked_a.add_range(0, nodes_a.size());
-    checked_b.add_range(0, nodes_b.size());
-    const auto cost_a = checked_a.cost_if_feasible(), cost_b = checked_b.cost_if_feasible();
-    if (!cost_a || !cost_b) return false;
-    const double gain = cache(a.taxi).cost() + cache(b.taxi).cost() - *cost_a - *cost_b;
-    if (gain <= 1e-9) return false;
-    commit_route_pair(a.taxi, std::move(new_a), b.taxi, std::move(new_b), gain);
-    return true;
-}
-
-bool SearchState::exchange_route_suffixes(std::size_t taxi_a, std::size_t cut_a,
-                                         std::size_t taxi_b, std::size_t cut_b) {
-    if (taxi_a == taxi_b || taxi_a >= taxi_count() || taxi_b >= taxi_count()) return false;
-    const auto& old_a = cache(taxi_a);
-    const auto& old_b = cache(taxi_b);
-    if (cut_a > old_a.nodes().size() || cut_b > old_b.nodes().size()) return false;
-    for (const auto& loc : locations_) {
-        if ((loc.taxi == static_cast<int>(taxi_a) && loc.pickup < cut_a && loc.dropoff >= cut_a) ||
-            (loc.taxi == static_cast<int>(taxi_b) && loc.pickup < cut_b && loc.dropoff >= cut_b))
-            return false;
-    }
-    std::vector<std::size_t> nodes_a(old_a.nodes().begin(), old_a.nodes().begin() + cut_a);
-    nodes_a.insert(nodes_a.end(), old_b.nodes().begin() + cut_b, old_b.nodes().end());
-    std::vector<std::size_t> nodes_b(old_b.nodes().begin(), old_b.nodes().begin() + cut_b);
-    nodes_b.insert(nodes_b.end(), old_a.nodes().begin() + cut_a, old_a.nodes().end());
-    RouteCache new_a(*instance_, taxi_a, nodes_a), new_b(*instance_, taxi_b, nodes_b);
-    RouteCandidate checked_a(*instance_, taxi_a, new_a), checked_b(*instance_, taxi_b, new_b);
-    checked_a.add_range(0, nodes_a.size());
-    checked_b.add_range(0, nodes_b.size());
-    const auto cost_a = checked_a.cost_if_feasible(), cost_b = checked_b.cost_if_feasible();
-    if (!cost_a || !cost_b) return false;
-    const double gain = old_a.cost() + old_b.cost() - *cost_a - *cost_b;
-    if (gain <= 1e-9) return false;
-
-    commit_route_pair(taxi_a, std::move(new_a), taxi_b, std::move(new_b), gain);
-    return true;
-}
-
-void SearchState::commit_route_pair(std::size_t taxi_a, RouteCache new_a,
-                                   std::size_t taxi_b, RouteCache new_b, double gain) {
-    // Clear both old assignments before assigning either new route: requests
-    // transferred from B to A must not be cleared again while rebuilding B.
-    for (auto& loc : locations_)
-        if (loc.taxi == static_cast<int>(taxi_a) || loc.taxi == static_cast<int>(taxi_b)) loc = {};
-    const auto assign = [&](std::size_t taxi, RouteCache updated) {
-        if (updated.nodes().empty()) {
-            routes_by_taxi_[taxi].clear();
-            set_active(taxi, false);
-        } else {
-            routes_by_taxi_[taxi] = std::move(updated);
-            set_active(taxi, true);
-        }
-        locate_route(taxi);
-    };
-    assign(taxi_a, std::move(new_a));
-    assign(taxi_b, std::move(new_b));
-    benefit_ += gain;
-}
-
-
-} // namespace soict::alns
-
-// END src/search/alns/SearchState.cpp
-
-// BEGIN src/search/alns/ALNS.cpp
-
-// BEGIN include/search/alns/ALNS.hpp
-
-// BEGIN include/search/alns/Config.hpp
-
-#include <cstdint>
-#include <cstddef>
-#include <string>
-
-namespace soict::alns {
-struct Config {
-    std::uint64_t seed = 1;
-    double time_limit = 59.0;
-    bool local_search = true;
-    bool clean_cut_2opt_star = true;
-    std::size_t path_prefix_limit = 1000000;
-    std::size_t route_pool_limit = 400;
-    std::size_t path_pool_limit = 400;
-    double enumeration_seconds = 2;
-    double generation_seconds = 140;
-    std::size_t fleet_refinement_interval = 2;
-    std::size_t fleet_refinement_cycles = 3;
-    bool light_fleet_refinement = true;
-};
-} // namespace soict::alns
-
-// END include/search/alns/Config.hpp
-#include <cstddef>
-
-namespace soict::alns {
-struct Result { Solution solution; };
-Result solve(const Instance& instance, const Config& config);
-} // namespace soict::alns
-
-// END include/search/alns/ALNS.hpp
-
-// BEGIN include/search/alns/RouteGeneration.hpp
-
-// BEGIN include/search/alns/operators/Repair/RoutePoolRepair.hpp
-
-// BEGIN include/search/alns/operators/Repair/InsertionSearch.hpp
-#include <chrono>
-#include <cstdint>
-#include <limits>
-#include <optional>
-#include <utility>
-#include <vector>
-
-namespace soict::alns {
-using Deadline = std::chrono::steady_clock::time_point;
-struct InsertionChoice {
-    std::size_t request = 0, taxi = 0, pickup = 0, delivery = 0;
-    double gain = 0;
-};
-struct InsertionOptions {
-    std::optional<InsertionChoice> best;
-    double second_gain = -std::numeric_limits<double>::infinity();
-};
-struct EmptyTaxiChoice {
-    std::size_t taxi = 0;
-    double gain = 0;
-};
-// Immutable request data reused by repeated insertion-cache
-// queries. The instance must remain unchanged while its empty-taxi index lives.
-struct RequestSegments {
-    bool passenger;
-    Segment pickup, delivery;
-    double revenue, weight;
-};
-class EmptyTaxiIndex {
-public:
-    explicit EmptyTaxiIndex(const Instance& instance);
-    // Extend an unfinished request's index on first use. A solver process
-    // searches in one thread, so this shared cache has no locking overhead.
-    bool ensure(std::size_t request, Deadline deadline = Deadline::max()) const;
-    bool complete(std::size_t request) const {
-        return complete_[request];
-    }
-    const std::vector<EmptyTaxiChoice>& choices(std::size_t request) const {
-        return choices_[request];
-    }
-    const RequestSegments& request_segments(std::size_t request) const {
-        return request_segments_[request];
-    }
-
-private:
-    const Instance* instance_;
-    mutable std::vector<std::vector<EmptyTaxiChoice>> choices_;
-    mutable std::vector<std::size_t> next_taxi_;
-    mutable std::vector<bool> complete_;
-    // Allocated to the full request count at construction, never resized.
-    std::vector<RequestSegments> request_segments_;
-};
-std::shared_ptr<const EmptyTaxiIndex> build_empty_taxi_index(
-    const SearchState& empty_state, Deadline deadline);
-// The supplied route may be a temporary route with another request removed.
-// A non-positive insertion can still participate in an improving replacement.
-std::optional<InsertionChoice> best_insertion_on_route(const SearchState& state,
-    std::size_t request, std::size_t taxi, const RouteCache& route,
-    double minimum_gain = -std::numeric_limits<double>::infinity());
-
-// Reuse an unserved request's route choice while that route is unchanged.
-// A scan made above a gain threshold is reused only when the current best
-// meets that threshold; otherwise the route is rescanned exactly.
-
-
-// Exact positive choices at a fixed floor, independent of other taxis' gains.
-// The dense table and winners are allocated once and reused across repairs.
-class PositiveInsertionCache {
-public:
-    // Refresh only the requested row; unchanged routes retain exact choices.
-    const std::optional<InsertionChoice>& best(const SearchState&, std::size_t request);
-    void prepare(const SearchState&, const std::vector<std::size_t>& requests);
-    void refresh_taxi(const SearchState&, std::size_t taxi,
-                      const std::vector<std::size_t>& requests);
-    const std::optional<InsertionChoice>& best(std::size_t request) const {
-        return entries_[requests_ * taxis_ + request].choice;
-    }
-
-private:
-    struct Entry {
-        std::uint64_t version = std::numeric_limits<std::uint64_t>::max();
-        std::optional<InsertionChoice> choice;
-    };
-    std::shared_ptr<const EmptyTaxiIndex> index_;
-    std::size_t taxis_ = 0, requests_ = 0;
-    // First requests*taxis cells, followed by one winner cell per request.
-    std::vector<Entry> entries_;
-    void initialize(const SearchState&);
-    void refresh_entry(const SearchState&, std::size_t request, std::size_t taxi);
-    void select_winner(std::size_t request);
-};
-
-// Repair only inserts requests, so an accepted insertion changes one taxi.
-// Retain the top two positions per request and active taxi; rescan that taxi
-// after insertion while keeping the other taxis' positions unchanged.
-
-} // namespace soict::alns
-
-// END include/search/alns/operators/Repair/InsertionSearch.hpp
-#include <map>
-
-namespace soict::alns {
-// A restricted fleet repair over complete, independently feasible taxi routes.
-// Identical served sets on one taxi retain only the most profitable sequence.
-class RoutePoolRepair {
-public:
-    explicit RoutePoolRepair(const Instance& instance, std::size_t limit = 200, std::uint64_t seed = 1);
-    void remember(const SearchState& state);
-    // Enumerate feasible prefixes independently for each taxi. Only completed
-    // positive-profit routes enter the existing capped, served-set bank.
-    // Completion refers to prefix enumeration, not retention of every column.
-    void generate(Deadline deadline, std::size_t prefix_limit = 50000, bool priced = false);
-    // Perturb complete routes and repair with cached insertion. Preserve all
-    // sampled alternatives and return the best feasible sampled fleet.
-    Solution generate_fleets(Deadline deadline, std::shared_ptr<const EmptyTaxiIndex> index = {},
-                             const Solution* initial = nullptr, bool refine = true,
-                             bool clean_cut = true, std::size_t refinement_interval = 2,
-                             bool light_refinement = true, std::size_t refinement_cycles = 3);
-    void generate_replacements(Deadline deadline, const SearchState& fleet);
-    void set_limit(std::size_t limit);
-    bool enumeration_complete() const { return completed_taxis_ == pool_.size(); }
-    bool improve(SearchState& state, Deadline deadline);
-    // Statistics and completion describe the most recent improve() call,
-    // before any subsequent generation changes that call's route bank.
-private:
-    struct Column {
-        // The bank key owns the served set; store only its route and profit here.
-        std::vector<std::size_t> route;
-        double profit = 0;
-    };
-    using Bank = std::map<std::vector<std::size_t>, Column>;
-    struct Arc { std::size_t request; double latest_departure; };
-    const Instance& instance_;
-    std::size_t limit_, column_count_ = 0, nodes_ = 0;
-    bool timed_out_ = false;
-    std::size_t completed_taxis_ = 0;
-    std::vector<double> floors_;
-    std::uint64_t seed_ = 1;
-    std::uint64_t fleet_calls_ = 0;
-    std::uint64_t pricing_calls_ = 0;
-    std::uint64_t generation_calls_ = 0;
-    std::vector<Bank> pool_;
-    std::vector<std::uint64_t> versions_;
-    std::vector<std::vector<Arc>> next_;
-    std::vector<double> delivery_lower_;
-    bool generation_index_ready_ = false;
-    std::uint64_t bank_revision_ = 0;
-    mutable std::uint64_t prices_revision_ = std::numeric_limits<std::uint64_t>::max();
-    mutable std::vector<double> cached_prices_;
-    std::vector<std::size_t> request_scratch_;
-    void add(const SearchState&, std::size_t taxi, bool enforce_limit);
-    void add_column(std::size_t taxi, const std::vector<std::size_t>& requests,
-                    const std::vector<std::size_t>& route, double profit, bool enforce_limit);
-    std::vector<double> estimate_prices(Deadline deadline = Deadline::min()) const;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Repair/RoutePoolRepair.hpp
-
-namespace soict::alns {
-// Enumeration, sampled-fleet generation and pricing, in their existing order.
-void generate_routes(SearchState& current, RoutePoolRepair& pool,
-                     const Config& config, Deadline search_deadline);
-}
-
-// END include/search/alns/RouteGeneration.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/LocalSearch.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/Move.hpp
-
-// BEGIN include/search/alns/operators/Destroy/DestroyOperator.hpp
-#include <cstddef>
-#include <random>
-#include <string_view>
-#include <vector>
-
-namespace soict::alns {
-class DestroyOperator {
-public:
-    virtual ~DestroyOperator() = default;
-    virtual std::vector<std::size_t> apply(SearchState& state, std::size_t count,
-                                           std::mt19937_64& rng) const = 0;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Destroy/DestroyOperator.hpp
-
-namespace soict::alns {
-class Move {
-public:
-    virtual ~Move() = default;
-    virtual bool improve(SearchState& state) const = 0;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/Move.hpp
-#include <chrono>
-#include <memory>
-#include <vector>
-
-namespace soict::alns {
-class LocalSearch {
-public:
-    void add_move(std::unique_ptr<Move> move) { moves_.push_back(std::move(move)); }
-    bool search(SearchState& state, std::chrono::steady_clock::time_point deadline =
-        std::chrono::steady_clock::time_point::max()) const;
-private:
-    std::vector<std::unique_ptr<Move>> moves_;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/LocalSearch.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/ParcelRelocate.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/MoveCache.hpp
-#include <cstdint>
-#include <optional>
-#include <vector>
-
-namespace soict::alns {
-// A positive best position on another taxi is also its cheapest feasible
-// insertion, so it remains best when only the source route changes. A scan
-// finding no positive move proves that fact for any smaller source saving.
-// Same-route moves depend on the source route's exact version.
-class MoveCache {
-public:
-    template<class Scan>
-    std::optional<InsertionChoice> get(std::size_t request, std::size_t taxi,
-        std::size_t taxi_count, std::uint64_t source_version,
-        std::uint64_t target_version, double source_saving,
-        bool same_route, Scan&& scan) {
-        if (entries_.size() <= request) entries_.resize(request + 1);
-        auto& row = entries_[request];
-        if (row.size() < taxi_count) row.resize(taxi_count);
-        auto& entry = row[taxi];
-        const bool matching_target = entry.valid &&
-            entry.target_version == target_version &&
-            entry.same_route == same_route;
-        const bool reuse = matching_target && (same_route ?
-            entry.source_version == source_version :
-            (entry.choice.has_value() || source_saving <= entry.source_saving));
-        if (!reuse) {
-            entry.choice = scan();
-            entry.source_version = source_version;
-            entry.target_version = target_version;
-            entry.source_saving = source_saving;
-            entry.same_route = same_route;
-            entry.valid = true;
-        }
-        if (entry.choice && !same_route) {
-            auto adjusted = *entry.choice;
-            adjusted.gain += source_saving - entry.source_saving;
-            return adjusted;
-        }
-        return entry.choice;
-    }
-private:
-    struct Entry {
-        std::optional<InsertionChoice> choice;
-        std::uint64_t source_version = 0, target_version = 0;
-        double source_saving = 0;
-        bool same_route = false;
-        bool valid = false;
-    };
-    std::vector<std::vector<Entry>> entries_;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/MoveCache.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/RelocationSource.hpp
-
-
-namespace soict::alns {
-
-// Shared source-route data. Passenger and parcel contexts keep their own
-// destination scans, but removal costs and virtual source positions coincide.
-template<bool Passenger>
-class RelocationSource {
-public:
-    RelocationSource(const SearchState& state, std::size_t request)
-        : state_(state), request_(request) {
-        if constexpr (Passenger) {
-            if (request >= state.passenger_count()) return;
-        } else {
-            if (request < state.passenger_count() || request >= state.request_count()) return;
-        }
-        const auto& loc = state.location(request);
-        if (loc.taxi < 0) return;
-        source_ = static_cast<std::size_t>(loc.taxi);
-        pickup_at_ = loc.pickup;
-        delivery_at_ = loc.dropoff;
-        removal_gain_ = state.removal_gain(request);
-        removal_savings_ = removal_savings_cost(state.instance(), source_,
-            state.cache(source_).nodes(), pickup_at_, delivery_at_);
-    }
-    bool valid() const { return source_ != std::numeric_limits<std::size_t>::max(); }
-    bool removal_feasible() const { return removal_gain_.has_value(); }
-    double removal_savings() const { return removal_savings_; }
-
-protected:
-    const SearchState& state_;
-    std::size_t request_, source_ = std::numeric_limits<std::size_t>::max();
-    std::size_t pickup_at_ = 0, delivery_at_ = 0;
-    std::optional<double> removal_gain_;
-    double removal_savings_ = 0;
-
-    std::size_t original_position(std::size_t position) const {
-        if (position < pickup_at_) return position;
-        if (position < delivery_at_ - 1) return position + 1;
-        return position + 2;
-    }
-    bool source_boundary_allowed(const RouteCache& route, std::size_t boundary) const {
-        return !boundary || route.boundary_allowed(state_.instance(), original_position(boundary - 1) + 1);
-    }
-    void add_source_range(FastRouteCheck& candidate, std::size_t first, std::size_t end) const {
-        const auto left_end = std::min(end, pickup_at_);
-        if (first < left_end) candidate.range(first, left_end);
-        const auto middle_start = std::max(first, pickup_at_);
-        const auto middle_end = std::min(end, delivery_at_ - 1);
-        if (middle_start < middle_end) candidate.range(middle_start + 1, middle_end + 1);
-        const auto right_start = std::max(first, delivery_at_ - 1);
-        if (right_start < end) candidate.range(right_start + 2, end + 2);
-    }
-};
-
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/RelocationSource.hpp
-#include <optional>
-
-namespace soict::alns {
-class ParcelRelocationContext : public RelocationSource<false> {
-public:
-    ParcelRelocationContext(const SearchState& state, std::size_t request);
-    std::optional<double> gain(std::size_t taxi, const RouteCache& route,
-        std::size_t pickup_boundary, std::size_t delivery_boundary) const;
-    // Benefit delta from changed travel-cost arcs; feasibility is checked by gain().
-    std::optional<double> calculate_delta_fast(std::size_t taxi,
-        const RouteCache& route, std::size_t pickup_boundary,
-        std::size_t delivery_boundary) const;
-    std::optional<FastRouteCheck> pickup_prefix(
-        std::size_t taxi, const RouteCache& route, std::size_t pickup_boundary) const;
-    std::optional<double> gain_from_prefix(std::size_t taxi,
-        const RouteCache& route, std::size_t pickup_boundary,
-        std::size_t delivery_boundary, const FastRouteCheck& prefix) const;
-private:
-    Segment pickup_, delivery_;
-};
-
-class ParcelRelocate final : public Move {
-public:
-    bool improve(SearchState&) const override;
-private:
-    mutable MoveCache cache_;
-    std::optional<InsertionChoice> best_on_taxi(
-        const SearchState&, const ParcelRelocationContext&, std::size_t request,
-        std::size_t taxi, const RouteCache&, std::uint64_t source_version) const;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/ParcelRelocate.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/PassengerRelocate.hpp
-#include <optional>
-
-namespace soict::alns {
-// One source-removal context is shared by every candidate destination. For a
-// same-route move, positions refer to the route after the passenger is removed.
-class PassengerRelocationContext : public RelocationSource<true> {
-public:
-    using RelocationSource<true>::RelocationSource;
-    std::optional<double> gain(std::size_t taxi,
-        const RouteCache& route, std::size_t boundary) const;
-    // Benefit delta from changed travel-cost arcs; feasibility is checked by gain().
-    std::optional<double> calculate_delta_fast(std::size_t taxi,
-        const RouteCache& route, std::size_t boundary) const;
-};
-
-class PassengerRelocate final : public Move {
-public:
-    bool improve(SearchState&) const override;
-private:
-    mutable MoveCache cache_;
-    std::optional<InsertionChoice> best_on_taxi(
-        const SearchState&, const PassengerRelocationContext&, std::size_t request,
-        std::size_t taxi, const RouteCache&, std::uint64_t source_version) const;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/PassengerRelocate.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/AddRequest.hpp
-
-namespace soict::alns {
-class AddRequest final : public Move {
-public:
-    bool improve(SearchState& state) const override;
-private:
-    mutable PositiveInsertionCache cache_;
-    mutable std::vector<std::size_t> requests_;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/AddRequest.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/RemoveRequest.hpp
-
-namespace soict::alns {
-class RemoveRequest final : public Move {
-public:
-    bool improve(SearchState& state) const override;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/RemoveRequest.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/CleanCut2OptStar.hpp
-
-
-namespace soict::alns {
-// Exchange suffixes at boundaries where every request is wholly on one side.
-class CleanCut2OptStar final : public Move {
-public:
-    bool improve(SearchState& state) const override;
-private:
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/CleanCut2OptStar.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/ReplaceRequest.hpp
-#include <queue>
-
-namespace soict::alns {
 struct ReplacementChoice {
-    std::size_t outgoing;
+    int outgoing_request = -1;
     InsertionChoice insertion;
-    double gain;
+    Real profit_delta = -INF;
 };
 
-class ReplaceRequest final : public Move {
-public:
-    // The original scan remains available for differential validation.
-    ReplaceRequest() = default;
-    bool improve(SearchState&) const override;
-    std::optional<ReplacementChoice> best_choice(const SearchState&) const;
-private:
-
-    struct Row {
-        std::uint64_t reduced_version = 0;
-        RouteCache reduced;
-        double removal_gain = 0;
-    };
-    mutable std::vector<Row> rows_;
-
-    struct Descriptor {
-        std::uint64_t generation = 0;
-        std::optional<ReplacementChoice> choice;
-    };
-    struct QueuedChoice {
-        ReplacementChoice choice;
-        std::uint64_t route_version, generation;
-    };
-    struct LowerPriority {
-        bool operator()(const QueuedChoice&, const QueuedChoice&) const;
-    };
-    using Queue = std::priority_queue<QueuedChoice, std::vector<QueuedChoice>, LowerPriority>;
-    mutable const Instance* smd_instance_ = nullptr;
-    mutable std::vector<std::uint64_t> route_versions_;
-    mutable std::vector<bool> unserved_;
-    mutable std::vector<std::vector<Descriptor>> descriptors_; // [taxi][incoming]
-    mutable Queue queue_;
-    void refresh_descriptors(const SearchState&, std::size_t taxi,
-        const std::vector<std::size_t>& outgoing,
-        const std::vector<std::size_t>& incoming) const;
-    void synchronize(const SearchState&) const;
-    void discard_stale() const;
-    void enqueue(std::size_t taxi, std::size_t incoming) const;
-    void compact_queue() const;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/ReplaceRequest.hpp
-
-// BEGIN include/search/alns/operators/LocalSearch/SwapRequest.hpp
-
-#include <optional>
-#include <queue>
-
-namespace soict::alns {
-struct RequestSwapChoice {
-    std::size_t first, second;
-    double gain;
+struct ReplacementCache {
+    vector<UInt64> route_version;
+    vector<char> is_unserved;
+    vector<vector<ReplacementChoice>> choices;
 };
 
-// Both endpoints move together; incoming passenger delivery follows pickup.
-// Returns no value for an invalid pair or infeasible completed routes.
-std::optional<double> request_swap_gain(const SearchState&, std::size_t first,
-                                       std::size_t second);
+using RouteBank = map<IntVector, StoredRoute>;
 
-class SwapRequest final : public Move {
-public:
-    SwapRequest() = default;
-    bool improve(SearchState&) const override;
-    std::optional<RequestSwapChoice> best_choice(const SearchState&) const;
-private:
-    struct Descriptor {
-        std::uint64_t generation = 0;
-        std::optional<RequestSwapChoice> choice;
-    };
-    struct QueuedChoice {
-        RequestSwapChoice choice;
-        std::size_t taxi_a, taxi_b;
-        std::uint64_t version_a, version_b, generation;
-    };
-    struct LowerPriority {
-        bool operator()(const QueuedChoice&, const QueuedChoice&) const;
-    };
-    using Queue = std::priority_queue<QueuedChoice, std::vector<QueuedChoice>, LowerPriority>;
-    mutable const Instance* instance_ = nullptr;
-    mutable std::vector<std::uint64_t> versions_;
-    mutable std::vector<std::vector<Descriptor>> descriptors_; // taxi_a < taxi_b
-    mutable Queue queue_;
-    void synchronize(const SearchState&) const;
-    void enqueue(std::size_t taxi_a, std::size_t taxi_b) const;
-};
-} // namespace soict::alns
+// --- Shared working data ---
+// One instance per process. Preserve cache lifetimes and globally unique route versions.
+// DFS request states: 0 unseen, 1 picked up, 2 delivered.
+Instance instance;
+UInt64 next_route_version = 1, random_seed = 1;
+mt19937_64 random_engine;
+vector<RouteBank> route_bank;
+RealVector bank_profit_floor;
+int bank_route_limit = DEFAULT_BANK_ROUTE_LIMIT;
+Deadline search_deadline;
+RealVector delivery_time_lower_bound;
+vector<IntVector> successor_requests;
+IntVector dfs_request_state, dfs_route, dfs_requests;
+size_t dfs_visited_prefixes, dfs_prefix_limit = DFS_PREFIX_LIMIT;
+Real priced_score_floor = -INF;
+Deadline dfs_deadline;
+bool dfs_stopped;
+RealVector dfs_request_prices;
+map<IntVector, pair<Real, Route>> priced_route_bank;
+size_t dfs_generation_calls = 0;
+vector<RouteSegmentCache> route_segment_cache;
+ReplacementCache replacement_cache;
+size_t fleet_generation_calls = 0;
+size_t priced_replacement_calls = 0;
 
-// END include/search/alns/operators/LocalSearch/SwapRequest.hpp
-#include <algorithm>
-#include <chrono>
-#include <iostream>
-#include <memory>
+// --- Search declarations ---
+bool enumerate_routes(Deadline deadline, const RealVector &prices = {});
+void enumerate_route_prefix(int taxi, int last_node, Real departure_time, Real total_cost,
+                            Real revenue, Real load, int open_parcels);
+void rebuild_fleets(SearchState &incumbent, Deadline deadline);
+void destroy_solution(SearchState &state, int round_index);
+void generate_priced_replacements(SearchState &state, Deadline deadline);
+void select_fleet_routes(SearchState &state, Deadline deadline, bool full_fleet = false);
+MasterResult solve_route_master(const vector<MasterColumn> &columns, size_t taxi_count,
+                                size_t request_count, const IntVector &initial_columns,
+                                Deadline deadline, bool use_root_fixing = false);
+MasterResult solve_taxi_groups(const vector<MasterColumn> &columns, size_t taxi_count,
+                               size_t request_count, const IntVector &initial_columns,
+                               Deadline deadline, UInt64 group_seed,
+                               const RealVector &request_prices);
+MasterResult solve_ranked_master(const vector<MasterColumn> &columns, int taxi_count,
+                                 int request_count, const IntVector &initial_columns,
+                                 Deadline deadline);
+RealVector estimate_request_prices(Real incumbent_profit = 0);
+void improve_solution(SearchState &state, Deadline deadline, bool full_neighborhoods,
+                      int cycles = 3);
+InsertionChoice find_route_insertion(int request, int taxi, const Route &route,
+                                     Real minimum_profit_delta = FEASIBILITY_EPSILON);
+InsertionChoice find_fleet_insertion(SearchState &state, int request, InsertionCache &cache);
+bool improve_by_removal(SearchState &state);
+bool improve_by_insertion(SearchState &state, InsertionCache &cache);
+bool improve_by_replacement(SearchState &state, Deadline deadline);
+bool improve_by_tail_exchange(SearchState &state, Deadline deadline);
+bool improve_by_relocation(SearchState &state, Deadline deadline);
+bool improve_by_swap(SearchState &state, Deadline deadline);
 
-namespace soict::alns {
-Result solve(const Instance& instance, const Config& config) {
-    using Clock = std::chrono::steady_clock;
-    const auto start = Clock::now();
-    const auto deadline = start + std::chrono::duration_cast<Clock::duration>(
-        std::chrono::duration<double>(config.time_limit));
-    const auto search_deadline = deadline - std::chrono::duration_cast<Clock::duration>(
-        std::chrono::duration<double>(std::min(1.0, config.time_limit * 0.05)));
-    LocalSearch local_search;
-    local_search.add_move(std::make_unique<RemoveRequest>());
-    local_search.add_move(std::make_unique<AddRequest>());
-    local_search.add_move(std::make_unique<PassengerRelocate>());
-    local_search.add_move(std::make_unique<ParcelRelocate>());
-    if (config.clean_cut_2opt_star) {
-        auto move = std::make_unique<CleanCut2OptStar>();
-        local_search.add_move(std::move(move));
+// --- Helper declarations ---
+Instance read_instance();
+optional<Real> evaluate_route(const Instance &input, int taxi, const IntVector &route);
+Deadline deadline_after(Real seconds);
+Real travel_time(int from_node, int to_node);
+Real travel_cost(int from_node, int to_node);
+IntVector served_requests(const Route &route);
+Real route_cost(int taxi, const Route &route);
+Real route_profit(int taxi, const Route &route);
+Real fleet_profit(const Fleet &fleet);
+void store_route(int taxi, const Route &route, bool enforce_limit = false, Real profit = -INF);
+void store_fleet(const Fleet &fleet);
+SearchState make_search_state(const Fleet &fleet);
+void update_route(SearchState &state, int taxi, const Route &route);
+void update_route_pair(SearchState &state, int first_taxi, const Route &first_route,
+                       int second_taxi, const Route &second_route);
+void apply_insertion(SearchState &state, InsertionChoice choice);
+bool is_insertion_boundary(const Route &route, int position);
+Route remove_request(const Route &route, int request);
+Route insert_request(Route route, int request, int pickup_position, int delivery_position);
+IntVector empty_load_cuts(const Route &route);
+void build_delivery_lower_bounds(Deadline deadline);
+Segment make_node_segment(int node);
+Segment join_segments(Segment left, const Segment &right);
+bool is_segment_feasible(int taxi, const Segment &segment);
+RouteSegmentCache &cached_route_segments(int taxi, const Route &route);
+Segment segment_range(const RouteSegmentCache &segments, int begin, int end);
+PackingMatrix build_packing_matrix(const vector<MasterColumn> &columns, size_t taxi_count,
+                                   size_t request_count);
+PackingLP initialize_lp(const PackingMatrix &matrix);
+Real column_coefficient(const PackingLP &lp, size_t row, size_t column);
+Real reduced_cost(const PackingLP &lp, size_t column);
+void pivot_basis(PackingLP &lp, size_t leaving, size_t entering);
+void primal_simplex(PackingLP &lp, Deadline deadline);
+void add_column_bound(PackingLP &lp, size_t column, bool include);
+void dual_simplex(PackingLP &lp, Deadline deadline);
+RealVector primal_values(const PackingLP &lp);
+Real dual_upper_bound(const PackingLP &lp);
+RealVector request_prices_from_lp(const PackingLP &lp, size_t request_count);
+
+// --- Search pipeline ---
+
+// Embedded LP adapter with independently recomputed feasibility and dual checks.
+static void solve_embedded_lp(PackingLP &lp, Deadline deadline) {
+
+    auto &columns = *lp.matrix->columns;
+    RealVector profit;
+    profit.reserve(columns.size());
+    for (auto &column : columns)
+        profit.push_back(column.profit);
+    auto result = embedded_hsol::solve(lp.matrix->dimension, lp.matrix->column_rows, profit,
+                                       lp.backend_lower, lp.backend_upper, deadline);
+
+    auto data = make_shared<BackendLPData>();
+    lp.timed_out = false;
+    if (result.status == 1) {
+        data->infeasible = true;
+        lp.backend = data;
+        return;
     }
-    local_search.add_move(std::make_unique<SwapRequest>());
-    local_search.add_move(std::make_unique<ReplaceRequest>());
-
-    Solution empty;
-    empty.routes.resize(instance.taxis.size());
-    SearchState current(instance, std::move(empty));
-    const auto index_deadline = std::min(deadline, Clock::now() +
-        std::chrono::duration_cast<Clock::duration>(
-            std::chrono::duration<double>(std::min(1.0, config.time_limit * 0.05))));
-    current.set_empty_taxi_index(build_empty_taxi_index(current, index_deadline));
-    RoutePoolRepair route_pool(instance, config.route_pool_limit, config.seed);
-    generate_routes(current, route_pool, config, search_deadline);
-    SearchState best = current;
-    route_pool.remember(current);
-    route_pool.improve(best, deadline);
-    (void)0;
-    // Keep the same final complete-move polishing and remaining-time gate.
-    if (config.local_search && Clock::now()+std::chrono::milliseconds(500)<deadline) {
-        const auto before_polish = best.benefit();
-        local_search.search(best, deadline);
-        if (best.benefit()>before_polish+1e-9) route_pool.remember(best);
-        (void)0;
+    if (result.status != 0) {
+        lp.timed_out = true;
+        lp.backend = data;
+        return;
     }
-    Result result;
-    result.solution = best.solution();
-    return result;
+    if (result.primal.size() != columns.size() || result.dual.size() != lp.matrix->dimension) {
+        lp.timed_out = true;
+        lp.backend = data;
+        return;
+    }
+    // Recompute feasibility and reduced costs from the original packing matrix and bounds.
+    RealVector usage(lp.matrix->dimension, 0);
+    Real primal_error = 0, dual_error = 0;
+    for (size_t j = 0; j < columns.size(); j++) {
+        Real x = result.primal[j];
+        if (!isfinite(x)) {
+            primal_error = INF;
+            break;
+        }
+        primal_error = max(primal_error, max(lp.backend_lower[j] - x, x - lp.backend_upper[j]));
+        for (auto r : lp.matrix->column_rows[j])
+            usage[r] += x;
+    }
+    for (size_t r = 0; r < usage.size(); r++) {
+        primal_error = max(primal_error, usage[r] - 1);
+        if (!isfinite(result.dual[r]))
+            dual_error = INF;
+        else
+            dual_error = max(dual_error, -result.dual[r]);
+    }
+    lp.dual_prices.assign(lp.row_count, 0);
+    copy(result.dual.begin(), result.dual.end(), lp.dual_prices.begin());
+    for (size_t j = 0; j < columns.size(); j++) {
+        Real rc = profit[j];
+        for (auto r : lp.matrix->column_rows[j])
+            rc -= result.dual[r];
+        if (!isfinite(rc)) {
+            dual_error = INF;
+            break;
+        }
+        if (!isfinite(lp.backend_upper[j]))
+            dual_error = max(dual_error, rc);
+        // Map a column bound's multiplier back to the original signed B&B constraint row.
+        int row = lp.column_bound_rows[j];
+        if (row >= 0)
+            lp.dual_prices[row] = lp.bound_signs[row] < 0 ? max(0.0, -rc) : max(0.0, rc);
+    }
+    if (primal_error > 1e-7 || dual_error > 1e-7) {
+        lp.timed_out = true;
+        lp.backend = data;
+        return;
+    }
+    // Immutable snapshots permit safe parent/child LP copies; no shared state is mutated.
+    data->primal = move(result.primal);
+    lp.backend = data;
 }
-} // namespace soict::alns
 
-// END src/search/alns/ALNS.cpp
+// An uncapped probe can establish complete candidate coverage on sparse inputs.
+bool full_probe_mode = false, full_probe_truncated = false, route_bank_complete = false;
+size_t full_probe_columns = 0;
+constexpr size_t FULL_PROBE_COLUMN_GUARD = 350000;
 
-// BEGIN src/search/alns/RouteGeneration.cpp
-#include <algorithm>
-#include <chrono>
-#include <iostream>
-
-namespace soict::alns {
-void generate_routes(SearchState& current, RoutePoolRepair& pool,
-                     const Config& config, Deadline search_deadline) {
-    using Clock = std::chrono::steady_clock;
-    const auto& instance = current.instance();
-    const auto generation_start = Clock::now();
-    const auto generation_deadline = std::min(search_deadline, generation_start +
-        std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
-            std::min(config.enumeration_seconds, config.time_limit * 0.2))));
-    pool.generate(generation_deadline, config.path_prefix_limit);
-    const bool initial_enumeration_complete=pool.enumeration_complete();
-    const bool sampled = !initial_enumeration_complete || instance.taxis.size()>48;
-    if (sampled) {
-        const auto beam_start = Clock::now();
-        // Leave a fixed selection budget instead of abandoning a
-        // large fraction of short competition runs after an easy master.
-        const auto selection_reserve=std::chrono::duration_cast<Clock::duration>(
-            std::chrono::duration<double>(std::min(3.0,config.time_limit*0.05)));
-        const auto beam_deadline = std::min(search_deadline-selection_reserve,beam_start+
-            std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
-                config.generation_seconds)));
-        std::size_t phase=0;
-        do {
-            const auto sample_deadline = instance.taxis.size()>48 ?
-                std::min(beam_deadline,Clock::now()+std::chrono::seconds(6)) : beam_deadline;
-            const auto initial=current.solution();
-            SearchState generated(instance,pool.generate_fleets(sample_deadline,current.empty_taxi_index(),&initial,
-                                  config.local_search,config.clean_cut_2opt_star,config.fleet_refinement_interval,
-                                  config.light_fleet_refinement,config.fleet_refinement_cycles),
-                                  current.insertion_scratch_handle());
-            generated.set_empty_taxi_index(current.empty_taxi_index());current.copy_from(generated);
-            if (instance.taxis.size()>48 && Clock::now()+std::chrono::seconds(2)<beam_deadline) {
-                const auto mix_deadline=std::min(beam_deadline,Clock::now()+std::chrono::seconds(6));
-                pool.improve(current,mix_deadline);
-                ++phase;
-                (void)0;
-                if (Clock::now()+std::chrono::seconds(2)<beam_deadline) {
-                    const auto price_deadline=std::min(beam_deadline,Clock::now()+std::chrono::seconds(3));
-                    if (phase%2) pool.generate_replacements(price_deadline,current);
-                    else pool.generate(price_deadline,config.path_prefix_limit,true);
-                    (void)0;
-                    if (!(phase%2)) (void)0;
-                    (void)0;
+// Supplementary short routes are generated once after the existing fleet search.
+// Keeping each parcel's best partner preserves coverage beyond a raw top-profit
+// list. This pool is heuristic: other partners may still matter to the fleet.
+struct ParcelPairSeed {
+    int taxi = -1, first = -1, second = -1;
+    Real profit = -INF;
+    array<int, 4> nodes{};
+};
+vector<ParcelPairSeed> parcel_pair_seeds;
+static void generate_parcel_pair_seeds(Deadline deadline) {
+    // Each permutation respects both pickup-before-delivery constraints.
+    constexpr int orders[6][4] = {{0, 1, 2, 3}, {0, 2, 1, 3}, {0, 2, 3, 1},
+                                  {2, 0, 1, 3}, {2, 0, 3, 1}, {2, 3, 0, 1}};
+    Route route(4);
+    for (int taxi = 0; taxi < instance.taxi_count && Clock::now() < deadline; ++taxi) {
+        vector<ParcelPairSeed> best_partner(instance.parcel_count);
+        for (int a = 0; a < instance.parcel_count && Clock::now() < deadline; ++a) {
+            const int first = instance.passenger_count + a;
+            const auto &ra = instance.requests[first];
+            for (int b = a + 1; b < instance.parcel_count; ++b) {
+                if ((b & 63) == 0 && Clock::now() >= deadline)
+                    break;
+                const int second = instance.passenger_count + b;
+                const auto &rb = instance.requests[second];
+                const int nodes[4] = {ra.pickup_node, ra.delivery_node, rb.pickup_node,
+                                      rb.delivery_node};
+                ParcelPairSeed candidate;
+                candidate.taxi = taxi;
+                candidate.first = first;
+                candidate.second = second;
+                for (const auto &order : orders) {
+                    for (int i = 0; i < 4; ++i)
+                        route[i] = nodes[order[i]];
+                    const auto value = evaluate_route(instance, taxi, route);
+                    if (value && *value > candidate.profit) {
+                        candidate.profit = *value;
+                        copy(route.begin(), route.end(), candidate.nodes.begin());
+                    }
+                }
+                // Judge the complete pair; neither individual insertion needs
+                // positive profit. Every retained final route is profitable.
+                if (candidate.profit <= FEASIBILITY_EPSILON)
+                    continue;
+                for (int request : {a, b}) {
+                    if (candidate.profit > best_partner[request].profit) {
+                        best_partner[request] = candidate;
+                    }
                 }
             }
-        } while (instance.taxis.size()>48 && Clock::now()<beam_deadline);
-    }
-    if (initial_enumeration_complete) {
-        if (!sampled) pool.set_limit(std::min(config.route_pool_limit, config.path_pool_limit));
-    }
-    (void)0;
-}
-} // namespace soict::alns
-
-// END src/search/alns/RouteGeneration.cpp
-
-// BEGIN src/search/alns/operators/Destroy/RandomRemoval.cpp
-
-// BEGIN include/search/alns/operators/Destroy/RandomRemoval.hpp
-
-namespace soict::alns {
-class RandomRemoval final : public DestroyOperator {
-public:
-    std::vector<std::size_t> apply(SearchState&, std::size_t, std::mt19937_64&) const override;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Destroy/RandomRemoval.hpp
-
-#include <algorithm>
-#include <numeric>
-
-namespace soict::alns {
-std::vector<std::size_t> RandomRemoval::apply(SearchState& state, std::size_t count,
-                                std::mt19937_64& rng) const {
-    std::vector<std::size_t> requests(state.request_count());
-    std::iota(requests.begin(), requests.end(), 0);
-    std::shuffle(requests.begin(), requests.end(), rng);
-    std::vector<std::size_t> removed;
-    removed.reserve(count);
-    for (const auto request : requests) {
-        if (removed.size() >= count) break;
-        if (state.remove(request)) removed.push_back(request);
-    }
-    return removed;
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/Destroy/RandomRemoval.cpp
-
-// BEGIN src/search/alns/operators/Destroy/WorstRemoval.cpp
-
-// BEGIN include/search/alns/operators/Destroy/WorstRemoval.hpp
-
-namespace soict::alns {
-class WorstRemoval final : public DestroyOperator {
-public:
-    std::vector<std::size_t> apply(SearchState&, std::size_t, std::mt19937_64&) const override;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Destroy/WorstRemoval.hpp
-
-#include <limits>
-
-namespace soict::alns {
-std::vector<std::size_t> WorstRemoval::apply(SearchState& state, std::size_t count,
-                                std::mt19937_64&) const {
-    std::vector<std::size_t> removed;
-    removed.reserve(count);
-    while (removed.size() < count) {
-        std::size_t choice = state.request_count();
-        double best_gain = -std::numeric_limits<double>::infinity();
-        for (std::size_t r = 0; r < state.request_count(); ++r) {
-            const auto gain = state.removal_gain(r);
-            if (gain && *gain > best_gain) { choice = r; best_gain = *gain; }
         }
-        if (choice == state.request_count() || !state.remove(choice)) break;
-        removed.push_back(choice);
+        map<pair<int, int>, ParcelPairSeed> distinct;
+        for (const auto &seed : best_partner) {
+            if (seed.first >= 0)
+                distinct[{seed.first, seed.second}] = seed;
+        }
+        for (const auto &entry : distinct)
+            parcel_pair_seeds.push_back(entry.second);
     }
-    return removed;
+    // Build this ranking once, so repeated construction only scans the pool.
+    stable_sort(parcel_pair_seeds.begin(), parcel_pair_seeds.end(),
+                [](const ParcelPairSeed &a, const ParcelPairSeed &b) {
+                    if (a.profit != b.profit)
+                        return a.profit > b.profit;
+                    return tie(a.taxi, a.first, a.second) < tie(b.taxi, b.first, b.second);
+                });
+
+    // Ordinary DFS's absolute-profit floor can evict complementary short routes.
+    // Protected storage adds at most K*M candidates; original caps are unchanged.
+    for (const auto &seed : parcel_pair_seeds) {
+        store_route(seed.taxi, Route(seed.nodes.begin(), seed.nodes.end()), false, seed.profit);
+    }
 }
-} // namespace soict::alns
 
-// END src/search/alns/operators/Destroy/WorstRemoval.cpp
+static void apply_parcel_pair_seeds(SearchState &state, Deadline deadline) {
+    if (parcel_pair_seeds.empty())
+        return;
+    size_t empty = count_if(state.routes.begin(), state.routes.end(),
+                            [](const Route &route) { return route.empty(); });
+    if (!empty)
+        return;
+    size_t examined = 0;
+    for (const auto &seed : parcel_pair_seeds) {
+        if ((++examined & 63) == 0 && Clock::now() >= deadline)
+            break;
+        if (!state.routes[seed.taxi].empty() || state.request_owner[seed.first] >= 0 ||
+            state.request_owner[seed.second] >= 0)
+            continue;
+        // These complete routes were checked for this taxi from its origin.
+        update_route(state, seed.taxi, Route(seed.nodes.begin(), seed.nodes.end()));
+        if (!--empty)
+            break;
+    }
+}
 
-// BEGIN src/search/alns/operators/Destroy/RelatedRemoval.cpp
-
-// BEGIN include/search/alns/operators/Destroy/RelatedRemoval.hpp
-
-namespace soict::alns {
-class RelatedRemoval final : public DestroyOperator {
-public:
-    std::vector<std::size_t> apply(SearchState&, std::size_t, std::mt19937_64&) const override;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/Destroy/RelatedRemoval.hpp
-
-#include <cmath>
-#include <limits>
-#include <vector>
-
-namespace soict::alns {
-std::vector<std::size_t> RelatedRemoval::apply(SearchState& state, std::size_t count,
-                                std::mt19937_64& rng) const {
-    std::vector<std::size_t> served;
-    for (std::size_t r = 0; r < state.request_count(); ++r)
-        if (state.location(r).taxi >= 0) served.push_back(r);
-    if (served.empty()) return {};
-    const auto anchor = served[rng() % served.size()];
-    const auto& in = state.instance();
-    const auto anchor_node = state.pickup_node(anchor);
-    const auto earliest = [&](std::size_t r) {
-        return r < in.passengers.size() ? in.passengers[r].pickup.earliest :
-                                            in.parcels[r - in.passengers.size()].pickup.earliest;
+// Relax request identities while retaining per-taxi route choices and the total
+// passenger/parcel counts. This can certify a fleet without allocating an LP.
+// Work guards only decline this optional certificate; they never discard routes.
+static bool bank_cardinality_certified(const SearchState &state, Deadline deadline,
+                                       Real *reported_upper = nullptr) {
+    struct Profile {
+        int passengers, parcels;
+        Real profit;
     };
-    const double anchor_time = earliest(anchor);
-    // Shaw-style proximity in pickup space and time. Directed travel times
-    // are used in both directions; no triangle inequality is assumed.
-    std::vector<std::size_t> removed;
-    removed.reserve(count);
-    while (removed.size() < count) {
-        std::size_t choice = state.request_count();
-        double best_distance = std::numeric_limits<double>::infinity();
-        for (std::size_t r = 0; r < state.request_count(); ++r) {
-            if (state.location(r).taxi < 0 || !state.removal_gain(r)) continue;
-            const auto node = state.pickup_node(r);
-            const double distance = in.time(anchor_node, node) + in.time(node, anchor_node)
-                                  + std::abs(anchor_time - earliest(r));
-            if (distance < best_distance) { best_distance = distance; choice = r; }
+    const int n = instance.passenger_count, m = instance.parcel_count;
+    const size_t states = size_t(n + 1) * (m + 1);
+    constexpr size_t MAX_PROFILES = 4096, MAX_UPDATES = 40000000;
+    if (states > 1000000 || Clock::now() >= deadline)
+        return false;
+    RealVector best(states, -INF);
+    vector<vector<Profile>> profiles(instance.taxi_count);
+    size_t profile_count = 0, scanned = 0;
+    int max_passengers = 0, max_parcels = 0;
+    bool integral = true;
+    for (int taxi = 0; taxi < instance.taxi_count; ++taxi) {
+        fill(best.begin(), best.end(), -INF);
+        int taxi_max_p = 0, taxi_max_q = 0;
+        for (const auto &entry : route_bank[taxi]) {
+            if ((++scanned & 1023) == 0 && Clock::now() >= deadline)
+                return false;
+            int p = 0, q = 0;
+            for (int request : entry.first) {
+                if (request < n)
+                    ++p;
+                else
+                    ++q;
+            }
+            const Real profit = entry.second.profit;
+            if (!isfinite(profit) || p > n || q > m)
+                return false;
+            integral &= profit == round(profit);
+            best[size_t(p) * (m + 1) + q] = max(best[size_t(p) * (m + 1) + q], profit);
         }
-        if (choice == state.request_count() || !state.remove(choice)) break;
-        removed.push_back(choice);
+        for (int p = 0; p <= n; ++p)
+            for (int q = 0; q <= m; ++q) {
+                const Real profit = best[size_t(p) * (m + 1) + q];
+                if (!isfinite(profit) || profit <= 0)
+                    continue;
+                if (++profile_count > MAX_PROFILES)
+                    return false;
+                profiles[taxi].push_back({p, q, profit});
+                taxi_max_p = max(taxi_max_p, p);
+                taxi_max_q = max(taxi_max_q, q);
+            }
+        max_passengers = min(n, max_passengers + taxi_max_p);
+        max_parcels = min(m, max_parcels + taxi_max_q);
     }
-    return removed;
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/Destroy/RelatedRemoval.cpp
-
-// BEGIN src/search/alns/operators/Repair/InsertionSearch.cpp
-
-#include <algorithm>
-#include <chrono>
-#include <numeric>
-
-namespace soict::alns {
-namespace {
-RequestSegments make_request_segments(const Instance& in, std::size_t request) {
-    const auto data = request_data(in, request);
-    return {request < in.passengers.size(), single_node(in, data.pickup), single_node(in, data.delivery),
-            data.revenue, data.weight};
-}
-}
-
-EmptyTaxiIndex::EmptyTaxiIndex(const Instance& instance)
-    : instance_(&instance),
-      choices_(instance.passengers.size() + instance.parcels.size()),
-      next_taxi_(choices_.size(), 0), complete_(choices_.size(), false),
-      request_segments_(choices_.size()) {
-    for (std::size_t request = 0; request < request_segments_.size(); ++request)
-        request_segments_[request] = make_request_segments(instance, request);
-}
-
-bool EmptyTaxiIndex::ensure(std::size_t request, Deadline deadline) const {
-    if (complete_[request]) return true;
-    const auto& in = *instance_;
-    const auto data = request_data(in, request);
-    const RouteCache empty;
-    auto& choices = choices_[request];
-    for (auto& taxi = next_taxi_[request]; taxi < in.taxis.size(); ++taxi) {
-        if (deadline != Deadline::max() &&
-            std::chrono::steady_clock::now() >= deadline) return false;
-        RouteCandidate candidate(in, taxi, empty);
-        candidate.add_node(data.pickup);
-        candidate.add_node(data.delivery);
-        const auto cost = candidate.cost_if_feasible();
-        if (cost) choices.push_back({taxi, data.revenue - *cost});
+    const size_t width = max_parcels + 1;
+    const size_t dimension = size_t(max_passengers + 1) * width;
+    if (profile_count && dimension > MAX_UPDATES / profile_count)
+        return false;
+    RealVector values(dimension, -INF), next;
+    values[0] = 0;
+    const Real infinity = numeric_limits<Real>::infinity();
+    size_t updates = 0;
+    for (const auto &taxi_profiles : profiles) {
+        next = values; // Leaving a taxi unused is always allowed.
+        for (int p = 0; p <= max_passengers; ++p) {
+            for (int q = 0; q <= max_parcels; ++q) {
+                const Real previous = values[size_t(p) * width + q];
+                if (!isfinite(previous))
+                    continue;
+                for (const auto &option : taxi_profiles) {
+                    if ((++updates & 4095) == 0 && Clock::now() >= deadline)
+                        return false;
+                    const int new_p = p + option.passengers, new_q = q + option.parcels;
+                    if (new_p > max_passengers || new_q > max_parcels)
+                        continue;
+                    Real &target = next[size_t(new_p) * width + new_q];
+                    target = max(target, nextafter(previous + option.profit, infinity));
+                }
+            }
+        }
+        values.swap(next);
     }
-    std::sort(choices.begin(), choices.end(), [](const auto& a, const auto& b) {
-        return a.gain > b.gain || (a.gain == b.gain && a.taxi < b.taxi);
-    });
-    complete_[request] = true;
-    return true;
+    const Real upper = *max_element(values.begin(), values.end());
+    if (reported_upper)
+        *reported_upper = upper;
+    const Real lower = fleet_profit(state.routes);
+    const bool certified = isfinite(upper) && isfinite(lower) &&
+                           (integral ? upper < floor(lower) + 1 : upper <= lower);
+
+    return certified;
 }
 
-std::shared_ptr<const EmptyTaxiIndex> build_empty_taxi_index(
-    const SearchState& empty_state, Deadline deadline) {
-    auto index = std::make_shared<EmptyTaxiIndex>(empty_state.instance());
-    for (std::size_t request = 0; request < empty_state.request_count(); ++request) {
-        if (!index->ensure(request, deadline)) break;
+// Each independent start constructs a fresh fleet, preserving the best complete one.
+// All starts share the existing generation deadline and the same route bank.
+static void rebuild_multistart_fleets(SearchState &incumbent, Deadline deadline) {
+    const UInt64 base_seed =
+        1; // deterministic anchor for small-fleet construction; later stages retain the external seed
+    const size_t saved_calls = fleet_generation_calls;
+    SearchState best = incumbent;
+    int completed = 0;
+    for (int start = 0; start < 3 && Clock::now() < deadline; start++) {
+        random_seed = base_seed + start;
+        fleet_generation_calls = 0;
+        auto candidate = make_search_state(Fleet(instance.taxi_count));
+        auto now = Clock::now();
+        rebuild_fleets(candidate, now + (deadline - now) / (3 - start));
+        if (candidate.profit > best.profit)
+            best = move(candidate);
+        completed++;
     }
-    return index;
+    random_seed = base_seed;
+    fleet_generation_calls = saved_calls + completed;
+    incumbent = move(best);
+    store_fleet(incumbent.routes);
 }
+int main(int argc, char **argv) {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
 
-namespace {
-void consider(InsertionOptions& result, InsertionChoice choice) {
-    if (!result.best || choice.gain > result.best->gain ||
-        (choice.gain == result.best->gain && choice.taxi < result.best->taxi)) {
-        if (result.best) result.second_gain = std::max(result.second_gain, result.best->gain);
-        result.best = choice;
-    } else result.second_gain = std::max(result.second_gain, choice.gain);
-}
-
-
-
-
-
-RequestSegments request_segments(const SearchState& state, std::size_t request) {
-    return make_request_segments(state.instance(), request);
-}
-
-InsertionOptions scan_route(const SearchState& state, std::size_t request,
-                            std::size_t taxi, const RouteCache& route,
-                            const RequestSegments& data,
-                            InsertionScratch& scratch,
-                            double global_second = -std::numeric_limits<double>::infinity(),
-                            bool best_only = false) {
-    InsertionOptions result;
-    const auto& in = state.instance();
-    if (data.weight > in.taxis[taxi].parcel_capacity + 1e-8) return result;
-    const auto length = route.nodes().size();
-    const auto pickup = data.pickup.first, delivery = data.delivery.first;
-    const auto& nodes = route.nodes();
-    // The objective change involves only replaced arcs, even for directed
-    // nonmetric costs. Use it to reject candidates before segment joins.
-    const auto buffers = scratch.buffers(length);
-    auto* pickup_delta = buffers.pickup;
-    auto* delivery_delta = buffers.delivery;
-    auto* adjacent_delta = buffers.adjacent;
-    for (std::size_t pos = 0; pos <= length; ++pos) {
-        const auto previous = pos ? nodes[pos - 1] : taxi;
-        const auto old_arc = pos < length ? in.cost(previous, nodes[pos]) : 0.0;
-        pickup_delta[pos] = in.cost(previous, pickup) - old_arc +
-            (pos < length ? in.cost(pickup, nodes[pos]) : 0.0);
-        delivery_delta[pos] = in.cost(previous, delivery) - old_arc +
-            (pos < length ? in.cost(delivery, nodes[pos]) : 0.0);
-        adjacent_delta[pos] = in.cost(previous, pickup) +
-            in.cost(pickup, delivery) - old_arc +
-            (pos < length ? in.cost(delivery, nodes[pos]) : 0.0);
+    // Include input time in the search budget; prepare an empty incumbent fleet.
+    auto start_time = Clock::now();
+    if (argc > 1) {
+        random_seed = strtoull(argv[1], nullptr, 10);
     }
-    const auto initial_threshold = global_second;
-    double minimum_delta = std::numeric_limits<double>::infinity();
-    double minimum_pickup = std::numeric_limits<double>::infinity();
-    for (std::size_t pos = 0; pos <= length; ++pos) {
-        minimum_delta = std::min(minimum_delta, adjacent_delta[pos]);
-        if (!data.passenger) {
-            minimum_delta = std::min(minimum_delta, minimum_pickup + delivery_delta[pos]);
-            minimum_pickup = std::min(minimum_pickup, pickup_delta[pos]);
+    random_engine.seed(random_seed);
+    instance = read_instance();
+    search_deadline = start_time + Seconds(SEARCH_SECONDS);
+    if (instance.taxi_count > LARGE_FLEET_TAXI_LIMIT) {
+        bank_route_limit = LARGE_FLEET_BANK_LIMIT;
+    }
+    route_bank.resize(instance.taxi_count);
+    bank_profit_floor.assign(instance.taxi_count, -INF);
+    SearchState state = make_search_state(Fleet(instance.taxi_count));
+
+    // Initial enumeration; large fleets use a short seed bank and an early master solve.
+    full_probe_mode = true;
+    bool complete = enumerate_routes(min(search_deadline, deadline_after(2)));
+    full_probe_mode = false;
+    route_bank_complete = complete && !full_probe_truncated;
+    if (!route_bank_complete) {
+        // A stopped probe is not a certificate. Release it and run normal generation.
+        route_bank = vector<RouteBank>(instance.taxi_count);
+        bank_profit_floor.assign(instance.taxi_count, -INF);
+        dfs_generation_calls = 0;
+        complete = enumerate_routes(
+            min(search_deadline, deadline_after(instance.taxi_count > LARGE_FLEET_TAXI_LIMIT
+                                                    ? INITIAL_LARGE_DFS_SECONDS
+                                                    : INITIAL_SMALL_DFS_SECONDS)));
+    }
+
+    if (!route_bank_complete && (!complete || instance.taxi_count > SMALL_FLEET_TAXI_LIMIT)) {
+        int phase = 0;
+        if (instance.taxi_count > SMALL_FLEET_TAXI_LIMIT) {
+            select_fleet_routes(state,
+                                min(search_deadline, deadline_after(INITIAL_SELECTION_SECONDS)));
+        }
+
+        // Alternate fleet rebuilding, selection, and priced route generation.
+        // Large fleets stop generation 8 seconds before the 299-second search deadline.
+        // Share the global budget between generation and a protected final master solve.
+        auto generation_deadline =
+            search_deadline - Seconds(FINAL_SELECTION_SECONDS + FINAL_SELECTION_RESERVE_SECONDS);
+        do {
+            if (instance.taxi_count <= SMALL_FLEET_TAXI_LIMIT) {
+                rebuild_multistart_fleets(state, generation_deadline);
+            } else {
+                rebuild_fleets(state,
+                               min(generation_deadline, deadline_after(REBUILD_ROUND_SECONDS)));
+            }
+            if (instance.taxi_count > SMALL_FLEET_TAXI_LIMIT &&
+                Clock::now() + Seconds(PRICING_GUARD_SECONDS) < generation_deadline) {
+                select_fleet_routes(
+                    state, min(generation_deadline, deadline_after(SELECTION_ROUND_SECONDS)));
+                if (Clock::now() < generation_deadline) {
+                    if (++phase % 2) {
+                        generate_priced_replacements(
+                            state,
+                            min(generation_deadline, deadline_after(PRICED_GENERATION_SECONDS)));
+                    } else {
+                        enumerate_routes(
+                            min(generation_deadline, deadline_after(PRICED_GENERATION_SECONDS)),
+                            estimate_request_prices(state.profit));
+                    }
+                }
+            }
+        } while (instance.taxi_count > SMALL_FLEET_TAXI_LIMIT &&
+                 Clock::now() < generation_deadline);
+    }
+
+    // Reserve the final seconds for selection and local descent; allow output before 300 s.
+    auto final_master_deadline = search_deadline - Seconds(FINAL_SELECTION_RESERVE_SECONDS);
+    if (!route_bank_complete) {
+        generate_parcel_pair_seeds(final_master_deadline);
+        apply_parcel_pair_seeds(state, final_master_deadline);
+    }
+    if (!route_bank_complete)
+        final_master_deadline = min(final_master_deadline, deadline_after(FINAL_SELECTION_SECONDS));
+    select_fleet_routes(state, final_master_deadline, true);
+    if (Clock::now() < search_deadline) {
+        improve_solution(state, search_deadline, true, FINAL_POLISH_CYCLES);
+    }
+
+    // Output only the objective, followed by one node sequence per taxi.
+    Real value = 0;
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        value -= route_cost(taxi, state.routes[taxi]);
+    }
+    for (int request = 0; request < instance.request_count; request++) {
+        if (state.request_owner[request] >= 0) {
+            value += instance.requests[request].revenue;
         }
     }
-    if (data.revenue - minimum_delta + 1e-8 < initial_threshold) return result;
-    auto* suffix_delivery = buffers.suffix;
-    if (!data.passenger) {
-        // The backward pass overwrites every other used suffix element.
-        suffix_delivery[length + 1] = std::numeric_limits<double>::infinity();
-        for (std::size_t pos = length + 1; pos-- > 0;)
-            suffix_delivery[pos] = std::min(delivery_delta[pos], suffix_delivery[pos + 1]);
+    cout << setprecision(17) << value << '\n';
+    for (auto &route : state.routes) {
+        cout << route.size();
+        for (int node : route) {
+            cout << ' ' << node;
+        }
+        cout << '\n';
     }
-    for (std::size_t a = 0; a <= length; ++a) {
-        if (!route.boundary_allowed(in, a)) continue;
-        const auto threshold = [&] { return std::max(global_second,
-            best_only && result.best ? result.best->gain : result.second_gain); };
-        const auto best_delta = data.passenger ? adjacent_delta[a] :
-            std::min(adjacent_delta[a], pickup_delta[a] + suffix_delivery[a + 1]);
-        if (data.revenue - best_delta + 1e-8 < threshold()) continue;
-        FastRouteCheck prefix(in, taxi, route);
-        prefix.range(0, a);
-        prefix.segment(data.pickup);
-        // The pickup prefix is unchanged for every delivery position below.
-        if (!prefix.feasible()) continue;
-        if (data.passenger) {
-            auto candidate = prefix;
-            candidate.segment(data.delivery);
-            candidate.range(a, length);
-            if (candidate.feasible())
-                consider(result, {request, taxi, a, a,
-                    data.revenue - adjacent_delta[a]});
+    return 0;
+}
+
+// --- Route generation: bounded DFS ---
+bool enumerate_routes(Deadline deadline, const RealVector &prices) {
+    // Vary request-price strength between calls while keeping each seed reproducible.
+    dfs_request_prices = prices;
+    auto call = dfs_generation_calls++;
+    if (!prices.empty()) {
+        random_engine.seed(random_seed + SEED_STRIDE * call);
+        Real scale[] = {1, .8, 1.2};
+        for (auto &price : dfs_request_prices) {
+            price *= scale[call % 3];
+        }
+    }
+    // Build reusable pickup candidates, ordered by latest possible departure.
+    if (successor_requests.empty()) {
+        build_delivery_lower_bounds(deadline);
+        successor_requests.resize(instance.node_count + 1);
+        for (int node = 1; node <= instance.node_count; node++) {
+            auto &candidates = successor_requests[node];
+            for (int request = 0; request < instance.request_count; request++) {
+                if (travel_time(node, instance.requests[request].pickup_node) <=
+                    instance.requests[request].pickup_latest + FEASIBILITY_EPSILON) {
+                    candidates.push_back(request);
+                }
+            }
+            stable_sort(candidates.begin(), candidates.end(), [&](int left, int right) {
+                return instance.requests[left].pickup_latest -
+                           travel_time(node, instance.requests[left].pickup_node) >
+                       instance.requests[right].pickup_latest -
+                           travel_time(node, instance.requests[right].pickup_node);
+            });
+        }
+    }
+    bool complete = true;
+    dfs_request_state.assign(instance.request_count, 0);
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        if (full_probe_mode && full_probe_truncated)
+            return false;
+        // Divide remaining time among remaining taxis and reset this taxi's DFS state.
+        auto current_time = Clock::now();
+        if (current_time >= deadline) {
+            return false;
+        }
+        auto taxi_deadline =
+            current_time + (deadline - current_time) / (instance.taxi_count - taxi);
+        dfs_deadline = taxi_deadline;
+        dfs_stopped = false;
+        dfs_visited_prefixes = 0;
+        dfs_prefix_limit = full_probe_mode ? (size_t(1) << 50) : DFS_PREFIX_LIMIT;
+        dfs_route.clear();
+        dfs_requests.clear();
+        priced_route_bank.clear();
+        priced_score_floor = -INF;
+
+        // Ordinary DFS starts at the depot; priced DFS diversifies the first pickup.
+        if (prices.empty()) {
+            enumerate_route_prefix(taxi, instance.taxi_origin[taxi], 0, 0, 0, 0, 0);
         } else {
-            const auto evaluate = [&](std::size_t b, double delta) {
-                auto candidate = prefix;
-                candidate.range(a, b);
-                candidate.segment(data.delivery);
-                candidate.range(b, length);
-                if (candidate.feasible())
-                    consider(result, {request, taxi, a, b, data.revenue - delta});
-            };
-            for (std::size_t b = a; b <= length; ++b) {
-                if (!route.boundary_allowed(in, b)) continue;
-                const auto delta = b == a ? adjacent_delta[a] :
-                                   pickup_delta[a] + delivery_delta[b];
-                if (data.revenue - delta + 1e-8 < threshold()) continue;
-                evaluate(b, delta);
+            IntVector first_requests;
+            for (int request : successor_requests[instance.taxi_origin[taxi]]) {
+                if (instance.requests[request].weight <=
+                        instance.taxi_capacity[taxi] + FEASIBILITY_EPSILON &&
+                    travel_time(instance.taxi_origin[taxi],
+                                instance.requests[request].pickup_node) <=
+                        instance.requests[request].pickup_latest + FEASIBILITY_EPSILON) {
+                    first_requests.push_back(request);
+                }
+            }
+            shuffle(first_requests.begin(), first_requests.end(), random_engine);
+            // Share each taxi's time and prefix budget across its shuffled first pickups.
+            int remaining_starts = first_requests.size();
+            for (int request : first_requests) {
+                current_time = Clock::now();
+                if (current_time >= taxi_deadline || dfs_visited_prefixes >= DFS_PREFIX_LIMIT) {
+                    complete = false;
+                    break;
+                }
+                dfs_deadline = current_time + (taxi_deadline - current_time) / remaining_starts;
+                dfs_prefix_limit =
+                    dfs_visited_prefixes +
+                    max<size_t>(1, (DFS_PREFIX_LIMIT - dfs_visited_prefixes) / remaining_starts);
+                dfs_stopped = false;
+                auto &request_data = instance.requests[request];
+                Real arrival = travel_time(instance.taxi_origin[taxi], request_data.pickup_node),
+                     departure_time =
+                         max(arrival, request_data.pickup_earliest) + request_data.service_time,
+                     initial_cost =
+                         travel_cost(instance.taxi_origin[taxi], request_data.pickup_node);
+                dfs_requests.push_back(request);
+                dfs_route.push_back(request_data.pickup_node);
+                dfs_request_state[request] = 1;
+                if (request_data.is_passenger) {
+                    dfs_request_state[request] = 2;
+                    dfs_route.push_back(request_data.delivery_node);
+                    enumerate_route_prefix(
+                        taxi, request_data.delivery_node,
+                        departure_time +
+                            travel_time(request_data.pickup_node, request_data.delivery_node) +
+                            request_data.service_time,
+                        initial_cost +
+                            travel_cost(request_data.pickup_node, request_data.delivery_node),
+                        request_data.revenue, 0, 0);
+                    dfs_route.pop_back();
+                } else {
+                    enumerate_route_prefix(taxi, request_data.pickup_node, departure_time,
+                                           initial_cost, request_data.revenue, request_data.weight,
+                                           1);
+                }
+                dfs_request_state[request] = 0;
+                dfs_requests.pop_back();
+                dfs_route.pop_back();
+                complete &= !dfs_stopped;
+                remaining_starts--;
+            }
+        }
+        complete &= !dfs_stopped;
+
+        // Transfer priced candidates to the persistent bank using their actual profits.
+        for (auto &[ids, priced_route] : priced_route_bank) {
+            store_route(taxi, priced_route.second);
+        }
+    }
+    return complete;
+}
+
+// Stop by deadline or prefix count; save profitable prefixes with no open parcels.
+void enumerate_route_prefix(int taxi, int last_node, Real departure_time, Real total_cost,
+                            Real revenue, Real load, int open_parcels) {
+    // Stop the entire DFS call when its prefix or time budget is exhausted.
+    if (dfs_stopped) {
+        return;
+    }
+    if (++dfs_visited_prefixes >= dfs_prefix_limit ||
+        (dfs_visited_prefixes % DFS_CLOCK_INTERVAL == 0 && Clock::now() >= dfs_deadline)) {
+        dfs_stopped = true;
+        return;
+    }
+
+    // Prune when even a delivery lower bound misses an onboard parcel's deadline.
+    for (int request : dfs_requests) {
+        if (dfs_request_state[request] == 1 &&
+            departure_time + delivery_time_lower_bound[(last_node - 1) * instance.parcel_count +
+                                                       request - instance.passenger_count] >
+                instance.requests[request].delivery_latest + FEASIBILITY_EPSILON) {
+            return;
+        }
+    }
+    // A closed profitable prefix is a complete candidate route; extensions may still improve it.
+    if (!open_parcels && revenue - total_cost > FEASIBILITY_EPSILON) {
+        if (dfs_request_prices.empty()) {
+            store_route(taxi, dfs_route, true, revenue - total_cost);
+        } else {
+            Real score = revenue - total_cost;
+            for (int request : dfs_requests) {
+                score -= dfs_request_prices[request];
+            }
+            if (score > FEASIBILITY_EPSILON &&
+                (priced_route_bank.size() < (size_t)bank_route_limit ||
+                 score >= priced_score_floor)) {
+                auto requests = served_requests(dfs_route);
+                auto entry = priced_route_bank.find(requests);
+                if (entry == priced_route_bank.end() || entry->second.first < score) {
+                    priced_route_bank[requests] = {score, dfs_route};
+                    if (priced_route_bank.size() > (size_t)bank_route_limit) {
+                        priced_route_bank.erase(
+                            min_element(priced_route_bank.begin(), priced_route_bank.end(),
+                                        [](auto &left, auto &right) {
+                                            return left.second.first < right.second.first;
+                                        }));
+                        priced_score_floor =
+                            min_element(priced_route_bank.begin(), priced_route_bank.end(),
+                                        [](auto &left, auto &right) {
+                                            return left.second.first < right.second.first;
+                                        })
+                                ->second.first;
+                    }
+                }
             }
         }
     }
-    return result;
-}
-} // namespace
+    // Enumerate onboard deliveries and new pickups; priced DFS rotates their event order.
+    size_t pickup_count = successor_requests[last_node].size(),
+           delivery_count = dfs_requests.size();
+    UInt64 hash = 0;
+    if (!dfs_request_prices.empty()) {
+        auto &candidates = successor_requests[last_node];
+        pickup_count =
+            partition_point(candidates.begin(), candidates.end(),
+                            [&](int request) {
+                                return departure_time <=
+                                       instance.requests[request].pickup_latest -
+                                           travel_time(last_node,
+                                                       instance.requests[request].pickup_node) +
+                                           FEASIBILITY_EPSILON;
+                            }) -
+            candidates.begin();
+        // Mix the phase, taxi, and last node to rotate priced DFS event order.
+        hash = random_seed + SEED_STRIDE * (dfs_generation_calls - 1) +
+               taxi * 0x94d049bb133111ebULL + last_node * 0xbf58476d1ce4e5b9ULL;
+        hash = (hash ^ (hash >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        hash ^= hash >> 27;
+    }
+    size_t events = delivery_count + pickup_count,
+           offset = events && (hash & 1) ? hash % events : 0;
+    for (size_t i = 0; i < events; i++) {
+        auto event = offset ? (i + offset) % events : i;
+        if (event < delivery_count) {
+            // Deliver one onboard parcel, recurse, then restore the prefix.
+            int request = dfs_requests[event];
+            if (dfs_request_state[request] != 1 || instance.requests[request].is_passenger) {
+                continue;
+            }
+            auto &request_data = instance.requests[request];
+            Real arrival = departure_time + travel_time(last_node, request_data.delivery_node);
+            if (arrival > request_data.delivery_latest + FEASIBILITY_EPSILON) {
+                continue;
+            }
+            dfs_request_state[request] = 2;
+            dfs_route.push_back(request_data.delivery_node);
+            enumerate_route_prefix(taxi, request_data.delivery_node,
+                                   max(arrival, request_data.delivery_earliest) +
+                                       request_data.service_time,
+                                   total_cost + travel_cost(last_node, request_data.delivery_node),
+                                   revenue, load - request_data.weight, open_parcels - 1);
+            dfs_route.pop_back();
+            dfs_request_state[request] = 1;
+            if (dfs_stopped) {
+                return;
+            }
+            continue;
+        }
 
-std::optional<InsertionChoice> best_insertion_on_route(const SearchState& state,
-    std::size_t request, std::size_t taxi, const RouteCache& route, double minimum_gain) {
-    if (request >= state.request_count() || taxi >= state.taxi_count() ||
-        state.location(request).taxi >= 0) return std::nullopt;
-    return scan_route(state, request, taxi, route, request_segments(state, request),
-                      state.insertion_scratch(), minimum_gain, true).best;
-}
-
-void PositiveInsertionCache::refresh_entry(const SearchState& state,
-    std::size_t request, std::size_t taxi) {
-    auto& entry = entries_[request * taxis_ + taxi];
-    const auto& route = state.cache(taxi);
-    entry.choice.reset();
-    if (state.is_active(taxi)) {
-        entry.choice = scan_route(state, request, taxi, route,
-            state.empty_taxi_index()->request_segments(request),
-            state.insertion_scratch(), 1e-9, true).best;
-        if (entry.choice && entry.choice->gain <= 1e-9) entry.choice.reset();
-    } else {
-        for (const auto& empty : state.empty_taxi_index()->choices(request))
-            if (empty.taxi == taxi) {
-                if (empty.gain > 1e-9)
-                    entry.choice = InsertionChoice{request, taxi, 0, 0, empty.gain};
+        // Reject pickups that violate time, capacity, or the request's current state.
+        int request = successor_requests[last_node][event - delivery_count];
+        auto &request_data = instance.requests[request];
+        Real arc_time = travel_time(last_node, request_data.pickup_node);
+        Real rounding_margin =
+            FEASIBILITY_EPSILON + 8 * numeric_limits<Real>::epsilon() *
+                                      max({1.0, abs(request_data.pickup_latest), abs(arc_time)});
+        if (departure_time > request_data.pickup_latest - arc_time + rounding_margin) {
+            if (dfs_request_prices.empty()) {
                 break;
             }
-    }
-    entry.version = route.version();
-}
-
-void PositiveInsertionCache::select_winner(std::size_t request) {
-    auto& winner = entries_[requests_ * taxis_ + request].choice;
-    winner.reset();
-    for (std::size_t taxi = 0; taxi < taxis_; ++taxi) {
-        const auto& choice = entries_[request * taxis_ + taxi].choice;
-        if (choice && (!winner || choice->gain > winner->gain)) winner = choice;
-    }
-}
-
-void PositiveInsertionCache::initialize(const SearchState& state) {
-    const auto& index = state.empty_taxi_index();
-
-    if (index_ != index || taxis_ != state.taxi_count() ||
-        requests_ != state.request_count()) {
-        index_ = index;
-        taxis_ = state.taxi_count();
-        requests_ = state.request_count();
-
-        entries_.assign(requests_ * (taxis_ + 1), Entry{});
-    }
-}
-
-const std::optional<InsertionChoice>& PositiveInsertionCache::best(const SearchState& state,
-    std::size_t request) {
-    initialize(state);
-    if (state.location(request).taxi >= 0) {
-        entries_[requests_ * taxis_ + request].choice.reset();
-        return best(request);
-    }
-    index_->ensure(request);
-    for (std::size_t taxi = 0; taxi < taxis_; ++taxi)
-        if (entries_[request * taxis_ + taxi].version != state.cache(taxi).version()) {
-            refresh_entry(state, request, taxi);
+            continue;
         }
-    select_winner(request);
-    return best(request);
-}
+        Real arrival = departure_time + arc_time;
+        if (arrival > request_data.pickup_latest + FEASIBILITY_EPSILON) {
+            continue;
+        }
+        if (dfs_request_state[request] ||
+            load + request_data.weight > instance.taxi_capacity[taxi] + FEASIBILITY_EPSILON) {
+            continue;
+        }
+        Real next_departure =
+                 max(arrival, request_data.pickup_earliest) + request_data.service_time,
+             next_cost = total_cost + travel_cost(last_node, request_data.pickup_node);
+        dfs_request_state[request] = 1;
+        dfs_requests.push_back(request);
+        dfs_route.push_back(request_data.pickup_node);
 
-void PositiveInsertionCache::prepare(const SearchState& state,
-    const std::vector<std::size_t>& requests) {
-    initialize(state);
-    const auto& index = index_;
-    for (const auto request : requests) {
-        if (state.location(request).taxi >= 0) continue;
-        index->ensure(request);
-        for (std::size_t taxi = 0; taxi < taxis_; ++taxi)
-            if (entries_[request * taxis_ + taxi].version != state.cache(taxi).version())
-                refresh_entry(state, request, taxi);
-        select_winner(request);
-    }
-}
+        // Serve passengers as adjacent pickup/delivery blocks; leave parcels onboard.
+        if (request_data.is_passenger) {
+            dfs_request_state[request] = 2;
+            dfs_route.push_back(request_data.delivery_node);
+            enumerate_route_prefix(
+                taxi, request_data.delivery_node,
+                next_departure + travel_time(request_data.pickup_node, request_data.delivery_node) +
+                    request_data.service_time,
+                next_cost + travel_cost(request_data.pickup_node, request_data.delivery_node),
+                revenue + request_data.revenue, load, open_parcels);
+            dfs_route.pop_back();
+            dfs_request_state[request] = 1;
+        } else {
+            enumerate_route_prefix(taxi, request_data.pickup_node, next_departure, next_cost,
+                                   revenue + request_data.revenue, load + request_data.weight,
+                                   open_parcels + 1);
+        }
 
-void PositiveInsertionCache::refresh_taxi(const SearchState& state,
-    std::size_t taxi, const std::vector<std::size_t>& requests) {
-    for (const auto request : requests) {
-        if (state.location(request).taxi >= 0) continue;
-        const auto previous = best(request);
-        refresh_entry(state, request, taxi);
-        const auto& updated = entries_[request * taxis_ + taxi].choice;
-        if (previous && previous->taxi == taxi) select_winner(request);
-        else if (updated && (!previous || updated->gain > previous->gain ||
-                            (updated->gain == previous->gain && taxi < previous->taxi)))
-            entries_[requests_ * taxis_ + request].choice = updated;
-    }
-}
-
-} // namespace soict::alns
-
-// END src/search/alns/operators/Repair/InsertionSearch.cpp
-
-// BEGIN src/search/alns/operators/Repair/RoutePoolRepair.cpp
-
-// BEGIN include/search/alns/operators/Repair/RoutePoolMaster.hpp
-#include <vector>
-
-namespace soict::alns {
-struct MasterColumn {
-    std::size_t taxi;
-    std::vector<std::size_t> requests;
-    double profit;
-};
-struct MasterResult {
-    std::vector<int> selected;
-    // Optional full-bank request prices for the next generation phase.
-    // These guide route generation; they do not certify a restricted solve.
-    std::vector<double> request_prices;
-    double profit = 0, root_upper = 0;
-    std::size_t nodes = 0, pivots = 0;
-    bool timed_out = false;
-    bool complete = false;
-};
-std::vector<double> route_master_prices(const std::vector<MasterColumn>& columns,
-    std::size_t taxis, std::size_t requests, Deadline deadline);
-bool route_master_uses_cplex();
-// Restricted set-packing master. The input incumbent must be feasible.
-MasterResult solve_route_master(const std::vector<MasterColumn>& columns,
-    std::size_t taxis, std::size_t requests, const std::vector<int>& incumbent,
-    Deadline deadline, bool verbose = true);
-// Coordinated LP neighborhoods preserve a feasible fleet throughout. This
-// heuristic does not claim that the unrestricted bank master is complete.
-MasterResult improve_route_master(const std::vector<MasterColumn>& columns,
-    std::size_t taxis, std::size_t requests, const std::vector<int>& incumbent,
-    Deadline deadline, std::uint64_t seed = 1, const std::vector<double>& request_prices = {});
-}
-
-// END include/search/alns/operators/Repair/RoutePoolMaster.hpp
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <iomanip>
-#include <iostream>
-#include <iterator>
-#include <numeric>
-#include <random>
-
-namespace soict::alns {
-namespace {
-// Erase the first minimum in map order and return the surviving minimum.
-// The caller has exceeded a positive cap, so at least two entries exist.
-template<class Bank, class Score>
-double erase_worst(Bank& bank, Score score) {
-    auto worst = bank.begin(), second = bank.end();
-    for (auto it = std::next(worst); it != bank.end(); ++it) {
-        if (score(it->second) < score(worst->second)) {
-            second = worst;
-            worst = it;
-        } else if (second == bank.end() || score(it->second) < score(second->second)) {
-            second = it;
+        // Backtrack so the next event sees exactly the same incoming prefix.
+        dfs_route.pop_back();
+        dfs_requests.pop_back();
+        dfs_request_state[request] = 0;
+        if (dfs_stopped) {
+            return;
         }
     }
-    const auto floor = score(second->second);
-    bank.erase(worst);
-    return floor;
-}
 }
 
-RoutePoolRepair::RoutePoolRepair(const Instance& instance, std::size_t limit, std::uint64_t seed)
-    : instance_(instance), limit_(limit), floors_(instance.taxis.size(),-std::numeric_limits<double>::infinity()), seed_(seed),
-      pool_(instance.taxis.size()), versions_(pool_.size(), 0) {
-
-}
-
-void RoutePoolRepair::add(const SearchState& state, std::size_t taxi, bool enforce_limit) {
-    const auto& nodes = state.cache(taxi).nodes();
-    if (nodes.empty()) return;
-    const auto k = state.taxi_count(), n = state.passenger_count();
-    auto& requests = request_scratch_;
-    requests.clear();
-    double revenue = 0;
-    for (const auto node : nodes) {
-        std::size_t request;
-        if (node < k + n) request = node - k;
-        else if (node >= k + 2*n && node < k + 2*n + instance_.parcels.size())
-            request = n + node - k - 2*n;
-        else continue;
-        requests.push_back(request);
-        revenue += state.revenue(request);
-    }
-    std::sort(requests.begin(), requests.end());
-    const auto profit = revenue - state.cache(taxi).cost();
-    add_column(taxi, requests, nodes, profit, enforce_limit);
-}
-
-void RoutePoolRepair::add_column(std::size_t taxi, const std::vector<std::size_t>& requests,
-        const std::vector<std::size_t>& nodes, double profit, bool enforce_limit) {
-    if (!std::isfinite(profit) || profit <= 1e-9) return;
-    auto& bank = pool_[taxi];
-    if (enforce_limit && bank.size() >= limit_ && profit < floors_[taxi]) return;
-    const auto found = bank.lower_bound(requests);
-    if (found != bank.end() && found->first == requests) {
-        if (found->second.profit >= profit) return;
-        // Preserve the route buffer when a better sequence serves the same set.
-        found->second.route.assign(nodes.begin(), nodes.end());
-        found->second.profit = profit;
-    } else {
-        bank.emplace_hint(found, requests, Column{nodes, profit});
-    }
-    ++bank_revision_;
-    if (!enforce_limit) floors_[taxi] = -std::numeric_limits<double>::infinity();
-    if (enforce_limit && bank.size() > limit_) {
-        floors_[taxi] = erase_worst(bank, [](const auto& column) { return column.profit; });
-    }
-}
-
-void RoutePoolRepair::generate(Deadline deadline, std::size_t prefix_limit, bool priced) {
-
-    completed_taxis_ = 0;
-    if (std::chrono::steady_clock::now() >= deadline) return;
-    const auto& in = instance_;
-    const auto n = in.passengers.size(), nr = n + in.parcels.size(), nv = in.node_count();
-    auto prices=priced?estimate_prices(deadline):std::vector<double>(nr,0);
-    const double scales[]={1.0,0.8,1.2};
-    if (priced) {
-        const auto scale=scales[generation_calls_%3];for (auto& price:prices) price*=scale;
-        (void)0;
-    }
-    const auto generation_seed=seed_+0x9e3779b97f4a7c15ULL*generation_calls_++;
-    std::vector<RequestData> requests;
-    requests.reserve(nr);
-    for (std::size_t r = 0; r < nr; ++r) {
-        requests.push_back(request_data(in, r));
-        requests.back().revenue -= prices[r];
-    }
-    const auto m=in.parcels.size();
-    if (!generation_index_ready_) {
-    // Unrestricted shortest paths give optimistic travel times even on
-    // directed/nonmetric matrices. Landmark triangle differences therefore
-    // bound every legal service path without assuming direct arcs are metric.
-    const auto preprocess_start=std::chrono::steady_clock::now();
-    const auto preprocess_seconds=std::min(0.6,0.25*std::chrono::duration<double>(deadline-preprocess_start).count());
-    const auto preprocess_deadline=preprocess_start+std::chrono::duration_cast<Deadline::duration>(
-        std::chrono::duration<double>(std::max(0.0,preprocess_seconds)));
-    std::vector<std::vector<double>> landmarks;
-    std::vector<double> spread(nv,std::numeric_limits<double>::infinity());
-    std::vector<unsigned char> used_landmark(nv,0);
-    std::size_t landmark=0;
-    for (std::size_t l=0;l<std::min<std::size_t>(8,nv);++l) {
-        if (std::chrono::steady_clock::now()>=preprocess_deadline) break;
-        std::vector<double> distance(in.travel_time.begin()+landmark*nv,in.travel_time.begin()+(landmark+1)*nv);
-        distance[landmark]=0;std::vector<unsigned char> visited(nv,0);bool complete=true;
-        for (std::size_t step=0;step<nv;++step) {
-            if ((step&63)==0 && std::chrono::steady_clock::now()>=preprocess_deadline) {complete=false;break;}
-            std::size_t v=nv;double value=std::numeric_limits<double>::infinity();
-            for (std::size_t u=0;u<nv;++u) if (!visited[u] && distance[u]<value) {v=u;value=distance[u];}
-            if (v==nv) break;
-            visited[v]=1;
-            for (std::size_t u=0;u<nv;++u) if (!visited[u])
-                distance[u]=std::min(distance[u],value+in.travel_time[v*nv+u]);
-        }
-        if (!complete) break;
-        used_landmark[landmark]=1;
-        for (std::size_t u=0;u<nv;++u) spread[u]=std::min(spread[u],distance[u]);
-        landmarks.push_back(std::move(distance));double farthest=-1;
-        for (std::size_t u=0;u<nv;++u) if (!used_landmark[u] && spread[u]>farthest) {farthest=spread[u];landmark=u;}
-    }
-    std::vector<double> delivery_lower(nv*m,0);
-    for (std::size_t node=0;node<nv;++node) for (std::size_t r=0;r<m;++r) {
-        auto& lower=delivery_lower[node*m+r];const auto drop=in.parcel_dropoff(r);
-        for (const auto& d:landmarks) {
-            const double guard=1e-8+64*std::numeric_limits<double>::epsilon()*nv*std::max({1.0,d[drop],d[node]});
-            lower=std::max(lower,d[drop]-d[node]-guard);
-        }
-    }
-    (void)0;
-    std::vector<std::vector<Arc>> next(nv);
-    for (std::size_t node = 0; node < nv; ++node) {
-        if (std::chrono::steady_clock::now() >= deadline) return;
-        auto& arcs = next[node];
-        for (std::size_t r = 0; r < nr; ++r) {
-            const auto travel = in.travel_time[node*nv+requests[r].pickup];
-            const auto guard = 8*std::numeric_limits<double>::epsilon()*
-                std::max({1.0,std::abs(requests[r].latest),std::abs(travel)});
-            const auto latest = requests[r].latest - travel + 1e-8 + guard;
-            if (latest >= -1e-8) arcs.push_back({r, latest});
-        }
-        std::sort(arcs.begin(), arcs.end(), [](const auto& a, const auto& b) {
-            return a.latest_departure > b.latest_departure ||
-                (a.latest_departure == b.latest_departure && a.request < b.request);
-        });
-    }
-    next_=std::move(next);delivery_lower_=std::move(delivery_lower);generation_index_ready_=true;
-    (void)0;
-    }
-    const auto& next=next_;const auto& delivery_lower=delivery_lower_;
-    completed_taxis_ = 0;
-    std::vector<unsigned char> picked(nr, 0), opened(nr, 0);
-    std::vector<std::size_t> route, served, key;
-    route.reserve(2*nr); served.reserve(nr); key.reserve(nr);
-    for (std::size_t taxi = 0; taxi < pool_.size(); ++taxi) {
-        if (std::chrono::steady_clock::now() >= deadline) break;
-        // Fairly divide a finite generation budget across the remaining taxis.
-        const auto now = std::chrono::steady_clock::now();
-        const auto taxi_deadline = deadline == Deadline::max() ? deadline :
-            now + (deadline-now)/static_cast<Deadline::duration::rep>(pool_.size()-taxi);
-        std::size_t prefixes = 0;
-        std::map<std::vector<std::size_t>,std::pair<double,Column>> priced_bank;
-        double priced_floor=-std::numeric_limits<double>::infinity();
-        std::size_t prefix_ceiling = prefix_limit;
-        auto branch_deadline=taxi_deadline;
-        bool exhausted = false, incomplete = false;
-        std::size_t first_remaining=0;
-        for (const auto& arc:next[taxi]) {
-            const auto& q=requests[arc.request];
-            if (q.weight<=in.taxis[taxi].parcel_capacity+1e-8 &&
-                in.travel_time[taxi*nv+q.pickup]<=q.latest+1e-8) ++first_remaining;
-        }
-        const auto visit = [&](auto&& self, std::size_t last, double time, double cost,
-                               double revenue, double load, std::size_t open_count) -> void {
-            if (exhausted) return;
-            if (prefixes >= prefix_ceiling || ((prefixes & 63) == 0 &&
-                std::chrono::steady_clock::now() >= branch_deadline)) {
-                exhausted = true; return;
+// --- Route generation: fleet rebuilding ---
+// Randomized destroy/rebuild rounds add diverse routes to the bank.
+// Periodically restart from the best fleet, including after a sufficient profit loss.
+void rebuild_fleets(SearchState &incumbent, Deadline deadline) {
+    random_engine.seed(random_seed + SEED_STRIDE * fleet_generation_calls++);
+    SearchState current = incumbent, best_state = incumbent;
+    InsertionCache cache;
+    IntVector order(instance.request_count);
+    iota(order.begin(), order.end(), 0);
+    int round_index = 0;
+    while (Clock::now() < deadline) {
+        // Perturb the current fleet; periodically return to the best fleet found in this call.
+        if (round_index) {
+            if (round_index % REBUILD_RESTART_INTERVAL == 0 ||
+                current.profit < best_state.profit * REBUILD_PROFIT_RETENTION) {
+                current = best_state;
             }
-            ++prefixes;
-            for (auto r:served) if (opened[r] && time+delivery_lower[last*m+r-n]>requests[r].drop_latest+1e-8)
-                return;
-            if (!open_count && revenue-cost > 1e-9 &&
-                (priced ? (priced_bank.size()<limit_ || revenue-cost>=priced_floor) :
-                    (pool_[taxi].size()<limit_ || revenue-cost>=floors_[taxi]))) {
-                key.assign(served.begin(), served.end());
-                std::sort(key.begin(), key.end());
-                if (!priced) add_column(taxi, key, route, revenue-cost, true);
-                else {
-                    const auto score=revenue-cost;
-                    const auto found=priced_bank.lower_bound(key);
-                    const bool existing=found!=priced_bank.end() && found->first==key;
-                    if (!existing || found->second.first<score) {
-                        double profit=-cost;for (auto r:key)
-                            profit+=r<n?in.passengers[r].revenue:in.parcels[r-n].revenue;
-                        if (existing) {
-                            found->second.first=score;
-                            found->second.second.route.assign(route.begin(),route.end());
-                            found->second.second.profit=profit;
-                        } else priced_bank.emplace_hint(found,key,std::make_pair(score,Column{route,profit}));
-                        if (priced_bank.size()>limit_) {
-                            priced_floor=erase_worst(priced_bank,[](const auto& entry){return entry.first;});
+            destroy_solution(current, round_index);
+        }
+
+        // Reinsert unserved requests in random order using cached best taxi positions.
+        shuffle(order.begin(), order.end(), random_engine);
+        for (int request : order) {
+            if (Clock::now() >= deadline) {
+                break;
+            }
+            if (current.request_owner[request] >= 0) {
+                continue;
+            }
+            auto choice = find_fleet_insertion(current, request, cache);
+            if (choice.taxi >= 0) {
+                apply_insertion(current, choice);
+            }
+        }
+        // Complete profitable insertions, then occasionally run the cheaper descent neighborhoods.
+        while (Clock::now() < deadline && improve_by_insertion(current, cache)) {
+        }
+        if (round_index % REBUILD_POLISH_INTERVAL == 0 && Clock::now() < deadline) {
+            improve_solution(current, deadline, false);
+        }
+
+        // Keep the best complete fleet even when later rounds deliberately lose profit.
+        if (current.profit > best_state.profit) {
+            best_state = current;
+        }
+        round_index++;
+    }
+    // Return the best fleet; preserve its routes as candidates for later master solves.
+    incumbent = best_state;
+    store_fleet(incumbent.routes);
+}
+
+// Cycle through whole-taxi, random, related, and profit-based removals.
+void destroy_solution(SearchState &state, int round_index) {
+    int count =
+        max(MIN_REMOVED_REQUESTS,
+            (int)count_if(state.request_owner.begin(), state.request_owner.end(), [](int taxi) {
+                return taxi >= 0;
+            }) / REQUEST_REMOVAL_DIVISOR);
+    // Mode 0: empty a few taxis to free whole route combinations.
+    if (round_index % 4 == 0) {
+        for (int i = 0, taxi_removals = 2 + random_engine() %
+                                                max(2, instance.taxi_count / TAXI_REMOVAL_DIVISOR);
+             i < taxi_removals; i++) {
+            int taxi = random_engine() % instance.taxi_count;
+            if (!state.routes[taxi].empty()) {
+                update_route(state, taxi, {});
+            }
+        }
+        return;
+    }
+    IntVector served_ids;
+    for (int request = 0; request < instance.request_count; request++) {
+        if (state.request_owner[request] >= 0) {
+            served_ids.push_back(request);
+        }
+    }
+    if (served_ids.empty()) {
+        return;
+    }
+    // Mode 1: remove random served requests, retaining feasibility after each removal.
+    if (round_index % 4 == 1) {
+        served_ids.resize(instance.request_count);
+        iota(served_ids.begin(), served_ids.end(), 0);
+        shuffle(served_ids.begin(), served_ids.end(), random_engine);
+        int removed = 0;
+        for (int request : served_ids) {
+            if (state.request_owner[request] >= 0) {
+                int taxi = state.request_owner[request];
+                auto route = remove_request(state.routes[taxi], request);
+                if (evaluate_route(instance, taxi, route)) {
+                    update_route(state, taxi, route);
+                    if (++removed == count) {
+                        break;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    // Mode 2 removes requests related to an anchor; mode 3 favors the best removal gain.
+    int anchor = round_index % 4 == 2 ? served_ids[random_engine() % served_ids.size()] : 0;
+    for (int removed = 0; removed < count; removed++) {
+        int chosen = -1;
+        Real best = -INF;
+        Route reduced_route;
+        for (int request = 0; request < instance.request_count; request++) {
+            if (state.request_owner[request] >= 0) {
+                int taxi = state.request_owner[request];
+                auto route = remove_request(state.routes[taxi], request);
+                auto evaluated_profit = evaluate_route(instance, taxi, route);
+                if (!evaluated_profit) {
+                    continue;
+                }
+                Real score = *evaluated_profit - state.route_profit[taxi];
+                if (round_index % 4 == 2) {
+                    score = -travel_time(instance.requests[anchor].pickup_node,
+                                         instance.requests[request].pickup_node) -
+                            travel_time(instance.requests[request].pickup_node,
+                                        instance.requests[anchor].pickup_node) -
+                            abs(instance.requests[anchor].pickup_earliest -
+                                instance.requests[request].pickup_earliest);
+                }
+                if (score > best) {
+                    best = score;
+                    chosen = request;
+                    reduced_route = move(route);
+                }
+            }
+        }
+        if (chosen < 0) {
+            break;
+        }
+        update_route(state, state.request_owner[chosen], reduced_route);
+    }
+}
+
+// --- Route generation: priced replacements ---
+// Generate routes by insertion/removal/replacement under request opportunity costs.
+// Start from the incumbent route and several bank routes, with bounded restarts.
+void generate_priced_replacements(SearchState &state, Deadline deadline) {
+    // Penalize expensive-to-share requests and vary that penalty across generation calls.
+    auto prices = estimate_request_prices(state.profit);
+    auto call = priced_replacement_calls++;
+    random_engine.seed(random_seed + SEED_STRIDE * call);
+    Real scale[] = {1, .8, 1.2};
+    for (auto &price : prices) {
+        price *= scale[call % 3];
+    }
+    for (int taxi = 0; taxi < instance.taxi_count && Clock::now() < deadline; taxi++) {
+        // Share time fairly; seed this taxi's search from its incumbent and top bank routes.
+        auto current_time = Clock::now(),
+             taxi_deadline =
+                 current_time + (deadline - current_time) / (instance.taxi_count - taxi);
+        vector<pair<Real, const StoredRoute *>> ranked;
+        for (auto &[ids, stored_route] : route_bank[taxi]) {
+            Real reduced_profit = stored_route.profit;
+            for (int request : ids) {
+                reduced_profit -= prices[request];
+            }
+            ranked.push_back({reduced_profit, &stored_route});
+        }
+        int count = min<int>(PRICED_BANK_STARTS, ranked.size());
+        partial_sort(ranked.begin(), ranked.begin() + count, ranked.end(),
+                     [](auto &left, auto &right) { return left.first > right.first; });
+        vector<Route> seeds{state.routes[taxi]};
+        for (int i = 0; i < count; i++) {
+            seeds.push_back(ranked[i].second->route);
+        }
+        SearchState candidate_state = make_search_state(Fleet(instance.taxi_count));
+        update_route(candidate_state, taxi, seeds[0]);
+        int restarts = 0;
+        for (int iteration = 0; iteration < PRICED_MOVE_LIMIT && Clock::now() < taxi_deadline;
+             iteration++) {
+            Real best = FEASIBILITY_EPSILON;
+            Route chosen;
+            bool changed = false;
+            auto score = [&](const Route &route) {
+                Real reduced_profit = route_profit(taxi, route);
+                for (int request : served_requests(route)) {
+                    reduced_profit -= prices[request];
+                }
+                return reduced_profit;
+            };
+            Real previous_score = score(candidate_state.routes[taxi]);
+
+            // Try adding an unserved request, accounting for its request-price penalty.
+            for (int request = 0; request < instance.request_count && Clock::now() < taxi_deadline;
+                 request++) {
+                if (candidate_state.request_owner[request] < 0) {
+                    auto choice = find_route_insertion(request, taxi, candidate_state.routes[taxi],
+                                                       best + prices[request]);
+                    if (choice.taxi >= 0 && choice.profit_delta - prices[request] > best) {
+                        best = choice.profit_delta - prices[request];
+                        chosen = insert_request(candidate_state.routes[taxi], request,
+                                                choice.pickup_position, choice.delivery_position);
+                        changed = true;
+                    }
+                }
+            }
+            // Compare removals and one-for-one replacements by their change in priced profit.
+            for (int outgoing_request : served_requests(candidate_state.routes[taxi])) {
+                auto route = remove_request(candidate_state.routes[taxi], outgoing_request);
+                Real removal_gain = route_profit(taxi, route) - candidate_state.route_profit[taxi];
+                if (evaluate_route(instance, taxi, route) && score(route) - previous_score > best) {
+                    best = score(route) - previous_score;
+                    chosen = route;
+                    changed = true;
+                }
+                for (int incoming_request = 0;
+                     incoming_request < instance.request_count && Clock::now() < taxi_deadline;
+                     incoming_request++) {
+                    if (candidate_state.request_owner[incoming_request] < 0) {
+                        auto choice =
+                            find_route_insertion(incoming_request, taxi, route,
+                                                 best - removal_gain - prices[outgoing_request] +
+                                                     prices[incoming_request]);
+                        if (choice.taxi >= 0 && removal_gain + choice.profit_delta +
+                                                        prices[outgoing_request] -
+                                                        prices[incoming_request] >
+                                                    best) {
+                            best = removal_gain + choice.profit_delta + prices[outgoing_request] -
+                                   prices[incoming_request];
+                            chosen = insert_request(route, incoming_request, choice.pickup_position,
+                                                    choice.delivery_position);
+                            changed = true;
                         }
                     }
                 }
             }
-            // An overflowing departure can still end a complete route: the
-            // full evaluator checks arrivals, with no return leg. It cannot
-            // be extended to another finite arrival.
-            if (!std::isfinite(time)) return;
-            auto count=next[last].size();
-            std::uint64_t hash=0;
-            if (priced) {
-                const auto eligible=std::partition_point(next[last].begin(),next[last].end(),
-                    [&](const auto& arc){return time<=arc.latest_departure;});
-                count=static_cast<std::size_t>(eligible-next[last].begin());
-                hash=generation_seed+taxi*0x94d049bb133111ebULL+last*0xbf58476d1ce4e5b9ULL;
-                hash=(hash^(hash>>30))*0xbf58476d1ce4e5b9ULL;hash^=hash>>27;
-            }
-            const auto delivery_events=served.size(),events=delivery_events+count;
-            const auto offset=events && (hash&1)?static_cast<std::size_t>(hash%events):0;
-            for (std::size_t i=0;i<events;++i) {
-                const auto event=offset?(i+offset)%events:i;
-                if (event<delivery_events) {
-                const auto r = served[event];
-                if (!opened[r]) continue;
-                const auto& q = requests[r];
-                const double arrival = time + in.travel_time[last*nv+q.delivery];
-                if (!std::isfinite(arrival) || arrival > q.drop_latest + 1e-8) continue;
-                opened[r] = 0; route.push_back(q.delivery);
-                self(self, q.delivery, std::max(arrival,q.drop_ready)+q.service,
-                     cost+in.travel_cost[last*nv+q.delivery], revenue, load-q.weight, open_count-1);
-                route.pop_back(); opened[r] = 1;
-                if (exhausted) return;
+            // At a local optimum, restart from another seed and remove a few requests for diversity.
+            if (!changed) {
+                if (++restarts > PRICED_RESTART_LIMIT) {
+                    break;
+                }
+                update_route(candidate_state, taxi, seeds[restarts % seeds.size()]);
+                auto ids = served_requests(candidate_state.routes[taxi]);
+                if (!ids.empty()) {
+                    shuffle(ids.begin(), ids.end(), random_engine);
+                    ids.resize(min<size_t>(ids.size(), 1 + random_engine() % 3));
+                    Route reduced;
+                    for (int node : candidate_state.routes[taxi]) {
+                        if (find(ids.begin(), ids.end(), instance.node_request[node]) ==
+                            ids.end()) {
+                            reduced.push_back(node);
+                        }
+                    }
+                    if (evaluate_route(instance, taxi, reduced)) {
+                        update_route(candidate_state, taxi, reduced);
+                    }
+                }
                 continue;
-                }
-                const auto& arc=next[last][event-delivery_events];
-                if (!priced && time>arc.latest_departure) break;
-                const auto r = arc.request;
-                if (picked[r]) continue;
-                const auto& q = requests[r];
-                if (load+q.weight > in.taxis[taxi].parcel_capacity+1e-8) continue;
-                const double arrival = time+in.travel_time[last*nv+q.pickup];
-                // Test the actual arrival as well: cancellation in the sorted
-                // departure threshold is not a substitute for feasibility.
-                if (arrival > q.latest+1e-8) continue;
-                const bool first=priced && served.empty();
-                if (first) {
-                    const auto seed_start=std::chrono::steady_clock::now();
-                    if (prefixes>=prefix_limit || seed_start>=taxi_deadline) {incomplete=true;return;}
-                    // A difficult first pickup must not consume the entire
-                    // taxi budget and hide every other entry into its route.
-                    // Redistribute unused work from completed branches.
-                    prefix_ceiling=prefixes+std::max<std::size_t>(1,(prefix_limit-prefixes)/first_remaining);
-                    branch_deadline=taxi_deadline==Deadline::max()?taxi_deadline:
-                        seed_start+(taxi_deadline-seed_start)/static_cast<Deadline::duration::rep>(first_remaining);
-                }
-                const double departure = std::max(arrival,q.ready)+q.service;
-                const double expense = cost+in.travel_cost[last*nv+q.pickup];
-                picked[r] = 1; served.push_back(r); route.push_back(q.pickup);
-                if (r < n) {
-                    route.push_back(q.delivery);
-                    const auto drop_arrival = departure+in.travel_time[q.pickup*nv+q.delivery];
-                    if (std::isfinite(drop_arrival))
-                        self(self,q.delivery,drop_arrival+q.service,
-                             expense+in.travel_cost[q.pickup*nv+q.delivery], revenue+q.revenue,load,open_count);
-                    route.pop_back();
-                } else {
-                    opened[r] = 1;
-                    self(self,q.pickup,departure,expense,revenue+q.revenue,load+q.weight,open_count+1);
-                    opened[r] = 0;
-                }
-                route.pop_back(); served.pop_back(); picked[r] = 0;
-                if (first) {incomplete|=exhausted;exhausted=false;--first_remaining;}
-                else if (exhausted) return;
             }
-        };
-        visit(visit,taxi,0,0,0,0,0);
-        completed_taxis_ += !exhausted && !incomplete;
-        for (const auto& [key,c]:priced_bank) add_column(taxi,key,c.second.route,c.second.profit,false);
+            // Apply the best priced move and store the resulting route with its actual profit.
+            update_route(candidate_state, taxi, chosen);
+            store_route(taxi, chosen);
+        }
     }
 }
 
-std::vector<double> RoutePoolRepair::estimate_prices(Deadline deadline) const {
-    const auto nr = instance_.passengers.size()+instance_.parcels.size();
-    if (prices_revision_==bank_revision_ && cached_prices_.size()==nr) {
-        (void)0;
-        return cached_prices_;
+// Equal per-request profit shares give feasible nonnegative packing prices:
+// each route's request prices sum to at least its profit. Round every operation
+// upward, and only skip selection when no integer improvement is possible.
+static bool bank_incumbent_certified(const SearchState &state) {
+    RealVector price(instance.request_count, 0);
+    bool integral = true;
+    const Real infinity = numeric_limits<Real>::infinity();
+    for (const auto &bank : route_bank)
+        for (const auto &entry : bank) {
+            const auto &ids = entry.first;
+            Real profit = entry.second.profit;
+            if (ids.empty() || !isfinite(profit))
+                return false;
+            integral &= profit == round(profit);
+            Real share = nextafter(profit / Real(ids.size()), infinity);
+            for (int request : ids)
+                price[request] = max(price[request], share);
+        }
+    Real upper = 0;
+    for (Real value : price)
+        upper = nextafter(upper + value, infinity);
+    Real lower = fleet_profit(state.routes);
+    if (!isfinite(upper) || !isfinite(lower))
+        return false;
+    return integral ? upper < floor(lower) + 1 : upper <= lower;
+}
+
+// --- Route selection: master dispatch ---
+// Build the master from the bank and retain the incumbent unless profit improves.
+void select_fleet_routes(SearchState &state, Deadline deadline, bool full_fleet) {
+
+    // Preserve incumbent routes and map every stored route to a master column.
+    store_fleet(state.routes);
+    if (bank_incumbent_certified(state))
+        return;
+    if (full_fleet && !route_bank_complete && bank_cardinality_certified(state, deadline)) {
+        return;
     }
-    struct PricedColumn {
-        const std::vector<std::size_t>& requests;
-        double profit;
-    };
-    std::vector<PricedColumn> columns;
-    std::vector<std::size_t> taxis;
-    for (std::size_t t = 0; t < pool_.size(); ++t) for (const auto& [key,c] : pool_[t]) {
-        columns.push_back({key,c.profit});taxis.push_back(t);
+    vector<MasterColumn> columns;
+    vector<const Route *> routes;
+    IntVector initial(instance.taxi_count, -1);
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        for (auto &[ids, stored_route] : route_bank[taxi]) {
+            if (ids == served_requests(state.routes[taxi])) {
+                initial[taxi] = columns.size();
+            }
+            columns.push_back(
+                {(size_t)taxi, IntVector(ids.begin(), ids.end()), stored_route.profit});
+            routes.push_back(&stored_route.route);
+        }
+    }
+    // Choose a master strategy by fleet size; larger fleets use request opportunity costs.
+    auto prices = instance.taxi_count > SMALL_FLEET_TAXI_LIMIT
+                      ? estimate_request_prices(state.profit)
+                      : RealVector{};
+    MasterResult solved;
+    if (full_fleet) {
+        solved = solve_route_master(columns, instance.taxi_count, instance.request_count, initial,
+                                    deadline, true);
+    } else if (instance.taxi_count > GROUP_MASTER_TAXI_LIMIT) {
+        solved = solve_taxi_groups(columns, instance.taxi_count, instance.request_count, initial,
+                                   deadline, random_seed, prices);
+    } else if (instance.taxi_count > SMALL_FLEET_TAXI_LIMIT) {
+        solved = solve_ranked_master(columns, instance.taxi_count, instance.request_count, initial,
+                                     deadline);
+    } else {
+        solved = solve_route_master(columns, instance.taxi_count, instance.request_count, initial,
+                                    deadline);
+    }
+    // Reconstruct the selected fleet and accept it only when actual profit improves.
+    Fleet selected_fleet(instance.taxi_count);
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        if (solved.selected_columns[taxi] >= 0) {
+            selected_fleet[taxi] = *routes[solved.selected_columns[taxi]];
+        }
+    }
+    if (fleet_profit(selected_fleet) > state.profit + FEASIBILITY_EPSILON) {
+        state = make_search_state(selected_fleet);
+    }
+}
+
+// Summing three unit packing rows and rounding down yields a valid unit row
+// on all columns touching at least two of these resources.
+static void strengthen_packing(PackingMatrix &matrix, PackingLP &root, Deadline deadline) {
+    const size_t resources = matrix.dimension;
+    set<array<size_t, 3>> installed;
+    for (int round = 0; round < 6 && Clock::now() < deadline; round++) {
+        auto x = primal_values(root);
+        vector<vector<Real>> pair_weight(resources, RealVector(resources, 0));
+        map<array<size_t, 3>, Real> triple_weight;
+        for (size_t j = 0; j < x.size(); j++)
+            if (x[j] > 1e-8) {
+                IndexVector rows;
+                for (size_t r : matrix.column_rows[j])
+                    if (r < resources)
+                        rows.push_back(r);
+                sort(rows.begin(), rows.end());
+                for (size_t a = 0; a < rows.size(); a++)
+                    for (size_t b = a + 1; b < rows.size(); b++) {
+                        pair_weight[rows[a]][rows[b]] += x[j];
+                        for (size_t c = b + 1; c < rows.size(); c++)
+                            triple_weight[{rows[a], rows[b], rows[c]}] += x[j];
+                    }
+            }
+        vector<pair<Real, array<size_t, 3>>> candidates;
+        for (size_t a = 0; a < resources; a++)
+            for (size_t b = a + 1; b < resources; b++)
+                if (pair_weight[a][b] > 1e-8)
+                    for (size_t c = b + 1; c < resources; c++)
+                        if (pair_weight[a][c] > 1e-8 && pair_weight[b][c] > 1e-8) {
+                            array<size_t, 3> key{a, b, c};
+                            if (installed.count(key))
+                                continue;
+                            auto it = triple_weight.find(key);
+                            Real triple = it == triple_weight.end() ? 0 : it->second;
+                            Real weight = pair_weight[a][b] + pair_weight[a][c] +
+                                          pair_weight[b][c] - 2 * triple;
+                            if (weight > 1 + 1e-6)
+                                candidates.emplace_back(weight, key);
+                        }
+        if (candidates.empty())
+            break;
+        sort(candidates.begin(), candidates.end(), [](auto &a, auto &b) {
+            return a.first != b.first ? a.first > b.first : a.second < b.second;
+        });
+        if (candidates.size() > 24)
+            candidates.resize(24);
+        for (auto &entry : candidates) {
+            auto key = entry.second;
+            installed.insert(key);
+            size_t row = matrix.dimension++;
+            matrix.row_resources.push_back(matrix.taxi_count + instance.request_count +
+                                           matrix.dimension);
+            for (auto &rows : matrix.column_rows) {
+                int count = 0;
+                for (size_t r : rows)
+                    count += (r == key[0] || r == key[1] || r == key[2]);
+                if (count >= 2)
+                    rows.push_back(row);
+            }
+        }
+        root = initialize_lp(matrix);
+        primal_simplex(root, deadline);
+        if (root.timed_out)
+            break;
+    }
+}
+
+// --- Route selection: branch and bound ---
+// Branch on a fractional route; greedily round the LP to update the incumbent.
+MasterResult solve_route_master(const vector<MasterColumn> &columns, size_t taxi_count,
+                                size_t request_count, const IntVector &initial_columns,
+                                Deadline deadline, bool use_root_fixing) {
+    // Start with the supplied feasible fleet so a timeout still returns an incumbent.
+    MasterResult result;
+    result.selected_columns = initial_columns;
+    for (auto column_id : initial_columns) {
+        if (column_id >= 0) {
+            result.profit += columns[column_id].profit;
+        }
+    }
+    if (columns.empty()) {
+        return result;
+    }
+    // Solve the root LP relaxation before exploring include/exclude branches.
+    auto matrix = build_packing_matrix(columns, taxi_count, request_count);
+    auto root = initialize_lp(matrix);
+    primal_simplex(root, deadline);
+    if (root.timed_out) {
+        result.timed_out = true;
+        return result;
+    }
+    if (use_root_fixing) {
+        strengthen_packing(matrix, root, deadline);
+        if (root.timed_out) {
+            result.timed_out = true;
+            return result;
+        }
+    }
+    // Integer route profits permit rounding the upper bound down before pruning.
+    bool integral = true;
+    for (auto &column : columns) {
+        integral &= column.profit == round(column.profit);
     }
 
-    std::vector<std::size_t> order(columns.size());std::iota(order.begin(),order.end(),0);
-    std::sort(order.begin(),order.end(),[&](auto a,auto b) { return columns[a].profit > columns[b].profit; });
-    std::vector<unsigned char> occupied(nr,0), assigned(pool_.size(),0);
-    double lower = 0;
-    for (auto j : order) {
-        if (assigned[taxis[j]]) continue;
-        bool free = true;for (auto r : columns[j].requests) free &= !occupied[r];
-        if (!free) continue;
-        assigned[taxis[j]] = 1;for (auto r : columns[j].requests) occupied[r] = 1;
-        lower += columns[j].profit;
-    }
-    std::vector<double> prices(nr,0), best_prices = prices;
-    double best = std::numeric_limits<double>::infinity();
-    for (std::size_t iteration = 0; iteration < 192; ++iteration) {
-        std::vector<double> maximum(pool_.size(),0);
-        std::vector<const PricedColumn*> chosen(pool_.size(),nullptr);
-        for (std::size_t j = 0; j < columns.size(); ++j) {
-            const auto& c = columns[j];double value = c.profit;
-            for (auto r : c.requests) value -= prices[r];
-            if (value > maximum[taxis[j]]) { maximum[taxis[j]] = value;chosen[taxis[j]] = &c; }
+    if (use_root_fixing && Clock::now() < deadline) {
+        // Establish a feasible incumbent from the root solution before exact bound fixing.
+        auto values = primal_values(root);
+        IndexVector order(columns.size());
+        iota(order.begin(), order.end(), 0);
+        stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+            return values[a] != values[b] ? values[a] > values[b]
+                                          : columns[a].profit > columns[b].profit;
+        });
+        vector<char> used(request_count), assigned(taxi_count);
+        IntVector chosen(taxi_count, -1);
+        Real rounded = 0;
+        for (size_t j : order) {
+            auto &c = columns[j];
+            if (assigned[c.taxi])
+                continue;
+            bool fits = true;
+            for (size_t r : c.requests)
+                if (used[r]) {
+                    fits = false;
+                    break;
+                }
+            if (!fits)
+                continue;
+            assigned[c.taxi] = 1;
+            chosen[c.taxi] = j;
+            rounded += c.profit;
+            for (size_t r : c.requests)
+                used[r] = 1;
         }
-        const auto dual = std::accumulate(prices.begin(),prices.end(),0.0)+
-                          std::accumulate(maximum.begin(),maximum.end(),0.0);
-        if (dual < best) { best = dual;best_prices = prices; }
-        std::vector<std::size_t> uses(nr,0);
-        for (const auto c : chosen) if (c) for (auto r : c->requests) ++uses[r];
-        double norm = 0;
-        for (std::size_t r = 0; r < nr; ++r) if (prices[r] > 0 || uses[r] > 1) {
-            const auto g = static_cast<double>(uses[r])-1;norm += g*g;
+        if (rounded > result.profit + IMPROVEMENT_EPSILON) {
+            result.profit = rounded;
+            result.selected_columns = move(chosen);
         }
-        if (norm == 0 || dual <= lower+1e-7 || !std::isfinite(dual)) break;
-        const auto step = 0.7*(dual-lower)/norm;
-        for (std::size_t r = 0; r < nr; ++r)
-            prices[r] = std::max(0.0,prices[r]+step*(static_cast<double>(uses[r])-1));
-    }
-    if ((route_master_uses_cplex() || pool_.size()<=96) &&
-        std::chrono::steady_clock::now()+std::chrono::milliseconds(250)<deadline) {
-        std::vector<MasterColumn> subset;
-        for (std::size_t taxi=0;taxi<pool_.size();++taxi) {
-            std::vector<std::pair<double,const Bank::value_type*>> ranked;
-            for (const auto& entry:pool_[taxi]) {
-                const auto& [key,c]=entry;
-                double score=c.profit;for (auto r:key) score-=best_prices[r];ranked.push_back({score,&entry});
+        // Any nonnegative row prices can be repaired into a feasible dual by taxi.
+        // Outward rounding keeps every conditional upper bound conservative.
+        const Real infinity = numeric_limits<Real>::infinity();
+        RealVector prices(matrix.dimension), residual(taxi_count, 0);
+        IntVector taxi_row(taxi_count, -1);
+        bool usable = true;
+        for (size_t r = 0; r < matrix.dimension; r++) {
+            if (!isfinite(root.dual_prices[r])) {
+                usable = false;
+                break;
             }
-            const auto count=route_master_uses_cplex()?ranked.size():std::min<std::size_t>(64,ranked.size());
-            std::partial_sort(ranked.begin(),ranked.begin()+count,ranked.end(),[](const auto& a,const auto& b){return a.first>b.first;});
-            for (std::size_t j=0;j<count;++j) subset.push_back({taxi,ranked[j].second->first,ranked[j].second->second.profit});
+            prices[r] = max(0.0, root.dual_prices[r]);
+            if (matrix.row_resources[r] < taxi_count)
+                taxi_row[matrix.row_resources[r]] = r;
         }
-        const auto lp_deadline=std::min(deadline,std::chrono::steady_clock::now()+std::chrono::seconds(2));
-        auto proposed=route_master_prices(subset,pool_.size(),nr,lp_deadline);
-        double value=std::accumulate(proposed.begin(),proposed.end(),0.0);
-        for (const auto& bank:pool_) {
-            double maximum=0;
-            for (const auto& [key,c]:bank) {
-                double score=c.profit;for (auto r:key) score-=proposed[r];maximum=std::max(maximum,score);
+        if (usable) {
+            for (size_t j = 0; j < columns.size(); j++) {
+                Real upper = columns[j].profit;
+                for (size_t r : matrix.column_rows[j])
+                    upper = nextafter(upper - prices[r], infinity);
+                residual[columns[j].taxi] = max(residual[columns[j].taxi], upper);
             }
-            value+=maximum;
+            for (size_t t = 0; t < taxi_count; t++)
+                if (taxi_row[t] >= 0) {
+                    size_t r = taxi_row[t];
+                    prices[r] = nextafter(prices[r] + max(0.0, residual[t]), infinity);
+                }
+            Real upper = 0;
+            for (Real price : prices)
+                upper = nextafter(upper + price, infinity);
+            if (isfinite(upper)) {
+                vector<char> protected_column(columns.size());
+                for (int j : result.selected_columns)
+                    if (j >= 0)
+                        protected_column[j] = 1;
+                IntVector retained;
+                retained.reserve(columns.size());
+                for (size_t j = 0; j < columns.size(); j++) {
+                    Real conditional = nextafter(upper + columns[j].profit, infinity);
+                    for (size_t r : matrix.column_rows[j])
+                        conditional = nextafter(conditional - prices[r], infinity);
+                    bool may_improve =
+                        integral ? conditional >= result.profit + 1 : conditional > result.profit;
+                    if (protected_column[j] || may_improve)
+                        retained.push_back(j);
+                }
+                // A reduction is optional; ignoring a small reduction preserves the full problem.
+                if (retained.size() * 5 < columns.size() * 4 && Clock::now() < deadline) {
+                    vector<MasterColumn> reduced;
+                    reduced.reserve(retained.size());
+                    IntVector remap(columns.size(), -1);
+                    for (int j : retained) {
+                        remap[j] = reduced.size();
+                        reduced.push_back(columns[j]);
+                    }
+                    IntVector reduced_initial(taxi_count, -1);
+                    for (size_t t = 0; t < taxi_count; t++)
+                        if (result.selected_columns[t] >= 0)
+                            reduced_initial[t] = remap[result.selected_columns[t]];
+                    auto solved = solve_route_master(reduced, taxi_count, request_count,
+                                                     reduced_initial, deadline, true);
+                    for (int &j : solved.selected_columns)
+                        if (j >= 0)
+                            j = retained[j];
+                    return solved;
+                }
+            }
         }
-        (void)0;
-        if (value<best) best_prices=std::move(proposed);
+    }
+
+    vector<unsigned char> fixed(taxi_count, 0), occupied(request_count, 0),
+        forbidden(columns.size(), 0);
+    IntVector selected_columns(taxi_count, -1);
+    // Track conflicts with decisions fixed along the current branch-and-bound path.
+    auto compatible = [&](size_t column_id) {
+        auto &column = columns[column_id];
+        if (fixed[column.taxi] || forbidden[column_id]) {
+            return false;
+        }
+        for (auto request : column.requests) {
+            if (occupied[request]) {
+                return false;
+            }
+        }
+        return true;
+    };
+    function<void(const PackingLP &, Real)> visit = [&](const PackingLP &lp, Real profit) {
+        if (lp.backend && lp.backend->infeasible)
+            return;
+        if (result.timed_out) {
+            return;
+        }
+        if (Clock::now() >= deadline) {
+            result.timed_out = true;
+            return;
+        }
+        // Prune this subtree if its LP upper bound cannot beat the incumbent.
+        Real upper_bound = ::dual_upper_bound(lp);
+        if (integral) {
+            upper_bound = floor(upper_bound);
+        }
+        if (upper_bound <= result.profit + IMPROVEMENT_EPSILON) {
+            return;
+        }
+        // Rank compatible routes by LP value, breaking ties by route profit.
+        auto lp_values = primal_values(lp);
+        IndexVector ranking;
+        for (size_t j = 0; j < columns.size(); ++j) {
+            if (compatible(j)) {
+                ranking.push_back(j);
+            }
+        }
+        if (ranking.empty()) {
+            if (profit > result.profit + IMPROVEMENT_EPSILON) {
+                result.profit = profit;
+                result.selected_columns = selected_columns;
+            }
+            return;
+        }
+        stable_sort(ranking.begin(), ranking.end(), [&](auto left, auto right) {
+            return lp_values[left] != lp_values[right]
+                       ? lp_values[left] > lp_values[right]
+                       : columns[left].profit > columns[right].profit;
+        });
+        // Greedily round the ranked columns to obtain a feasible complete fleet.
+        auto used_requests = occupied, assigned_taxis = fixed;
+        auto candidate_columns = selected_columns;
+        Real candidate = profit;
+        for (auto column_id : ranking) {
+            auto &column = columns[column_id];
+            if (assigned_taxis[column.taxi]) {
+                continue;
+            }
+            bool available = true;
+            for (auto request : column.requests) {
+                available &= !used_requests[request];
+            }
+            if (!available) {
+                continue;
+            }
+            assigned_taxis[column.taxi] = 1;
+            for (auto request : column.requests) {
+                used_requests[request] = 1;
+            }
+            candidate_columns[column.taxi] = int(column_id);
+            candidate += column.profit;
+        }
+        if (candidate > result.profit + IMPROVEMENT_EPSILON) {
+            result.profit = candidate;
+            result.selected_columns = move(candidate_columns);
+        }
+        if (upper_bound <= result.profit + IMPROVEMENT_EPSILON) {
+            return;
+        }
+        // Prefer the most fractional route; fall back to the first compatible column.
+        size_t branch_column = ranking.front();
+        Real fractionality = -1;
+        for (auto j : ranking) {
+            if (lp_values[j] <= LP_FEASIBILITY_EPSILON ||
+                lp_values[j] >= 1 - LP_FEASIBILITY_EPSILON) {
+                continue;
+            }
+            auto score = min(lp_values[j], 1 - lp_values[j]);
+            if (score > fractionality) {
+                fractionality = score;
+                branch_column = j;
+            }
+        }
+        auto &column = columns[branch_column];
+
+        // Include this route, repair the LP by dual simplex, recurse, then undo conflicts.
+        {
+            auto child = lp;
+            add_column_bound(child, branch_column, true);
+            dual_simplex(child, deadline);
+            if (child.timed_out) {
+                result.timed_out = true;
+                return;
+            }
+            fixed[column.taxi] = 1;
+            for (auto request : column.requests) {
+                occupied[request] = 1;
+            }
+            selected_columns[column.taxi] = int(branch_column);
+            visit(child, profit + column.profit);
+            selected_columns[column.taxi] = -1;
+            fixed[column.taxi] = 0;
+            for (auto request : column.requests) {
+                occupied[request] = 0;
+            }
+        }
+        // Explore the sibling branch with this route excluded, unless time has expired.
+        if (!result.timed_out) {
+            auto child = lp;
+            add_column_bound(child, branch_column, false);
+            dual_simplex(child, deadline);
+            if (child.timed_out) {
+                result.timed_out = true;
+                return;
+            }
+            forbidden[branch_column] = 1;
+            visit(child, profit);
+            forbidden[branch_column] = 0;
+        }
+    };
+    visit(root, 0);
+    return result;
+}
+
+// --- Route selection: taxi groups ---
+// Optimize overlapping taxi groups while keeping all outside routes fixed.
+MasterResult solve_taxi_groups(const vector<MasterColumn> &columns, size_t taxi_count,
+                               size_t request_count, const IntVector &initial_columns,
+                               Deadline deadline, UInt64 group_seed,
+                               const RealVector &request_prices) {
+    // Index routes by taxi and precompute each route's request-price penalty.
+    MasterResult result;
+    result.selected_columns = initial_columns;
+    for (auto column_id : initial_columns) {
+        if (column_id >= 0) {
+            result.profit += columns[column_id].profit;
+        }
+    }
+    vector<IndexVector> taxi_columns(taxi_count);
+    for (size_t j = 0; j < columns.size(); ++j) {
+        taxi_columns[columns[j].taxi].push_back(j);
+    }
+    RealVector penalties(columns.size(), 0);
+    if (!request_prices.empty()) {
+        for (size_t j = 0; j < columns.size(); ++j) {
+            for (auto request : columns[j].requests) {
+                penalties[j] += request_prices[request];
+            }
+        }
+    }
+    // Try several greedy fleet constructions before coordinated group improvement.
+    for (Real scale : {0.0, 0.5, 1.0, 1.5}) {
+        IndexVector ranking(columns.size());
+        iota(ranking.begin(), ranking.end(), 0);
+        sort(ranking.begin(), ranking.end(), [&](auto left, auto right) {
+            auto left_score = columns[left].profit - scale * penalties[left],
+                 right_score = columns[right].profit - scale * penalties[right];
+            return left_score != right_score ? left_score > right_score : left < right;
+        });
+        vector<unsigned char> occupied(request_count, 0);
+        IntVector fleet(taxi_count, -1);
+        Real profit = 0;
+        for (auto j : ranking) {
+            auto &column = columns[j];
+            if (fleet[column.taxi] >= 0) {
+                continue;
+            }
+            bool available = true;
+            for (auto request : column.requests) {
+                available &= !occupied[request];
+            }
+            if (!available) {
+                continue;
+            }
+            fleet[column.taxi] = int(j);
+            for (auto request : column.requests) {
+                occupied[request] = 1;
+            }
+            profit += column.profit;
+        }
+        if (profit > result.profit + IMPROVEMENT_EPSILON) {
+            result.profit = profit;
+            result.selected_columns = move(fleet);
+        }
+    }
+    // Order each taxi's bank by priced profit for candidate selection below.
+    for (auto &taxi_bank : taxi_columns) {
+        sort(taxi_bank.begin(), taxi_bank.end(), [&](auto left, auto right) {
+            auto left_score = columns[left].profit - penalties[left],
+                 right_score = columns[right].profit - penalties[right];
+            return left_score != right_score ? left_score > right_score : left < right;
+        });
+    }
+    mt19937_64 group_random_engine(group_seed);
+    size_t rounds = 0, last_gain = 0;
+    while (Clock::now() < deadline) {
+        // Rebuild request ownership from the latest incumbent fleet.
+        IntVector request_owner(request_count, -1);
+        for (size_t taxi = 0; taxi < taxi_count; ++taxi) {
+            if (result.selected_columns[taxi] >= 0) {
+                for (auto request : columns[result.selected_columns[taxi]].requests) {
+                    request_owner[request] = int(taxi);
+                }
+            }
+        }
+        // Seed a rotating taxi group with owners blocking one of its attractive routes.
+        size_t width =
+            min(taxi_count, size_t(GROUP_MIN_TAXIS + GROUP_TAXI_INCREMENT * ((rounds / taxi_count) %
+                                                                             GROUP_WIDTH_LEVELS)));
+        IndexVector group;
+        vector<unsigned char> inside(taxi_count, 0);
+        auto add = [&](size_t taxi) {
+            if (!inside[taxi]) {
+                group.push_back(taxi);
+                inside[taxi] = 1;
+            }
+        };
+        auto first = rounds % taxi_count;
+        add(first);
+        if (!taxi_columns[first].empty()) {
+            auto rank = rounds % 3 == 0
+                            ? group_random_engine() % min<size_t>(GROUP_RANDOM_SEED_CANDIDATES,
+                                                                  taxi_columns[first].size())
+                            : 0;
+            for (auto request : columns[taxi_columns[first][rank]].requests) {
+                if (request_owner[request] >= 0 && group.size() < width) {
+                    add(request_owner[request]);
+                }
+            }
+        }
+        // Grow the group toward conflicting owners; occasional random choices diversify it.
+        while (group.size() < width) {
+            RealVector score(taxi_count, 0);
+            for (auto taxi : group) {
+                auto previous_profit = result.selected_columns[taxi] >= 0
+                                           ? columns[result.selected_columns[taxi]].profit
+                                           : 0;
+                auto inspected_columns =
+                    min<size_t>(GROUP_OVERLAP_CANDIDATES, taxi_columns[taxi].size());
+                for (size_t j = 0; j < inspected_columns; ++j) {
+                    auto &column = columns[taxi_columns[taxi][j]];
+                    auto overlap_value = max(1.0, column.profit - previous_profit);
+                    for (auto request : column.requests) {
+                        if (request_owner[request] >= 0 && !inside[request_owner[request]]) {
+                            score[request_owner[request]] += overlap_value;
+                        }
+                    }
+                }
+            }
+            size_t chosen = taxi_count;
+            Real maximum = 0;
+            for (size_t taxi = 0; taxi < taxi_count; ++taxi) {
+                if (!inside[taxi] && score[taxi] > maximum) {
+                    maximum = score[taxi];
+                    chosen = taxi;
+                }
+            }
+            if (chosen == taxi_count || rounds % 5 == 4) {
+                do {
+                    chosen = group_random_engine() % taxi_count;
+                } while (inside[chosen]);
+            }
+            add(chosen);
+        }
+        // Keep bounded candidate banks that avoid requests owned outside this group.
+        vector<MasterColumn> local_columns;
+        IndexVector global_columns;
+        IntVector initial(group.size(), -1);
+        for (size_t taxi = 0; taxi < group.size(); ++taxi) {
+            size_t candidate_count = 0;
+            for (auto column_id : taxi_columns[group[taxi]]) {
+                auto &column = columns[column_id];
+                bool available = true;
+                for (auto request : column.requests) {
+                    if (request_owner[request] >= 0 && !inside[request_owner[request]]) {
+                        available = false;
+                        break;
+                    }
+                }
+                if (!available) {
+                    continue;
+                }
+                // Keep the best 64 available candidates and always retain the incumbent.
+                if (candidate_count++ >= GROUP_ROUTE_CANDIDATES &&
+                    result.selected_columns[group[taxi]] != int(column_id)) {
+                    continue;
+                }
+                if (result.selected_columns[group[taxi]] == int(column_id)) {
+                    initial[taxi] = int(local_columns.size());
+                }
+                local_columns.push_back({taxi, column.requests, column.profit});
+                global_columns.push_back(column_id);
+            }
+        }
+        // Solve the small group master within a short slice of the remaining budget.
+        auto current_time = Clock::now();
+        auto local_deadline = min(deadline, current_time + Milliseconds(GROUP_SOLVE_MILLISECONDS));
+        auto solved =
+            solve_route_master(local_columns, group.size(), request_count, initial, local_deadline);
+        Real previous_profit = 0;
+        for (auto column_id : initial) {
+            if (column_id >= 0) {
+                previous_profit += local_columns[column_id].profit;
+            }
+        }
+        // Map improved local choices back to global columns; all outside routes stay fixed.
+        if (solved.profit > previous_profit + IMPROVEMENT_EPSILON) {
+            for (size_t taxi = 0; taxi < group.size(); ++taxi) {
+                result.selected_columns[group[taxi]] =
+                    solved.selected_columns[taxi] >= 0
+                        ? int(global_columns[solved.selected_columns[taxi]])
+                        : -1;
+            }
+            result.profit += solved.profit - previous_profit;
+            last_gain = rounds;
+        }
+        ++rounds;
+        if (rounds - last_gain > GROUP_STAGNATION_ROUNDS_PER_TAXI * taxi_count) {
+            break;
+        }
+    }
+    result.timed_out = Clock::now() >= deadline;
+    return result;
+}
+
+// --- Route selection: ranked subsets ---
+// Solve progressively wider price-ranked route subsets, then refine taxi groups.
+MasterResult solve_ranked_master(const vector<MasterColumn> &columns, int taxi_count,
+                                 int request_count, const IntVector &initial_columns,
+                                 Deadline deadline) {
+    // Estimate opportunity costs from the full LP and rank each taxi's routes.
+    MasterResult best;
+    best.selected_columns = initial_columns;
+    for (int j : initial_columns) {
+        if (j >= 0) {
+            best.profit += columns[j].profit;
+        }
+    }
+    RealVector prices;
+    auto matrix = build_packing_matrix(columns, taxi_count, request_count);
+    auto lp = initialize_lp(matrix);
+    primal_simplex(lp, min(deadline, deadline_after(RANKED_LP_SECONDS)));
+    prices = request_prices_from_lp(lp, request_count);
+    vector<IntVector> taxi_columns(taxi_count);
+    RealVector score(columns.size());
+    for (int j = 0; j < (int)columns.size(); j++) {
+        auto &column = columns[j];
+        taxi_columns[column.taxi].push_back(j);
+        score[j] = column.profit;
+        for (int request : column.requests) {
+            score[j] -= prices[request];
+        }
+    }
+    for (auto &taxi_bank : taxi_columns) {
+        sort(taxi_bank.begin(), taxi_bank.end(), [&](int left, int right) {
+            return score[left] != score[right] ? score[left] > score[right] : left < right;
+        });
+    }
+    // Widen the candidate subsets gradually, always retaining the current incumbent.
+    for (int width : {32, 64, 128}) {
+        if (Clock::now() >= deadline) {
+            break;
+        }
+        vector<MasterColumn> subset_columns;
+        IntVector global_columns, initial(taxi_count, -1);
+        for (int taxi = 0; taxi < taxi_count; taxi++) {
+            auto add = [&](int j) {
+                if (best.selected_columns[taxi] == j) {
+                    initial[taxi] = subset_columns.size();
+                }
+                subset_columns.push_back(columns[j]);
+                global_columns.push_back(j);
+            };
+            for (int i = 0; i < min<int>(width, taxi_columns[taxi].size()); i++) {
+                add(taxi_columns[taxi][i]);
+            }
+            if (best.selected_columns[taxi] >= 0 && initial[taxi] < 0) {
+                add(best.selected_columns[taxi]);
+            }
+        }
+        auto solved = solve_route_master(
+            subset_columns, taxi_count, request_count, initial,
+            min(deadline, deadline_after(width == 32 ? RANKED_FIRST_SOLVE_SECONDS
+                                                     : RANKED_WIDE_SOLVE_SECONDS)));
+        if (solved.profit > best.profit + FEASIBILITY_EPSILON) {
+            best.profit = solved.profit;
+            for (int taxi = 0; taxi < taxi_count; taxi++) {
+                best.selected_columns[taxi] = solved.selected_columns[taxi] >= 0
+                                                  ? global_columns[solved.selected_columns[taxi]]
+                                                  : -1;
+            }
+        }
+    }
+    // Spend any remaining time on coordinated changes among taxi groups.
+    if (Clock::now() + Milliseconds(RANKED_GROUP_GUARD_MILLISECONDS) < deadline) {
+        auto grouped = solve_taxi_groups(columns, taxi_count, request_count, best.selected_columns,
+                                         deadline, random_engine(), prices);
+        if (grouped.profit > best.profit + FEASIBILITY_EPSILON) {
+            best.profit = grouped.profit;
+            best.selected_columns = move(grouped.selected_columns);
+        }
+    }
+    return best;
+}
+
+// --- Route selection: request prices ---
+// Subgradient request prices penalize collisions between independently chosen taxi routes.
+// A feasible fleet profit supplies the lower bound used by the step size.
+RealVector estimate_request_prices(Real incumbent_profit) {
+    // Collect bank columns and build a feasible greedy profit bound for step-size control.
+    RealVector prices(instance.request_count), best_prices(instance.request_count);
+    Real lower = 0, best = INF;
+    vector<MasterColumn> columns;
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        for (auto &[ids, column] : route_bank[taxi]) {
+            columns.push_back({(size_t)taxi, IntVector(ids.begin(), ids.end()), column.profit});
+        }
+    }
+    IntVector ranking(columns.size());
+    iota(ranking.begin(), ranking.end(), 0);
+    sort(ranking.begin(), ranking.end(),
+         [&](int left, int right) { return columns[left].profit > columns[right].profit; });
+    vector<char> used_requests(instance.request_count), assigned_taxis(instance.taxi_count);
+    for (int j : ranking) {
+        auto &column = columns[j];
+        if (assigned_taxis[column.taxi]) {
+            continue;
+        }
+        bool available = true;
+        for (int request : column.requests) {
+            available &= !used_requests[request];
+        }
+        if (available) {
+            lower += column.profit;
+            assigned_taxis[column.taxi] = 1;
+            for (int request : column.requests) {
+                used_requests[request] = 1;
+            }
+        }
+    }
+    lower = max(lower, incumbent_profit);
+    for (int iteration = 0; iteration < PRICE_ITERATION_LIMIT; iteration++) {
+        // Relax shared-request conflicts: let each taxi choose its best priced route independently.
+        RealVector best_taxi_score(instance.taxi_count);
+        IntVector chosen(instance.taxi_count, -1), request_usage(instance.request_count);
+        for (int j = 0; j < (int)columns.size(); j++) {
+            auto &column = columns[j];
+            Real reduced_profit = column.profit;
+            for (int request : column.requests) {
+                reduced_profit -= prices[request];
+            }
+            if (reduced_profit > best_taxi_score[column.taxi]) {
+                best_taxi_score[column.taxi] = reduced_profit, chosen[column.taxi] = j;
+            }
+        }
+        // Retain the price vector with the smallest dual bound seen so far.
+        Real dual_value = accumulate(prices.begin(), prices.end(), 0.0) +
+                          accumulate(best_taxi_score.begin(), best_taxi_score.end(), 0.0);
+        if (dual_value < best) {
+            best = dual_value, best_prices = prices;
+        }
+        // Count request collisions and compute the squared projected subgradient norm.
+        for (int j : chosen) {
+            if (j >= 0) {
+                for (int request : columns[j].requests) {
+                    request_usage[request]++;
+                }
+            }
+        }
+        Real squared_norm = 0;
+        for (int request = 0; request < instance.request_count; request++) {
+            if (prices[request] > 0 || request_usage[request] > 1) {
+                squared_norm += (request_usage[request] - 1) * (request_usage[request] - 1);
+            }
+        }
+        if (squared_norm == 0 || dual_value <= lower + LP_FEASIBILITY_EPSILON) {
+            break;
+        }
+        // Adjust prices by excess request usage, keeping every price nonnegative.
+        Real step = PRICE_STEP_FACTOR * (dual_value - lower) / squared_norm;
+        for (int request = 0; request < instance.request_count; request++) {
+            prices[request] = max(0.0, prices[request] + step * (request_usage[request] - 1));
+        }
     }
     return best_prices;
 }
 
-Solution RoutePoolRepair::generate_fleets(Deadline deadline, std::shared_ptr<const EmptyTaxiIndex> index,
-                                       const Solution* initial, bool refine, bool clean_cut, std::size_t refinement_interval,
-                                       bool light_refinement, std::size_t refinement_cycles) {
+// --- Local search: descent ---
+// Descend through removal, insertion, relocation, tail exchange, swap, and replacement.
+void improve_solution(SearchState &state, Deadline deadline, bool full_neighborhoods, int cycles) {
+    static InsertionCache cache;
+    for (int cycle = 0; cycle < cycles && Clock::now() < deadline; cycle++) {
+        // Exhaust profitable removals and insertions before trying multi-route changes.
+        bool changed = false;
+        while (Clock::now() < deadline && improve_by_removal(state)) {
+            changed = true;
+        }
+        while (Clock::now() < deadline && improve_by_insertion(state, cache)) {
+            changed = true;
+        }
+        // Full descent also relocates requests; both modes exchange closed route tails.
+        if (full_neighborhoods) {
+            while (Clock::now() < deadline && improve_by_relocation(state, deadline)) {
+                changed = true;
+            }
+        }
+        while (Clock::now() < deadline && improve_by_tail_exchange(state, deadline)) {
+            changed = true;
+        }
 
-
-    const auto nr = instance_.passengers.size()+instance_.parcels.size();
-    Solution blank;if (initial) blank=*initial;else blank.routes.resize(pool_.size());SearchState empty(instance_,blank);
-    if (!index) index=build_empty_taxi_index(empty,std::min(deadline,std::chrono::steady_clock::now()+std::chrono::seconds(1)));
-    empty.set_empty_taxi_index(std::move(index));
-    std::vector<std::size_t> requests(nr);std::iota(requests.begin(),requests.end(),0);
-    std::mt19937_64 rng(seed_+0x9e3779b97f4a7c15ULL*fleet_calls_++);
-    std::size_t builds=0;
-    SearchState state=empty,best=empty;PositiveInsertionCache cache;
-    RandomRemoval random_removal;RelatedRemoval related_removal;WorstRemoval worst_removal;
-    std::vector<std::unique_ptr<Move>> refinement;
-    refinement.push_back(std::make_unique<RemoveRequest>());
-    refinement.push_back(std::make_unique<AddRequest>());
-    if (!light_refinement) {
-        refinement.push_back(std::make_unique<PassengerRelocate>());
-        refinement.push_back(std::make_unique<ParcelRelocate>());
+        // Finish with optional swaps and cached one-for-one replacements.
+        if (full_neighborhoods) {
+            while (Clock::now() < deadline && improve_by_swap(state, deadline)) {
+                changed = true;
+            }
+        }
+        while (Clock::now() < deadline && improve_by_replacement(state, deadline)) {
+            changed = true;
+        }
+        // Repeat the neighborhood sequence only if this cycle changed the fleet.
+        if (!changed) {
+            break;
+        }
     }
-    if (clean_cut) refinement.push_back(std::make_unique<CleanCut2OptStar>());
-    if (!light_refinement) refinement.push_back(std::make_unique<SwapRequest>());
-    refinement.push_back(std::make_unique<ReplaceRequest>());
-    while (std::chrono::steady_clock::now()<deadline) {
-        if (builds) {
-            if (builds%8==0 || state.benefit()<best.benefit()*0.995) state.copy_from(best);
-            const auto removed=std::max<std::size_t>(4,state.served_count()/12);
-            if (builds%4==1) random_removal.apply(state,removed,rng);
-            else if (builds%4==2) related_removal.apply(state,removed,rng);
-            else if (builds%4==3) worst_removal.apply(state,removed,rng);
-            else for (std::size_t i=0,count=2+rng()%std::max<std::size_t>(2,pool_.size()/12);i<count;++i) {
-                const auto taxi=rng()%pool_.size();std::vector<std::size_t> removed;
-                for (auto r:requests) if (state.location(r).taxi==static_cast<int>(taxi)) removed.push_back(r);
-                (void)(!removed.empty() && !state.remove_requests(taxi,removed));
-            }
-        }
-        std::shuffle(requests.begin(),requests.end(),rng);
-        for (auto r:requests) {
-            if (std::chrono::steady_clock::now()>=deadline) break;
-            if (state.location(r).taxi>=0) continue;
-            const auto choice=cache.best(state,r);if (!choice || choice->gain<=1e-9) continue;
-            (void)(!state.insert(choice->request,choice->taxi,choice->pickup,choice->delivery));
-            // Preserve complementary fleet routes even when their individual
-            // profit is below the absolute bank floor.
-            add(state,choice->taxi,false);
-        }
-        // A request rejected early in a construction can become profitable
-        // after later insertions share its access travel. Fill to a fixed point.
-        for (;;) {
-            if (std::chrono::steady_clock::now()>=deadline) break;
-            std::optional<InsertionChoice> choice;
-            for (auto r:requests) if (state.location(r).taxi<0) {
-                const auto& option=cache.best(state,r);
-                if (option && option->gain>1e-9 && (!choice || option->gain>choice->gain)) choice=option;
-            }
-            if (!choice) break;
-            (void)(!state.insert(choice->request,choice->taxi,choice->pickup,choice->delivery));
-            add(state,choice->taxi,false);
-        }
-        // Expensive refinement is occasional, rather than every proposal.
-        if (refine && builds%refinement_interval==0 && std::chrono::steady_clock::now()+std::chrono::milliseconds(250)<deadline) {
-            for (std::size_t cycle=0;cycle<refinement_cycles;++cycle) {
-                bool changed=false;
-                for (std::size_t j=0;j<refinement.size();++j) {
-                    changed=refinement[j]->improve(state)||changed;
-                }
-                if (!changed) break;
-            }
-            for (auto taxi:state.active_taxis()) add(state,taxi,false);
-        }
-        if (state.benefit()>best.benefit()+1e-9) {
-            best.copy_from(state);
-            (void)0;
-        }
-        ++builds;
-    }
-    (void)0;
-    return best.solution();
+    store_fleet(state.routes);
 }
 
-void RoutePoolRepair::generate_replacements(Deadline deadline, const SearchState& fleet) {
-    auto prices=estimate_prices(deadline);
-    const double scales[]={1.0,0.8,1.2};const auto scale=scales[pricing_calls_%3];
-    for (auto& price:prices) price*=scale;(void)0;
-    const auto nr=fleet.request_count(),n=fleet.passenger_count(),k=pool_.size();
-    std::mt19937_64 rng(seed_+0x9e3779b97f4a7c15ULL*pricing_calls_++);
-    std::size_t moves=0;
-    for (std::size_t taxi=0;taxi<k;++taxi) {
-        const auto now=std::chrono::steady_clock::now();if (now>=deadline) break;
-        const auto taxi_deadline=now+(deadline-now)/static_cast<Deadline::duration::rep>(k-taxi);
-        Solution initial;initial.routes.resize(k);initial.routes[taxi]=fleet.cache(taxi).nodes();
-        std::vector<std::pair<double,const Column*>> ranked;
-        for (const auto& [key,c]:pool_[taxi]) {
-            double score=c.profit;for (auto r:key) score-=prices[r];ranked.push_back({score,&c});
+// --- Local search: insertion candidates ---
+// Filter positions by cost bounds, then check time windows and capacity by segments.
+InsertionChoice find_route_insertion(int request, int taxi, const Route &route,
+                                     Real minimum_profit_delta) {
+    // Reject an oversized request and prepare reusable cost-delta arrays.
+    InsertionChoice best;
+    auto &request_data = instance.requests[request];
+    if (request_data.weight > instance.taxi_capacity[taxi] + FEASIBILITY_EPSILON) {
+        return best;
+    }
+    int route_length = route.size();
+    static RealVector pickup_cost_delta, delivery_cost_delta, adjacent_cost_delta,
+        minimum_delivery_suffix;
+    pickup_cost_delta.resize(route_length + 1);
+    delivery_cost_delta.resize(route_length + 1);
+    adjacent_cost_delta.resize(route_length + 1);
+    minimum_delivery_suffix.assign(route_length + 2, INF);
+    // Bound insertion cost before checking time windows: adjacent stops or split parcel stops.
+    Real minimum_cost_delta = INF, minimum_pickup_delta = INF;
+    for (int pickup_position = 0; pickup_position <= route_length; pickup_position++) {
+        int previous_node =
+            pickup_position ? route[pickup_position - 1] : instance.taxi_origin[taxi];
+        Real replaced_arc_cost =
+            pickup_position < route_length ? travel_cost(previous_node, route[pickup_position]) : 0;
+        pickup_cost_delta[pickup_position] =
+            travel_cost(previous_node, request_data.pickup_node) - replaced_arc_cost +
+            (pickup_position < route_length
+                 ? travel_cost(request_data.pickup_node, route[pickup_position])
+                 : 0);
+        delivery_cost_delta[pickup_position] =
+            travel_cost(previous_node, request_data.delivery_node) - replaced_arc_cost +
+            (pickup_position < route_length
+                 ? travel_cost(request_data.delivery_node, route[pickup_position])
+                 : 0);
+        adjacent_cost_delta[pickup_position] =
+            travel_cost(previous_node, request_data.pickup_node) +
+            travel_cost(request_data.pickup_node, request_data.delivery_node) - replaced_arc_cost +
+            (pickup_position < route_length
+                 ? travel_cost(request_data.delivery_node, route[pickup_position])
+                 : 0);
+        minimum_cost_delta = min(minimum_cost_delta, adjacent_cost_delta[pickup_position]);
+        if (!request_data.is_passenger) {
+            minimum_cost_delta = min(minimum_cost_delta,
+                                     minimum_pickup_delta + delivery_cost_delta[pickup_position]);
+            minimum_pickup_delta = min(minimum_pickup_delta, pickup_cost_delta[pickup_position]);
         }
-        const auto count=std::min<std::size_t>(3,ranked.size());
-        std::partial_sort(ranked.begin(),ranked.begin()+count,ranked.end(),[](const auto& a,const auto& b){return a.first>b.first;});
-        std::vector<std::vector<std::size_t>> seeds{initial.routes[taxi]};
-        for (std::size_t j=0;j<count;++j) seeds.push_back(ranked[j].second->route);
-        SearchState state(instance_,initial,fleet.insertion_scratch_handle());
-        state.set_empty_taxi_index(fleet.empty_taxi_index());
-        std::size_t restarts=0;
-        for (std::size_t iteration=0;iteration<48 && std::chrono::steady_clock::now()<taxi_deadline;++iteration) {
-            double gain=1e-8;std::optional<InsertionChoice> insertion;std::optional<std::size_t> outgoing;
-            std::vector<std::size_t> replacement_nodes;
-            for (std::size_t r=0;r<nr;++r) if (state.location(r).taxi<0) {
-                if ((r&31)==0 && std::chrono::steady_clock::now()>=taxi_deadline) break;
-                const auto choice=best_insertion_on_route(state,r,taxi,state.cache(taxi),gain+prices[r]);
-                if (choice && choice->gain-prices[r]>gain) {gain=choice->gain-prices[r];insertion=choice;outgoing.reset();}
+    }
+    if (request_data.revenue - minimum_cost_delta + FEASIBILITY_EPSILON < minimum_profit_delta) {
+        return best;
+    }
+
+    // Suffix minima bound the best delivery position after each possible pickup.
+    for (int pickup_position = route_length; pickup_position >= 0; pickup_position--) {
+        minimum_delivery_suffix[pickup_position] =
+            min(delivery_cost_delta[pickup_position], minimum_delivery_suffix[pickup_position + 1]);
+    }
+    // Reuse route summaries to check insertions without rebuilding every candidate route.
+    auto &segments = cached_route_segments(taxi, route);
+    auto pickup = make_node_segment(request_data.pickup_node),
+         delivery = make_node_segment(request_data.delivery_node);
+    for (int pickup_position = 0; pickup_position <= route_length; pickup_position++) {
+        if (is_insertion_boundary(route, pickup_position)) {
+            Real required_profit_delta = max(minimum_profit_delta, best.profit_delta),
+                 cost_lower_bound = request_data.is_passenger
+                                        ? adjacent_cost_delta[pickup_position]
+                                        : min(adjacent_cost_delta[pickup_position],
+                                              pickup_cost_delta[pickup_position] +
+                                                  minimum_delivery_suffix[pickup_position + 1]);
+            if (request_data.revenue - cost_lower_bound + FEASIBILITY_EPSILON <
+                required_profit_delta) {
+                continue;
             }
-            std::vector<std::size_t> served;
-            for (std::size_t r=0;r<nr;++r) if (state.location(r).taxi>=0) served.push_back(r);
-            for (auto r:served) {
-                const auto removal=state.removal_gain(r);
-                if (removal && *removal+prices[r]>gain) {
-                    gain=*removal+prices[r];outgoing=r;insertion.reset();replacement_nodes.clear();
-                }
-                if (std::chrono::steady_clock::now()>=taxi_deadline) break;
-                const auto loc=state.location(r);auto nodes=state.cache(taxi).nodes();
-                nodes.erase(nodes.begin()+loc.dropoff);nodes.erase(nodes.begin()+loc.pickup);
-                RouteCache reduced(instance_,taxi,nodes);
-                const auto base_gain=removal_savings_cost(instance_,taxi,state.cache(taxi).nodes(),loc.pickup,loc.dropoff)-state.revenue(r);
-                for (std::size_t incoming=0;incoming<nr;++incoming) if (state.location(incoming).taxi<0) {
-                    if ((incoming&31)==0 && std::chrono::steady_clock::now()>=taxi_deadline) break;
-                    const auto choice=best_insertion_on_route(state,incoming,taxi,reduced,gain-base_gain-prices[r]+prices[incoming]);
-                    if (choice && choice->gain+base_gain+prices[r]-prices[incoming]>gain) {
-                        gain=choice->gain+base_gain+prices[r]-prices[incoming];outgoing=r;insertion=choice;replacement_nodes=nodes;
+            // A feasible pickup prefix is required before exploring delivery positions.
+            auto prefix = join_segments(segment_range(segments, 0, pickup_position), pickup);
+            if (!is_segment_feasible(taxi, prefix)) {
+                continue;
+            }
+            for (int delivery_position = pickup_position;
+                 delivery_position <= (request_data.is_passenger ? pickup_position : route_length);
+                 delivery_position++) {
+                if (is_insertion_boundary(route, delivery_position)) {
+                    Real profit_delta =
+                        request_data.revenue - (pickup_position == delivery_position
+                                                    ? adjacent_cost_delta[pickup_position]
+                                                    : pickup_cost_delta[pickup_position] +
+                                                          delivery_cost_delta[delivery_position]);
+                    if (profit_delta <
+                        max(minimum_profit_delta, best.profit_delta) - FEASIBILITY_EPSILON) {
+                        continue;
+                    }
+                    // Assemble prefix, middle, delivery, and suffix summaries for the complete route.
+                    auto completed_route = join_segments(
+                        join_segments(join_segments(prefix, segment_range(segments, pickup_position,
+                                                                          delivery_position)),
+                                      delivery),
+                        segment_range(segments, delivery_position, route_length));
+                    if (is_segment_feasible(taxi, completed_route) &&
+                        (best.taxi < 0 || profit_delta > best.profit_delta)) {
+                        best = {request, taxi, pickup_position, delivery_position, profit_delta};
                     }
                 }
             }
-            if (gain<=1e-8) {
-                if (++restarts>8) break;
-                initial.routes[taxi]=seeds[restarts%seeds.size()];
-                SearchState restart(instance_,initial,fleet.insertion_scratch_handle());
-                restart.set_empty_taxi_index(fleet.empty_taxi_index());state.copy_from(restart);
-                served.clear();for (std::size_t r=0;r<nr;++r) if (state.location(r).taxi>=0) served.push_back(r);
-                if (!served.empty()) {
-                    std::shuffle(served.begin(),served.end(),rng);
-                    served.resize(std::min(served.size(),static_cast<std::size_t>(1+rng()%3)));
-                    state.remove_requests(taxi,served);
-                }
-                continue;
-            }
-            if (outgoing && insertion) {
-                const auto r=insertion->request;
-                const auto drop=r<n?instance_.passenger_dropoff(r):instance_.parcel_dropoff(r-n);
-                replacement_nodes.insert(replacement_nodes.begin()+insertion->delivery,drop);
-                replacement_nodes.insert(replacement_nodes.begin()+insertion->pickup,state.pickup_node(r));
-                // Validate the completed replacement directly. A nonmetric
-                // removal-only shortcut need not be feasible.
-                Solution candidate;candidate.routes.resize(k);candidate.routes[taxi]=replacement_nodes;
-                SearchState changed(instance_,candidate,fleet.insertion_scratch_handle());
-                changed.set_empty_taxi_index(fleet.empty_taxi_index());state.copy_from(changed);
-            } else if (outgoing) {
-                (void)(!state.remove(*outgoing));
-            } else (void)(!state.insert(insertion->request,taxi,insertion->pickup,insertion->delivery));
-            add(state,taxi,false);++moves;
         }
     }
-    (void)0;
+    return best;
 }
 
-void RoutePoolRepair::remember(const SearchState& state) {
-
-    for (const auto taxi : state.active_taxis()) {
-        if (versions_[taxi] == state.cache(taxi).version()) continue;
-        versions_[taxi] = state.cache(taxi).version();
-        add(state, taxi, true);
+InsertionChoice find_fleet_insertion(SearchState &state, int request, InsertionCache &cache) {
+    if (cache.route_version.empty()) {
+        cache.route_version.assign(instance.request_count, vector<UInt64>(instance.taxi_count));
+        cache.choices.assign(instance.request_count, vector<InsertionChoice>(instance.taxi_count));
     }
+    InsertionChoice best;
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        // Recompute only taxi routes that changed since this request was last examined.
+        if (cache.route_version[request][taxi] != state.route_version[taxi]) {
+            cache.choices[request][taxi] = find_route_insertion(request, taxi, state.routes[taxi]);
+            cache.route_version[request][taxi] = state.route_version[taxi];
+        }
+        auto choice = cache.choices[request][taxi];
+        if (choice.taxi >= 0 && choice.profit_delta > FEASIBILITY_EPSILON &&
+            choice.profit_delta > best.profit_delta) {
+            best = choice;
+        }
+    }
+    return best;
 }
 
-void RoutePoolRepair::set_limit(std::size_t limit) {
-
-    limit_ = limit;
-    std::fill(floors_.begin(),floors_.end(),-std::numeric_limits<double>::infinity());
-    for (auto& bank : pool_) while (bank.size() > limit_) {
-        const auto worst = std::min_element(bank.begin(), bank.end(), [](const auto& a, const auto& b) {
-            return a.second.profit < b.second.profit;
-        });
-        bank.erase(worst);
-        ++bank_revision_;
+// --- Local search: neighborhoods ---
+// Remove one request if the remaining complete route is feasible and more profitable.
+bool improve_by_removal(SearchState &state) {
+    Real best = FEASIBILITY_EPSILON;
+    int removed_request = -1;
+    Route route;
+    for (int request = 0; request < instance.request_count; request++) {
+        if (state.request_owner[request] >= 0) {
+            int taxi = state.request_owner[request];
+            auto reduced_route = remove_request(state.routes[taxi], request);
+            auto evaluated_profit = evaluate_route(instance, taxi, reduced_route);
+            if (evaluated_profit && *evaluated_profit - state.route_profit[taxi] > best) {
+                best = *evaluated_profit - state.route_profit[taxi];
+                removed_request = request;
+                route = move(reduced_route);
+            }
+        }
     }
-}
-
-
-
-bool RoutePoolRepair::improve(SearchState& state, Deadline deadline) {
-
-    // Restore every incumbent route even if the bank's size cap removed it.
-    for (const auto taxi : state.active_taxis()) add(state, taxi, false);
-    struct SelectionColumn {
-        std::vector<std::size_t> requests, route;
-        double profit;
-    };
-    std::vector<std::vector<SelectionColumn>> columns(pool_.size());
-    std::vector<int> selected(pool_.size(), -1), incumbent(pool_.size(), -1);
-    std::vector<unsigned char> occupied(state.request_count(), 0);
-    std::vector<std::size_t> frequency(state.request_count(), 0), order;
-    column_count_ = 0;
-    double best_profit = 0;
-    for (std::size_t taxi = 0; taxi < pool_.size(); ++taxi) {
-        auto& row = columns[taxi];
-        row.reserve(pool_[taxi].size());
-        for (const auto& [key, column] : pool_[taxi]) row.push_back({key,column.route,column.profit});
-        std::sort(row.begin(), row.end(), [](const auto& a, const auto& b) {
-            return a.profit > b.profit || (a.profit == b.profit && a.requests < b.requests);
-        });
-        column_count_ += row.size();
-        std::vector<unsigned char> present(state.request_count(), 0);
-        for (std::size_t i = 0; i < row.size(); ++i) {
-            for (auto r : row[i].requests) present[r] = 1;
-            bool current = !row[i].requests.empty();
-            for (auto r : row[i].requests) current &= state.location(r).taxi == static_cast<int>(taxi);
-            if (current) {
-                // The served-set key must equal the entire incumbent route.
-                std::size_t count = 0;
-                for (std::size_t r = 0; r < state.request_count(); ++r)
-                    count += state.location(r).taxi == static_cast<int>(taxi);
-                if (count == row[i].requests.size()) { incumbent[taxi] = static_cast<int>(i); best_profit += row[i].profit; }
-            }
-        }
-        for (std::size_t r = 0; r < present.size(); ++r) frequency[r] += present[r];
+    if (removed_request < 0) {
+        return false;
     }
-    // Constrain the taxis with the most shared requests before independent ones.
-    std::vector<std::size_t> conflict(pool_.size(), 0);
-    for (std::size_t taxi = 0; taxi < columns.size(); ++taxi)
-        for (const auto& column : columns[taxi])
-            for (auto r : column.requests) conflict[taxi] += frequency[r] - 1;
-    for (std::size_t taxi = 0; taxi < columns.size(); ++taxi)
-        if (!columns[taxi].empty()) order.push_back(taxi);
-    std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) { return conflict[a] > conflict[b]; });
-    const auto compatible = [&](const SelectionColumn& column) {
-        for (auto r : column.requests) if (occupied[r]) return false;
-        return true;
-    };
-    nodes_ = 0; timed_out_ = false;
-    const auto warmup_start = std::chrono::steady_clock::now();
-    const auto warmup_deadline = order.size() > 48 ?
-        std::min(deadline,warmup_start+std::chrono::seconds(2)) : deadline;
-    // Repair small groups around the feasible incumbent before searching the
-    // complete master. This supplies good feasible bounds under a short limit.
-    const auto optimize_group = [&](const std::vector<std::size_t>& group) {
-        std::fill(occupied.begin(), occupied.end(), 0);
-        for (std::size_t taxi = 0; taxi < incumbent.size(); ++taxi) {
-            if (incumbent[taxi] < 0 || std::find(group.begin(), group.end(), taxi) != group.end()) continue;
-            for (auto r : columns[taxi][incumbent[taxi]].requests) occupied[r] = 1;
-        }
-        double old_profit = 0;
-        std::vector<int> chosen(group.size(), -1), best_group;
-        for (auto taxi : group) {
-            best_group.push_back(incumbent[taxi]);
-            if (incumbent[taxi] >= 0) old_profit += columns[taxi][incumbent[taxi]].profit;
-        }
-        double group_profit = old_profit;
-        std::function<void(std::size_t,double)> visit = [&](std::size_t depth, double profit) {
-            if (timed_out_) return;
-            ++nodes_;
-            if ((nodes_ & 63) == 0 && std::chrono::steady_clock::now() >= warmup_deadline) {
-                timed_out_ = true; return;
-            }
-            if (depth == group.size()) {
-                if (profit > group_profit + 1e-9) { group_profit = profit; best_group = chosen; }
-                return;
-            }
-            double bound = profit;
-            for (std::size_t d = depth; d < group.size(); ++d)
-                for (const auto& column : columns[group[d]])
-                    if (compatible(column)) { bound += column.profit; break; }
-            if (bound <= group_profit + 1e-9) return;
-            const auto taxi = group[depth];
-            for (std::size_t i = 0; i < columns[taxi].size(); ++i) {
-                const auto& column = columns[taxi][i];
-                if (!compatible(column)) continue;
-                chosen[depth] = static_cast<int>(i);
-                for (auto r : column.requests) occupied[r] = 1;
-                visit(depth + 1, profit + column.profit);
-                for (auto r : column.requests) occupied[r] = 0;
-                if (timed_out_) break;
-            }
-            chosen[depth] = -1;
-            if (!timed_out_) visit(depth + 1, profit);
-        };
-        if (std::chrono::steady_clock::now() < warmup_deadline) visit(0,0);
-        else timed_out_ = true;
-        if (group_profit <= old_profit + 1e-9) return false;
-        for (std::size_t i = 0; i < group.size(); ++i) incumbent[group[i]] = best_group[i];
-        best_profit += group_profit - old_profit;
-        return true;
-    };
-    bool changed = true;
-    while (changed && !timed_out_) {
-        changed = false;
-        for (std::size_t a = 0; a < order.size() && !timed_out_; ++a)
-            for (std::size_t b = a + 1; b < order.size() && !timed_out_; ++b)
-                changed = optimize_group({order[a],order[b]}) || changed;
-    }
-    (void)0;
-    for (std::size_t a = 0; order.size()<=48 && a < order.size() && !timed_out_; ++a)
-        for (std::size_t b = a + 1; b < order.size() && !timed_out_; ++b)
-            for (std::size_t c = b + 1; c < order.size() && !timed_out_; ++c)
-                optimize_group({order[a],order[b],order[c]});
-    (void)0;
-    if (column_count_ > 2000) {
-        std::vector<MasterColumn> master;
-        std::vector<std::pair<std::size_t,std::size_t>> locations;
-        std::vector<int> initial(incumbent.size(),-1);
-        for (std::size_t taxi = 0; taxi < columns.size(); ++taxi)
-            for (std::size_t i = 0; i < columns[taxi].size(); ++i) {
-                if (incumbent[taxi] == static_cast<int>(i)) initial[taxi] = static_cast<int>(master.size());
-                const auto& c = columns[taxi][i];
-                master.push_back({taxi,c.requests,c.profit}); locations.emplace_back(taxi,i);
-            }
-        const auto guides = columns.size() > 48 && !route_master_uses_cplex() ? estimate_prices() : std::vector<double>{};
-        const auto solved = columns.size() > 48 ?
-            improve_route_master(master,columns.size(),state.request_count(),initial,deadline,seed_,guides) :
-            solve_route_master(master,columns.size(),state.request_count(),initial,deadline);
-        if (solved.request_prices.size()==state.request_count()) {
-            cached_prices_=solved.request_prices;prices_revision_=bank_revision_;
-        }
-        best_profit = solved.profit; timed_out_ = solved.timed_out; nodes_ += solved.nodes;
-        std::fill(incumbent.begin(),incumbent.end(),-1);
-        for (auto id : solved.selected) if (id >= 0) {
-            const auto [taxi,index] = locations[id]; incumbent[taxi] = static_cast<int>(index);
-        }
-        (void)0;
-    } else {
-    // Nonnegative request prices give a valid Lagrangian upper bound:
-    // sum(price) + sum_t max(0, profit(route) - sum_request price).
-    // Use projected subgradients to tighten it; every iterate is valid, so
-    // convergence is unnecessary for correctness or safe early termination.
-    std::vector<double> prices(state.request_count(), 0), best_prices = prices;
-    double best_dual = std::numeric_limits<double>::infinity();
-    std::vector<std::vector<double>> reduced(columns.size());
-    std::vector<std::vector<std::size_t>> branches(columns.size());
-    for (std::size_t iteration = 0; iteration < 192 && !timed_out_; ++iteration) {
-        if (std::chrono::steady_clock::now() >= deadline) { timed_out_ = true; break; }
-        double dual = std::accumulate(prices.begin(), prices.end(), 0.0);
-        std::vector<std::size_t> uses(prices.size(), 0);
-        for (auto taxi : order) {
-            double maximum = 0; int chosen = -1;
-            for (std::size_t i = 0; i < columns[taxi].size(); ++i) {
-                const auto& column = columns[taxi][i];
-                double value = column.profit;
-                for (auto r : column.requests) value -= prices[r];
-                if (value > maximum) { maximum = value; chosen = static_cast<int>(i); }
-            }
-            dual += maximum;
-            if (chosen >= 0) for (auto r : columns[taxi][chosen].requests) ++uses[r];
-        }
-        if (dual < best_dual) { best_dual = dual; best_prices = prices; }
-        double norm = 0;
-        for (std::size_t r = 0; r < prices.size(); ++r)
-            if (prices[r] > 0 || uses[r] > 1) {
-                const double gradient = static_cast<double>(uses[r]) - 1;
-                norm += gradient * gradient;
-            }
-        if (!norm || dual <= best_profit + 1e-7) break;
-        const double step = 0.9 * (dual - best_profit) / norm;
-        for (std::size_t r = 0; r < prices.size(); ++r)
-            prices[r] = std::max(0.0, prices[r] + step * (static_cast<double>(uses[r]) - 1));
-    }
-    (void)0;
-    prices = std::move(best_prices);
-    const double price_total = std::accumulate(prices.begin(), prices.end(), 0.0);
-    for (auto taxi : order) {
-        auto& values = reduced[taxi];
-        for (const auto& column : columns[taxi]) {
-            double value = column.profit;
-            for (auto r : column.requests) value -= prices[r];
-            values.push_back(value);
-        }
-        auto& indices = branches[taxi];
-        indices.resize(values.size()); std::iota(indices.begin(), indices.end(), 0);
-        std::stable_sort(indices.begin(), indices.end(), [&](auto a, auto b) { return values[a] > values[b]; });
-    }
-    std::fill(occupied.begin(), occupied.end(), 0);
-    std::function<void(std::size_t,double,double)> search = [&](std::size_t depth, double profit, double price_used) {
-        if (timed_out_) return;
-        ++nodes_;
-        if ((nodes_ & 63) == 0 && std::chrono::steady_clock::now() >= deadline) {
-            timed_out_ = true; return;
-        }
-        if (depth == order.size()) {
-            if (profit > best_profit + 1e-9) { best_profit = profit; incumbent = selected; }
-            return;
-        }
-        double bound = profit;
-        for (std::size_t d = depth; d < order.size(); ++d)
-            for (const auto& column : columns[order[d]])
-                if (compatible(column)) { bound += column.profit; break; }
-        if (bound <= best_profit + 1e-9) return;
-        double priced_bound = profit + price_total - price_used;
-        for (std::size_t d = depth; d < order.size(); ++d) {
-            const auto taxi = order[d];
-            double maximum = 0;
-            for (auto i : branches[taxi]) {
-                if (reduced[taxi][i] <= 0) break;
-                if (compatible(columns[taxi][i])) { maximum = reduced[taxi][i]; break; }
-            }
-            priced_bound += maximum;
-        }
-        // Conservatively tolerate floating-point accumulation in the dual.
-        if (priced_bound < best_profit - 1e-7) return;
-        const auto taxi = order[depth];
-        for (auto i : branches[taxi]) {
-            const auto& column = columns[taxi][i];
-            if (!compatible(column)) continue;
-            selected[taxi] = static_cast<int>(i);
-            double used = price_used;
-            for (auto r : column.requests) { occupied[r] = 1; used += prices[r]; }
-            search(depth + 1, profit + column.profit, used);
-            for (auto r : column.requests) occupied[r] = 0;
-            if (timed_out_) break;
-        }
-        selected[taxi] = -1;
-        if (!timed_out_) search(depth + 1, profit, price_used); // unused taxi is always permitted
-    };
-    if (std::chrono::steady_clock::now() < deadline) search(0,0,0);
-    else timed_out_ = true;
-
-    }
-    if (best_profit <= state.benefit() + 1e-9) return false;
-    Solution candidate;
-    candidate.routes.resize(state.taxi_count());
-    for (std::size_t taxi = 0; taxi < incumbent.size(); ++taxi)
-        if (incumbent[taxi] >= 0) candidate.routes[taxi] = columns[taxi][incumbent[taxi]].route;
-    const auto evaluated = candidate.evaluate(instance_);
-
-    SearchState repaired(instance_, std::move(candidate), state.insertion_scratch_handle());
-    repaired.set_empty_taxi_index(state.empty_taxi_index());
-    state.copy_from(repaired);
+    update_route(state, state.request_owner[removed_request], route);
     return true;
 }
-} // namespace soict::alns
 
-// END src/search/alns/operators/Repair/RoutePoolRepair.cpp
-
-// BEGIN src/search/alns/operators/Repair/RoutePoolMaster.cpp
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <iostream>
-#include <limits>
-#include <numeric>
-#include <random>
-
-namespace soict::alns {
-namespace {
-struct PackingMatrix {
-    const std::vector<MasterColumn>& columns;
-    std::vector<std::vector<std::size_t>> rows;
-    std::vector<std::size_t> resources;
-    std::size_t dimension = 0, taxis;
-    PackingMatrix(const std::vector<MasterColumn>& c, std::size_t k, std::size_t requests)
-        : columns(c), rows(c.size()), taxis(k) {
-        std::vector<int> index(k+requests,-1);
-        for (std::size_t j = 0; j < c.size(); ++j) {
-            const auto add = [&](std::size_t r) {
-                if (index[r] < 0) {index[r] = static_cast<int>(dimension++);resources.push_back(r);}
-                rows[j].push_back(index[r]);
-            };
-            add(c[j].taxi); for (auto r : c[j].requests) add(k+r);
-        }
-    }
-};
-
-// A child adds x_j <= 0 or -x_j <= -1 to its parent's packing LP.
-// The parent's dual remains feasible, so dual simplex restores primal
-// feasibility while reusing the inverse basis and prices.
-class PackingLP {
-    const PackingMatrix* matrix_;
-    std::size_t n_;
-    std::vector<double> inverse_, basic_, prices_, rhs_, signs_;
-    std::vector<std::size_t> basis_;
-    std::vector<unsigned char> in_basis_;
-    std::vector<int> bound_row_;
-
-    double coefficient(std::size_t row, std::size_t column) const {
-        const auto nc = matrix_->columns.size();
-        if (column >= nc) return inverse_[row*n_+column-nc];
-        double value = 0;
-        for (auto r : matrix_->rows[column]) value += inverse_[row*n_+r];
-        if (bound_row_[column] >= 0) {
-            const auto r = static_cast<std::size_t>(bound_row_[column]);
-            value += signs_[r]*inverse_[row*n_+r];
-        }
-        return value;
-    }
-    double reduced(std::size_t column) const {
-        const auto nc = matrix_->columns.size();
-        if (column >= nc) return -prices_[column-nc];
-        double value = matrix_->columns[column].profit;
-        for (auto r : matrix_->rows[column]) value -= prices_[r];
-        if (bound_row_[column] >= 0) {
-            const auto r = static_cast<std::size_t>(bound_row_[column]);
-            value -= signs_[r]*prices_[r];
-        }
-        return value;
-    }
-    void pivot(std::size_t leaving, std::size_t entering) {
-        std::vector<double> direction(n_), row(n_);
-        for (std::size_t i = 0; i < n_; ++i) direction[i] = coefficient(i,entering);
-        const auto divisor = direction[leaving];
-        const double step = basic_[leaving]/divisor, gain = reduced(entering);
-        for (std::size_t r = 0; r < n_; ++r) {
-            row[r] = inverse_[leaving*n_+r]/divisor;
-            prices_[r] += gain*row[r];
-        }
-        for (std::size_t i = 0; i < n_; ++i) if (i != leaving) {
-            basic_[i] -= step*direction[i];
-            if (direction[i] == 0) continue;
-            for (std::size_t r = 0; r < n_; ++r) inverse_[i*n_+r] -= direction[i]*row[r];
-        }
-        std::copy(row.begin(),row.end(),inverse_.begin()+leaving*n_);
-        basic_[leaving] = step;
-        in_basis_[basis_[leaving]] = 0;
-        basis_[leaving] = entering; in_basis_[entering] = 1;
-        ++pivots;
-    }
-public:
-    std::size_t pivots = 0;
-    bool timed_out = false;
-    explicit PackingLP(const PackingMatrix& matrix) : matrix_(&matrix), n_(matrix.dimension),
-        inverse_(n_*n_,0), basic_(n_,1), prices_(n_,0), rhs_(n_,1), signs_(n_,0),
-        basis_(n_), in_basis_(matrix.columns.size()+n_,0), bound_row_(matrix.columns.size(),-1) {
-        for (std::size_t i = 0; i < n_; ++i) {
-            inverse_[i*n_+i] = 1;
-            basis_[i] = matrix.columns.size()+i; in_basis_[basis_[i]] = 1;
-        }
-    }
-    void primal(Deadline deadline) {
-        const auto nc = matrix_->columns.size();
-        std::size_t degenerate = 0;
-        for (std::size_t iteration = 0; iteration < 10000; ++iteration) {
-            if ((iteration & 7) == 0 && std::chrono::steady_clock::now() >= deadline) {
-                timed_out = true; return;
+bool improve_by_insertion(SearchState &state, InsertionCache &cache) {
+    InsertionChoice best;
+    for (int request = 0; request < instance.request_count; request++) {
+        if (state.request_owner[request] < 0) {
+            auto choice = find_fleet_insertion(state, request, cache);
+            if (choice.taxi >= 0 && choice.profit_delta > best.profit_delta) {
+                best = choice;
             }
-            std::size_t entering = nc+n_;
-            double gain = 1e-8;
-            for (std::size_t j = 0; j < nc+n_; ++j) {
-                if (in_basis_[j]) continue;
-                const double value = reduced(j);
-                if (value > gain) {
-                    gain = value; entering = j;
-                    if (degenerate > n_) break;
-                }
-            }
-            if (entering == nc+n_) return;
-            std::size_t leaving = n_;
-            double step = std::numeric_limits<double>::infinity();
-            for (std::size_t i = 0; i < n_; ++i) {
-                const auto d = coefficient(i,entering);
-                if (d <= 1e-9) continue;
-                const auto ratio = std::max(0.0,basic_[i])/d;
-                if (ratio < step-1e-9 || (std::abs(ratio-step) <= 1e-9 &&
-                    (leaving == n_ || basis_[i] < basis_[leaving]))) {
-                    leaving = i; step = ratio;
-                }
-            }
-            if (leaving == n_ || !std::isfinite(step)) return;
-            degenerate = step < 1e-9 ? degenerate+1 : 0;
-            pivot(leaving,entering);
         }
     }
-    void constrain(std::size_t column, bool include) {
-        const double sign = include ? -1 : 1, rhs = include ? -1 : 0;
-        const auto old = n_++;
-        std::vector<double> enlarged(n_*n_,0);
-        for (std::size_t i = 0; i < old; ++i)
-            std::copy_n(inverse_.begin()+i*old,old,enlarged.begin()+i*n_);
-        double value = 0;
-        for (std::size_t i = 0; i < old; ++i) if (basis_[i] == column) {
-            value = basic_[i];
-            for (std::size_t r = 0; r < old; ++r) enlarged[old*n_+r] = -sign*inverse_[i*old+r];
-            break;
-        }
-        enlarged[old*n_+old] = 1; inverse_ = std::move(enlarged);
-        basic_.push_back(rhs-sign*value); prices_.push_back(0); rhs_.push_back(rhs); signs_.push_back(sign);
-        basis_.push_back(matrix_->columns.size()+old); in_basis_.push_back(1);
-        bound_row_[column] = static_cast<int>(old); pivots = 0;
+    if (best.taxi < 0) {
+        return false;
     }
-    void dual(Deadline deadline) {
-        const auto nc = matrix_->columns.size();
-        for (std::size_t iteration = 0; iteration < 10000; ++iteration) {
-            if ((iteration & 7) == 0 && std::chrono::steady_clock::now() >= deadline) {
-                timed_out = true; return;
-            }
-            std::size_t leaving = n_;
-            double minimum = -1e-7;
-            for (std::size_t i = 0; i < n_; ++i)
-                if (basic_[i] < minimum) { minimum = basic_[i]; leaving = i; }
-            if (leaving == n_) return;
-            std::size_t entering = nc+n_;
-            double ratio = std::numeric_limits<double>::infinity();
-            for (std::size_t j = 0; j < nc+n_; ++j) {
-                if (in_basis_[j]) continue;
-                const auto d = coefficient(leaving,j);
-                if (d >= -1e-9) continue;
-                const double candidate = reduced(j)/d;
-                if (candidate < ratio-1e-9) { entering = j; ratio = candidate; }
-            }
-            // A numerical stop is never used as an infeasibility proof. The
-            // checked price bound remains valid and branching is exhaustive.
-            if (entering == nc+n_) return;
-            pivot(leaving,entering);
-        }
-    }
-    std::vector<double> values() const {
-        std::vector<double> x(matrix_->columns.size(),0);
-        for (std::size_t i = 0; i < n_; ++i)
-            if (basis_[i] < x.size() && std::isfinite(basic_[i]))
-                x[basis_[i]] = std::clamp(basic_[i],0.0,1.0);
-        return x;
-    }
-    double upper() const {
-        // Any nonnegative prices give a valid bound, including branch-row
-        // prices. Check residual profit for every column independently.
-        auto prices = prices_;
-        double bound = 0, magnitude = 0;
-        for (std::size_t r = 0; r < n_; ++r) {
-            if (!std::isfinite(prices[r])) return std::numeric_limits<double>::infinity();
-            prices[r] = std::max(0.0,prices[r]);
-            bound += prices[r]*rhs_[r]; magnitude += std::abs(prices[r]*rhs_[r]);
-        }
-        std::vector<double> residual(matrix_->taxis,0);
-        for (std::size_t j = 0; j < matrix_->columns.size(); ++j) {
-            const auto& c = matrix_->columns[j];
-            double value = c.profit;
-            for (auto r : matrix_->rows[j]) value -= prices[r];
-            if (bound_row_[j] >= 0) {
-                const auto r = static_cast<std::size_t>(bound_row_[j]);
-                value -= signs_[r]*prices[r];
-            }
-            residual[c.taxi] = std::max(residual[c.taxi],value);
-        }
-        const auto remainder = std::accumulate(residual.begin(),residual.end(),0.0);
-        bound += remainder; magnitude += remainder;
-        if (!std::isfinite(bound) || !std::isfinite(magnitude))
-            return std::numeric_limits<double>::infinity();
-        return bound+1e-7+1e-10*magnitude;
-    }
-    std::vector<double> request_prices(std::size_t requests) const {
-        std::vector<double> result(requests,0);
-        for (std::size_t row=0;row<matrix_->resources.size();++row) {
-            const auto resource=matrix_->resources[row];
-            if (resource>=matrix_->taxis && std::isfinite(prices_[row]))
-                result[resource-matrix_->taxis]=std::max(0.0,prices_[row]);
-        }
-        return result;
-    }
-};
+    apply_insertion(state, best);
+    return true;
 }
 
-std::vector<double> route_master_prices(const std::vector<MasterColumn>& columns,
-        std::size_t taxis, std::size_t requests, Deadline deadline) {
-    const PackingMatrix matrix(columns,taxis,requests);
-    PackingLP root(matrix);root.primal(deadline);
-    (void)0;
-    return root.request_prices(requests);
+// Replace a served request with an unserved one; cache the best pair per taxi/incoming request.
+// A removal-only route may be infeasible on nonmetric input: test the completed move.
+bool improve_by_replacement(SearchState &state, Deadline deadline) {
+    // Track route versions and unserved requests from the last completed cache refresh.
+    auto &cache = replacement_cache;
+    if (cache.route_version.empty()) {
+        cache.route_version.assign(instance.taxi_count, 0);
+        cache.is_unserved.assign(instance.request_count, 0);
+        cache.choices.assign(instance.taxi_count,
+                             vector<ReplacementChoice>(instance.request_count));
+    }
+    // Unchanged routes need entries only for requests that have just become unserved.
+    IntVector incoming, newly_unserved;
+    for (int request = 0; request < instance.request_count; request++) {
+        if (state.request_owner[request] < 0) {
+            incoming.push_back(request);
+            if (!cache.is_unserved[request]) {
+                newly_unserved.push_back(request);
+            }
+        }
+    }
+    // Refresh affected taxi/request entries by trying each outgoing served request.
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        bool changed = cache.route_version[taxi] != state.route_version[taxi];
+        auto &ids = changed ? incoming : newly_unserved;
+        if (ids.empty()) {
+            continue;
+        }
+        cache.route_version[taxi] = 0; // Invalidate before a timed refresh.
+        for (int request : ids) {
+            cache.choices[taxi][request] = ReplacementChoice{};
+        }
+        for (int outgoing_request : served_requests(state.routes[taxi])) {
+            auto reduced_route = remove_request(state.routes[taxi], outgoing_request);
+            Real removal_gain = route_profit(taxi, reduced_route) - state.route_profit[taxi];
+            for (int incoming_request : ids) {
+                if (Clock::now() >= deadline) {
+                    // The unserved bitmap is committed only after a full refresh.
+                    // On timeout, invalidate every row before returning.
+                    fill(cache.route_version.begin(), cache.route_version.end(), 0);
+                    return false;
+                }
+                auto &entry = cache.choices[taxi][incoming_request];
+                Real required_profit_delta = max(FEASIBILITY_EPSILON, entry.profit_delta);
+                auto choice = find_route_insertion(incoming_request, taxi, reduced_route,
+                                                   required_profit_delta - removal_gain);
+                if (choice.taxi >= 0 &&
+                    removal_gain + choice.profit_delta > required_profit_delta) {
+                    entry = {outgoing_request, choice, removal_gain + choice.profit_delta};
+                }
+            }
+        }
+        cache.route_version[taxi] = state.route_version[taxi];
+    }
+
+    // Commit the unserved bitmap only after every requested cache entry is refreshed.
+    for (int request = 0; request < instance.request_count; request++) {
+        cache.is_unserved[request] = state.request_owner[request] < 0;
+    }
+
+    // Select the best cached move, using request IDs and insertion positions to break ties.
+    ReplacementChoice best;
+    best.profit_delta = FEASIBILITY_EPSILON;
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        for (int incoming_request : incoming) {
+            auto &replacement = cache.choices[taxi][incoming_request];
+            if (replacement.outgoing_request >= 0 &&
+                (replacement.profit_delta > best.profit_delta ||
+                 (replacement.profit_delta == best.profit_delta &&
+                  tie(replacement.outgoing_request, replacement.insertion.request,
+                      replacement.insertion.pickup_position,
+                      replacement.insertion.delivery_position) <
+                      tie(best.outgoing_request, best.insertion.request,
+                          best.insertion.pickup_position, best.insertion.delivery_position)))) {
+                best = replacement;
+            }
+        }
+    }
+    if (best.outgoing_request < 0) {
+        return false;
+    }
+    // Apply removal and insertion together so feasibility belongs to the completed move.
+    int taxi = best.insertion.taxi;
+    update_route(state, taxi,
+                 insert_request(remove_request(state.routes[taxi], best.outgoing_request),
+                                best.insertion.request, best.insertion.pickup_position,
+                                best.insertion.delivery_position));
+    return true;
 }
 
-bool route_master_uses_cplex() {
+bool improve_by_tail_exchange(SearchState &state, Deadline deadline) {
+    // Only cut where no request is onboard, so exchanged tails keep pickup/delivery pairs intact.
+    vector<IntVector> cuts(instance.taxi_count);
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        cuts[taxi] = empty_load_cuts(state.routes[taxi]);
+    }
+    for (int first_taxi = 0; first_taxi < instance.taxi_count && Clock::now() < deadline;
+         first_taxi++) {
+        for (int second_taxi = first_taxi + 1; second_taxi < instance.taxi_count; second_taxi++) {
+            auto &first_route = state.routes[first_taxi];
+            auto &second_route = state.routes[second_taxi];
+            int first_size = first_route.size(), second_size = second_route.size();
+            if (first_route.empty() && second_route.empty()) {
+                continue;
+            }
+            Real best = FEASIBILITY_EPSILON;
+            int first_cut = -1, second_cut = -1;
+            auto &first_segments = cached_route_segments(first_taxi, first_route);
+            auto &second_segments = cached_route_segments(second_taxi, second_route);
+
+            // Internal tail costs stay unchanged; only the two connecting arcs affect profit.
+            for (int i : cuts[first_taxi]) {
+                for (int j : cuts[second_taxi]) {
+                    int first_previous = i ? first_route[i - 1] : instance.taxi_origin[first_taxi],
+                        second_previous =
+                            j ? second_route[j - 1] : instance.taxi_origin[second_taxi];
+                    Real profit_delta = 0;
+                    if (i < first_size) {
+                        profit_delta += travel_cost(first_previous, first_route[i]) -
+                                        travel_cost(second_previous, first_route[i]);
+                    }
+                    if (j < second_size) {
+                        profit_delta += travel_cost(second_previous, second_route[j]) -
+                                        travel_cost(first_previous, second_route[j]);
+                    }
+                    if (profit_delta <= best + FEASIBILITY_EPSILON) {
+                        continue;
+                    }
+                    // Check both recombined routes using cached prefix/suffix summaries.
+                    if (!is_segment_feasible(
+                            first_taxi,
+                            join_segments(segment_range(first_segments, 0, i),
+                                          segment_range(second_segments, j, second_size))) ||
+                        !is_segment_feasible(
+                            second_taxi,
+                            join_segments(segment_range(second_segments, 0, j),
+                                          segment_range(first_segments, i, first_size)))) {
+                        continue;
+                    }
+                    best = profit_delta;
+                    first_cut = i;
+                    second_cut = j;
+                }
+            }
+            // Apply the best exchange for the first taxi pair that admits an improvement.
+            if (first_cut >= 0) {
+                Route new_first_route(first_route.begin(), first_route.begin() + first_cut),
+                    new_second_route(second_route.begin(), second_route.begin() + second_cut);
+                new_first_route.insert(new_first_route.end(), second_route.begin() + second_cut,
+                                       second_route.end());
+                new_second_route.insert(new_second_route.end(), first_route.begin() + first_cut,
+                                        first_route.end());
+                update_route_pair(state, first_taxi, new_first_route, second_taxi,
+                                  new_second_route);
+                return true;
+            }
+        }
+    }
     return false;
 }
 
-MasterResult solve_route_master(const std::vector<MasterColumn>& columns,
-        std::size_t taxis, std::size_t requests, const std::vector<int>& incumbent,
-        Deadline deadline, bool verbose) {
-    MasterResult result; result.selected = incumbent;
-    for (auto id : incumbent) if (id >= 0) result.profit += columns[id].profit;
-    if (columns.empty()) {result.complete=true;return result;}
-    const PackingMatrix matrix(columns,taxis,requests);
-    PackingLP root(matrix); root.primal(deadline);
-    result.pivots = root.pivots;
-    if (root.timed_out) { result.timed_out = true; return result; }
-    result.root_upper = root.upper();
-    if (verbose) (void)0;
-    bool integral = true;
-    for (const auto& c : columns) integral &= c.profit == std::round(c.profit);
-    std::vector<unsigned char> fixed(taxis,0), occupied(requests,0), forbidden(columns.size(),0);
-    std::vector<int> selected(taxis,-1);
-    const auto compatible = [&](std::size_t id) {
-        const auto& c = columns[id];
-        if (fixed[c.taxi] || forbidden[id]) return false;
-        for (auto r : c.requests) if (occupied[r]) return false;
-        return true;
-    };
-    std::function<void(const PackingLP&,double)> visit = [&](const PackingLP& lp, double profit) {
-        if (result.timed_out) return;
-        if (std::chrono::steady_clock::now() >= deadline) { result.timed_out = true; return; }
-        ++result.nodes;
-        double upper = lp.upper(); if (integral) upper = std::floor(upper);
-        if (upper <= result.profit+1e-9) return;
-        const auto x = lp.values();
-        std::vector<std::size_t> ranking;
-        for (std::size_t j = 0; j < columns.size(); ++j) if (compatible(j)) ranking.push_back(j);
-        if (ranking.empty()) {
-            if (profit > result.profit+1e-9) { result.profit = profit; result.selected = selected; }
-            return;
-        }
-        std::stable_sort(ranking.begin(),ranking.end(),[&](auto a,auto b) {
-            return x[a] != x[b] ? x[a] > x[b] : columns[a].profit > columns[b].profit;
-        });
-        auto used = occupied, assigned = fixed; auto fleet = selected;
-        double candidate = profit;
-        for (auto id : ranking) {
-            const auto& c = columns[id];
-            if (assigned[c.taxi]) continue;
-            bool free = true; for (auto r : c.requests) free &= !used[r];
-            if (!free) continue;
-            assigned[c.taxi] = 1; for (auto r : c.requests) used[r] = 1;
-            fleet[c.taxi] = static_cast<int>(id); candidate += c.profit;
-        }
-        if (candidate > result.profit+1e-9) {
-            result.profit = candidate; result.selected = std::move(fleet);
-            if (verbose) (void)0;
-        }
-        if (upper <= result.profit+1e-9) return;
-        std::size_t branch = ranking.front(); double fractionality = -1;
-        for (auto j : ranking) {
-            if (x[j] <= 1e-7 || x[j] >= 1-1e-7) continue;
-            const auto score = std::min(x[j],1-x[j]);
-            if (score > fractionality) { fractionality = score; branch = j; }
-        }
-        const auto& c = columns[branch];
-        {
-            auto child = lp; child.constrain(branch,true); child.dual(deadline);
-            result.pivots += child.pivots;
-            if (child.timed_out) { result.timed_out = true; return; }
-            fixed[c.taxi] = 1; for (auto r : c.requests) occupied[r] = 1;
-            selected[c.taxi] = static_cast<int>(branch); visit(child,profit+c.profit);
-            selected[c.taxi] = -1;
-            fixed[c.taxi] = 0; for (auto r : c.requests) occupied[r] = 0;
-        }
-        if (!result.timed_out) {
-            auto child = lp; child.constrain(branch,false); child.dual(deadline);
-            result.pivots += child.pivots;
-            if (child.timed_out) { result.timed_out = true; return; }
-            forbidden[branch] = 1; visit(child,profit); forbidden[branch] = 0;
-        }
-    };
-    visit(root,0);
-    result.complete = !result.timed_out;
-    return result;
-}
-
-MasterResult improve_route_master(const std::vector<MasterColumn>& columns,
-        std::size_t taxis, std::size_t requests, const std::vector<int>& incumbent,
-        Deadline deadline, std::uint64_t seed, const std::vector<double>& request_prices) {
-    MasterResult result;result.selected = incumbent;
-    result.root_upper = std::numeric_limits<double>::infinity();
-    for (auto id : incumbent) if (id >= 0) result.profit += columns[id].profit;
-    std::vector<std::vector<std::size_t>> banks(taxis);
-    for (std::size_t j = 0; j < columns.size(); ++j) banks[columns[j].taxi].push_back(j);
-    std::vector<double> penalties(columns.size(),0);
-    if (!request_prices.empty()) for (std::size_t j=0;j<columns.size();++j)
-        for (auto r:columns[j].requests) penalties[j]+=request_prices[r];
-    // Price-based starts favor routes that leave expensive shared requests
-    // available to other taxis. Each constructed fleet is checked directly.
-    for (const double scale:{0.0,0.5,1.0,1.5}) {
-        std::vector<std::size_t> ranking(columns.size());std::iota(ranking.begin(),ranking.end(),0);
-        std::sort(ranking.begin(),ranking.end(),[&](auto a,auto b) {
-            const auto x=columns[a].profit-scale*penalties[a],y=columns[b].profit-scale*penalties[b];
-            return x!=y?x>y:a<b;
-        });
-        std::vector<unsigned char> occupied(requests,0);std::vector<int> fleet(taxis,-1);double profit=0;
-        for (auto j:ranking) {
-            const auto& c=columns[j];if (fleet[c.taxi]>=0) continue;
-            bool free=true;for (auto r:c.requests) free&=!occupied[r];if (!free) continue;
-            fleet[c.taxi]=static_cast<int>(j);for (auto r:c.requests) occupied[r]=1;profit+=c.profit;
-        }
-        if (profit>result.profit+1e-9) {result.profit=profit;result.selected=std::move(fleet);
-            (void)0;}
-    }
-    for (auto& bank:banks) std::sort(bank.begin(),bank.end(),[&](auto a,auto b) {
-        const auto x=columns[a].profit-penalties[a],y=columns[b].profit-penalties[b];
-        return x!=y?x>y:a<b;
-    });
-    std::mt19937_64 rng(seed);
-    const auto start = std::chrono::steady_clock::now();
-    std::size_t rounds = 0, last_gain = 0;
-    while (std::chrono::steady_clock::now() < deadline) {
-        std::vector<int> owner(requests,-1);
-        for (std::size_t t = 0; t < taxis; ++t) if (result.selected[t] >= 0)
-            for (auto r : columns[result.selected[t]].requests) owner[r] = static_cast<int>(t);
-        const std::size_t width = std::min(taxis,static_cast<std::size_t>(8+4*((rounds/taxis)%4)));
-        std::vector<std::size_t> group;
-        std::vector<unsigned char> inside(taxis,0);
-        const auto add = [&](std::size_t t) { if (!inside[t]) { group.push_back(t);inside[t] = 1; } };
-        const auto first = rounds%taxis; add(first);
-        // Follow the owners blocking a promising alternative. Periodic
-        // randomization diversifies the coordinated neighborhood.
-        if (!banks[first].empty()) {
-            const auto rank = rounds%3 == 0 ? rng()%std::min<std::size_t>(24,banks[first].size()) : 0;
-            for (auto r : columns[banks[first][rank]].requests)
-                if (owner[r] >= 0 && group.size() < width) add(owner[r]);
-        }
-        while (group.size() < width) {
-            std::vector<double> score(taxis,0);
-            for (auto t : group) {
-                const auto old = result.selected[t] >= 0 ? columns[result.selected[t]].profit : 0;
-                const auto count = std::min<std::size_t>(32,banks[t].size());
-                for (std::size_t j = 0; j < count; ++j) {
-                    const auto& c = columns[banks[t][j]];
-                    const auto value = std::max(1.0,c.profit-old);
-                    for (auto r : c.requests) if (owner[r] >= 0 && !inside[owner[r]]) score[owner[r]] += value;
+// Move a request within its route or to another taxi, choosing new insertion positions.
+bool improve_by_relocation(SearchState &state, Deadline deadline) {
+    Real best = FEASIBILITY_EPSILON;
+    int source_taxi = -1, target_taxi = -1;
+    Route source_route, target_route;
+    // Remove each served request and search its best reinsertion across all taxis.
+    for (int request = 0; request < instance.request_count && Clock::now() < deadline; request++) {
+        if (state.request_owner[request] >= 0) {
+            int taxi = state.request_owner[request];
+            auto reduced_route = remove_request(state.routes[taxi], request);
+            auto removal_feasible = evaluate_route(instance, taxi, reduced_route);
+            Real removal_gain = route_profit(taxi, reduced_route) - state.route_profit[taxi];
+            for (int destination = 0; destination < instance.taxi_count; destination++) {
+                // A cross-taxi move must leave the source feasible; same-taxi reinsertion can repair it.
+                if (destination != taxi && !removal_feasible) {
+                    continue;
+                }
+                auto &insertion_route =
+                    destination == taxi ? reduced_route : state.routes[destination];
+                auto choice = find_route_insertion(request, destination, insertion_route,
+                                                   best - removal_gain);
+                if (choice.taxi >= 0 && removal_gain + choice.profit_delta > best) {
+                    best = removal_gain + choice.profit_delta;
+                    source_taxi = taxi;
+                    target_taxi = destination;
+                    source_route = reduced_route;
+                    target_route = insert_request(insertion_route, request, choice.pickup_position,
+                                                  choice.delivery_position);
                 }
             }
-            std::size_t chosen = taxis;double maximum = 0;
-            for (std::size_t t = 0; t < taxis; ++t) if (!inside[t] && score[t] > maximum) {
-                maximum = score[t]; chosen = t;
-            }
-            if (chosen == taxis || rounds%5 == 4) {
-                do { chosen = rng()%taxis; } while (inside[chosen]);
-            }
-            add(chosen);
-        }
-        std::vector<MasterColumn> local;
-        std::vector<std::size_t> global;
-        std::vector<int> initial(group.size(),-1);
-        for (std::size_t t = 0; t < group.size(); ++t) for (auto id : banks[group[t]]) {
-            const auto& c = columns[id];bool available = true;
-            for (auto r : c.requests) if (owner[r] >= 0 && !inside[owner[r]]) { available = false; break; }
-            if (!available) continue;
-            if (result.selected[group[t]] == static_cast<int>(id)) initial[t] = static_cast<int>(local.size());
-            local.push_back({t,c.requests,c.profit});global.push_back(id);
-        }
-        const auto now = std::chrono::steady_clock::now();
-        const auto local_deadline = std::min(deadline,now+std::chrono::milliseconds(150));
-        const auto solved = solve_route_master(local,group.size(),requests,initial,local_deadline,false);
-        result.nodes += solved.nodes;result.pivots += solved.pivots;
-        double old = 0;for (auto id : initial) if (id >= 0) old += local[id].profit;
-        if (solved.profit > old+1e-9) {
-            for (std::size_t t = 0; t < group.size(); ++t)
-                result.selected[group[t]] = solved.selected[t] >= 0 ? static_cast<int>(global[solved.selected[t]]) : -1;
-            result.profit += solved.profit-old;last_gain = rounds;
-            (void)0;
-        }
-        ++rounds;
-        // Return a useful incumbent instead of spending the entire allowance
-        // on identical neighborhoods after several unsuccessful full sweeps.
-        if (rounds-last_gain > 12*taxis) break;
-    }
-    (void)0;
-    result.timed_out = std::chrono::steady_clock::now()>=deadline;
-    return result;
-}
-}
-
-// END src/search/alns/operators/Repair/RoutePoolMaster.cpp
-
-// BEGIN src/search/alns/operators/LocalSearch/LocalSearch.cpp
-
-namespace soict::alns {
-bool LocalSearch::search(SearchState& state, std::chrono::steady_clock::time_point deadline) const {
-    bool changed = false;
-    for (int cycle = 0; cycle < 2; ++cycle) {
-        bool cycle_changed = false;
-        for (const auto& move : moves_) {
-            if (std::chrono::steady_clock::now() >= deadline) return changed || cycle_changed;
-            cycle_changed = move->improve(state) || cycle_changed;
-        }
-        if (!cycle_changed) break;
-        changed = true;
-    }
-    return changed;
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/LocalSearch/LocalSearch.cpp
-
-// BEGIN src/search/alns/operators/LocalSearch/AddRequest.cpp
-
-#include <optional>
-#include <numeric>
-#include <vector>
-
-namespace soict::alns {
-bool AddRequest::improve(SearchState& state) const {
-    if (requests_.size() != state.request_count()) {
-        requests_.resize(state.request_count());
-        std::iota(requests_.begin(), requests_.end(), 0);
-    }
-    cache_.prepare(state, requests_);
-    bool changed = false;
-    for (;;) {
-        std::optional<InsertionChoice> best;
-        for (const auto request : requests_) {
-            if (state.location(request).taxi >= 0) continue;
-            const auto move = cache_.best(request);
-            if (move && move->gain > 1e-9 &&
-                (!best || move->gain > best->gain)) best = move;
-        }
-        if (!best) break;
-        (void)(!state.insert(best->request, best->taxi, best->pickup, best->delivery));
-        changed = true;
-        cache_.refresh_taxi(state, best->taxi, requests_);
-    }
-    return changed;
-}
-
-} // namespace soict::alns
-
-// END src/search/alns/operators/LocalSearch/AddRequest.cpp
-
-// BEGIN src/search/alns/operators/LocalSearch/RemoveRequest.cpp
-
-#include <optional>
-#include <vector>
-
-namespace soict::alns {
-bool RemoveRequest::improve(SearchState& state) const {
-    std::vector<std::optional<double>> moves(state.request_count());
-    for (std::size_t request = 0; request < state.request_count(); ++request)
-        moves[request] = state.removal_gain(request);
-    bool changed = false;
-    for (;;) {
-        std::optional<std::size_t> best;
-        double best_gain = 1e-9;
-        for (std::size_t request = 0; request < state.request_count(); ++request) {
-            if (moves[request] && *moves[request] > best_gain) {
-                best = request;
-                best_gain = *moves[request];
-            }
-        }
-        if (!best) break;
-        const auto taxi = static_cast<std::size_t>(state.location(*best).taxi);
-        (void)(!state.remove(*best));
-        changed = true;
-        moves[*best].reset();
-        for (std::size_t request = 0; request < state.request_count(); ++request)
-            if (state.location(request).taxi == static_cast<int>(taxi))
-                moves[request] = state.removal_gain(request);
-    }
-    return changed;
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/LocalSearch/RemoveRequest.cpp
-
-// BEGIN src/search/alns/operators/LocalSearch/PassengerRelocate.cpp
-
-// BEGIN include/search/alns/operators/LocalSearch/RelocationEngine.hpp
-
-
-// BEGIN include/search/alns/operators/LocalSearch/RelocationPool.hpp
-
-#include <algorithm>
-#include <optional>
-#include <vector>
-
-namespace soict::alns {
-// For a fixed request and destination route, only its best position can win
-// best improvement. A route change invalidates every descriptor that reads it.
-struct RelocationDescriptor {
-    InsertionChoice choice;
-    std::size_t source;
-};
-
-class RelocationPool {
-public:
-    void add(std::optional<InsertionChoice> choice, std::size_t source) {
-        if (choice && choice->gain > 1e-9) moves_.push_back({*choice, source});
-    }
-    std::optional<RelocationDescriptor> best() const {
-        if (moves_.empty()) return std::nullopt;
-        return *std::max_element(moves_.begin(), moves_.end(),
-            [](const auto& a, const auto& b) {
-                return a.choice.gain < b.choice.gain;
-            });
-    }
-    void erase_affected(std::size_t first, std::size_t second) {
-        soict_erase_if(moves_, [&](const auto& move) {
-            return move.source == first || move.source == second ||
-                   move.choice.taxi == first || move.choice.taxi == second;
-        });
-    }
-    void clear() { moves_.clear(); }
-private:
-    std::vector<RelocationDescriptor> moves_;
-};
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/RelocationPool.hpp
-
-namespace soict::alns {
-
-// Shared request/taxi traversal for passenger and parcel relocation. The
-// context and best_on_taxi callback retain the event-specific feasibility
-// rules; this engine owns only cache reuse, affected-taxi rescans, and move
-// application order.
-template<class Context, bool Passenger, class BestOnTaxi>
-bool improve_relocations(SearchState& state, std::size_t first_request,
-                         std::size_t end_request,
-                         BestOnTaxi best_on_taxi) {
-    RelocationPool pool;
-    const auto scan_request = [&](std::size_t request, bool all,
-                                  std::size_t first, std::size_t second) {
-        if (state.location(request).taxi < 0) return;
-        Context context(state, request);
-        const auto source = static_cast<std::size_t>(state.location(request).taxi);
-        if (!context.valid()) return;
-        const auto source_version = state.cache(source).version();
-        const auto& index = state.empty_taxi_index();
-        const bool indexed = index && index->ensure(request);
-        if (indexed) {
-            if (all) {
-                static const RouteCache empty_route;
-                for (const auto& choice : index->choices(request)) {
-                    if (state.is_active(choice.taxi)) continue;
-                    const auto gain = [&] {
-                        if constexpr (Passenger) return context.gain(choice.taxi, empty_route, 0);
-                        else return context.gain(choice.taxi, empty_route, 0, 0);
-                    }();
-                    if (gain) pool.add(InsertionChoice{request, choice.taxi, 0, 0, *gain}, source);
-                    break;
-                }
-            }
-            for (const auto taxi : state.active_taxis())
-                if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, request, taxi,
-                                         state.cache(taxi), source_version), source);
-        } else {
-            for (std::size_t taxi = 0; taxi < state.taxi_count(); ++taxi)
-                if (all || taxi == first || taxi == second)
-                    pool.add(best_on_taxi(state, context, request, taxi,
-                                         state.cache(taxi), source_version), source);
-        }
-    };
-    const auto scan_all = [&] {
-        pool.clear();
-        for (std::size_t request = first_request; request < end_request; ++request)
-            scan_request(request, true, 0, 0);
-    };
-    scan_all();
-    bool changed = false;
-    while (const auto descriptor = pool.best()) {
-        const auto choice = descriptor->choice;
-        const auto source = descriptor->source;
-        const auto target = choice.taxi;
-        const bool source_active_before = state.is_active(source);
-        const bool target_active_before = state.is_active(target);
-        const bool same = source == target;
-        const bool applied = same ? state.relocate_within_route(
-            choice.request, choice.pickup, choice.delivery) :
-            (state.remove(choice.request) && state.insert(choice.request,
-                target, choice.pickup, choice.delivery));
-
-        changed = true;
-        if (state.is_active(source) != source_active_before ||
-            state.is_active(target) != target_active_before) {
-            scan_all();
-            continue;
-        }
-        pool.erase_affected(source, target);
-        for (std::size_t request = first_request; request < end_request; ++request) {
-            if (state.location(request).taxi < 0) continue;
-            const auto origin = static_cast<std::size_t>(state.location(request).taxi);
-            scan_request(request, origin == source || origin == target, source, target);
         }
     }
-    return changed;
+    if (source_taxi < 0) {
+        return false;
+    }
+    // Update both routes together, including the case where source and destination coincide.
+    update_route_pair(state, source_taxi, source_route, target_taxi, target_route);
+    return true;
 }
 
-} // namespace soict::alns
-
-// END include/search/alns/operators/LocalSearch/RelocationEngine.hpp
-
-#include <algorithm>
-
-namespace soict::alns {
-std::optional<double> PassengerRelocationContext::calculate_delta_fast(std::size_t taxi,
-    const RouteCache& route, std::size_t boundary) const {
-    if (!valid() || taxi >= state_.taxi_count() ||
-        boundary > route.nodes().size() - (taxi == source_ ? 2 : 0) ||
-        (taxi != source_ && !removal_gain_)) return std::nullopt;
-    const RouteView view{route.nodes(), pickup_at_, pickup_at_ + 1, taxi == source_};
-    const auto delta = adjacent_insertion_cost(state_.instance(), taxi, view, boundary,
-        state_.pickup_node(request_), state_.instance().passenger_dropoff(request_));
-    return removal_savings_ - delta;
-}
-
-std::optional<double> PassengerRelocationContext::gain(std::size_t taxi,
-    const RouteCache& route, std::size_t boundary) const {
-    if (!valid() || taxi >= state_.taxi_count() ||
-        boundary > route.nodes().size() - (taxi == source_ ? 2 : 0))
-        return std::nullopt;
-    const auto& in = state_.instance();
-    const bool same = taxi == source_;
-    const auto route_length = route.nodes().size() - (same ? 2 : 0);
-    if (same) {
-        if (boundary && !route.boundary_allowed(in, original_position(boundary - 1) + 1))
-            return std::nullopt;
-    } else if (!removal_gain_ || !route.boundary_allowed(in, boundary)) return std::nullopt;
-
-    FastRouteCheck candidate(in, taxi, route);
-    if (same) add_source_range(candidate, 0, boundary);
-    else candidate.range(0, boundary);
-    candidate.node(state_.pickup_node(request_));
-    candidate.node(in.passenger_dropoff(request_));
-    if (same) add_source_range(candidate, boundary, route_length);
-    else candidate.range(boundary, route_length);
-    if (!candidate.feasible()) return std::nullopt;
-    return calculate_delta_fast(taxi, route, boundary);
-}
-
-std::optional<InsertionChoice> PassengerRelocate::best_on_taxi(
-    const SearchState& state, const PassengerRelocationContext& context,
-    std::size_t r, std::size_t taxi, const RouteCache& route,
-    std::uint64_t source_version) const {
-    const auto source = static_cast<std::size_t>(state.location(r).taxi);
-    if (taxi != source && !context.removal_feasible()) return std::nullopt;
-    return cache_.get(r, taxi, state.taxi_count(),
-        source_version, route.version(),
-        context.removal_savings(), taxi == source, [&] {
-                std::optional<InsertionChoice> route_best;
-                const auto length = route.nodes().size() - (taxi == source ? 2 : 0);
-                for (std::size_t a = 0; a <= length; ++a) {
-                    const auto objective = context.calculate_delta_fast(taxi, route, a);
-                    if (!objective || *objective + 1e-8 <
-                        std::max(1e-9, route_best ? route_best->gain : 1e-9)) continue;
-                    const auto gain = context.gain(taxi, route, a);
-                    if (gain && (!route_best || *gain > route_best->gain))
-                        route_best = InsertionChoice{r, taxi, a, a, *gain};
-                }
-                return route_best;
-            });
-}
-
-bool PassengerRelocate::improve(SearchState& state) const {
-    return improve_relocations<PassengerRelocationContext, true>(state, 0, state.passenger_count(),
-        [this](const SearchState& current, const PassengerRelocationContext& context,
-               std::size_t request, std::size_t taxi, const RouteCache& route,
-               std::uint64_t source_version) {
-            return best_on_taxi(current, context, request, taxi, route, source_version);
-        });
-}
-
-} // namespace soict::alns
-
-// END src/search/alns/operators/LocalSearch/PassengerRelocate.cpp
-
-// BEGIN src/search/alns/operators/LocalSearch/ParcelRelocate.cpp
-
-#include <algorithm>
-#include <limits>
-
-namespace soict::alns {
-ParcelRelocationContext::ParcelRelocationContext(const SearchState& state, std::size_t request)
-    : RelocationSource<false>(state, request) {
-    if (!valid()) return;
-    const auto data = request_data(state.instance(), request);
-    pickup_ = single_node(state.instance(), data.pickup);
-    delivery_ = single_node(state.instance(), data.delivery);
-}
-
-std::optional<double> ParcelRelocationContext::calculate_delta_fast(std::size_t taxi,
-    const RouteCache& route, std::size_t a, std::size_t b) const {
-    if (!valid() || taxi >= state_.taxi_count() || a > b ||
-        b > route.nodes().size() - (taxi == source_ ? 2 : 0) ||
-        (taxi != source_ && !removal_gain_)) return std::nullopt;
-    const RouteView view{route.nodes(), pickup_at_, delivery_at_, taxi == source_};
-    const auto delta = separated_insertion_cost(state_.instance(), taxi, view, a, b,
-        state_.pickup_node(request_),
-        state_.instance().parcel_dropoff(request_ - state_.passenger_count()));
-    return removal_savings_ - delta;
-}
-
-std::optional<double> ParcelRelocationContext::gain(std::size_t taxi,
-    const RouteCache& route, std::size_t a, std::size_t b) const {
-    const auto prefix = pickup_prefix(taxi, route, a);
-    return prefix ? gain_from_prefix(taxi, route, a, b, *prefix) : std::nullopt;
-}
-
-std::optional<FastRouteCheck> ParcelRelocationContext::pickup_prefix(
-    std::size_t taxi, const RouteCache& route, std::size_t a) const {
-    if (!valid() || taxi >= state_.taxi_count()) return std::nullopt;
-    const bool same = taxi == source_;
-    const auto route_length = route.nodes().size() - (same ? 2 : 0);
-    if (a > route_length) return std::nullopt;
-    const auto& in = state_.instance();
-    const auto weight = in.parcels[request_ - state_.passenger_count()].weight;
-    if (weight > in.taxis[taxi].parcel_capacity + 1e-8) return std::nullopt;
-    if (same) {
-        if (!source_boundary_allowed(route, a)) return std::nullopt;
-    } else if (!removal_gain_ || !route.boundary_allowed(in, a)) return std::nullopt;
-
-    FastRouteCheck candidate(in, taxi, route);
-    if (same) add_source_range(candidate, 0, a);
-    else candidate.range(0, a);
-    candidate.segment(pickup_);
-    // Later delivery positions cannot repair a violation in this fixed prefix.
-    if (!candidate.feasible()) return std::nullopt;
-    return candidate;
-}
-
-std::optional<double> ParcelRelocationContext::gain_from_prefix(
-    std::size_t taxi, const RouteCache& route, std::size_t a, std::size_t b,
-    const FastRouteCheck& prefix) const {
-    const bool same = taxi == source_;
-    const auto route_length = route.nodes().size() - (same ? 2 : 0);
-    if (a > b || b > route_length) return std::nullopt;
-    const auto& in = state_.instance();
-    if (same) {
-        if (!source_boundary_allowed(route, b)) return std::nullopt;
-    } else if (!route.boundary_allowed(in, b)) return std::nullopt;
-    auto candidate = prefix;
-    if (same) add_source_range(candidate, a, b);
-    else candidate.range(a, b);
-    candidate.segment(delivery_);
-    if (same) add_source_range(candidate, b, route_length);
-    else candidate.range(b, route_length);
-    if (!candidate.feasible()) return std::nullopt;
-    return calculate_delta_fast(taxi, route, a, b);
-}
-
-std::optional<InsertionChoice> ParcelRelocate::best_on_taxi(
-    const SearchState& state, const ParcelRelocationContext& context,
-    std::size_t r, std::size_t taxi, const RouteCache& route,
-    std::uint64_t source_version) const {
-    const auto source = static_cast<std::size_t>(state.location(r).taxi);
-    if (taxi != source && !context.removal_feasible()) return std::nullopt;
-    return cache_.get(r, taxi, state.taxi_count(),
-        source_version, route.version(),
-        context.removal_savings(), taxi == source, [&] {
-                std::optional<InsertionChoice> route_best;
-                const auto length = route.nodes().size() - (taxi == source ? 2 : 0);
-                const auto& in = state.instance();
-                const auto loc = state.location(r);
-                const RouteView view{route.nodes(), loc.pickup, loc.dropoff,
-                                     taxi == source};
-                const auto pickup_node = state.pickup_node(r);
-                const auto delivery_node = in.parcel_dropoff(r - state.passenger_count());
-                std::vector<double> pickup_cost(length + 1), delivery_cost(length + 1),
-                                    adjacent_cost(length + 1),
-                                    suffix_delivery(length + 2,
-                                        std::numeric_limits<double>::infinity());
-                for (std::size_t pos = 0; pos <= length; ++pos) {
-                    pickup_cost[pos] = single_insertion_cost(in, taxi, view,
-                                                             pos, pickup_node);
-                    delivery_cost[pos] = single_insertion_cost(in, taxi, view,
-                                                               pos, delivery_node);
-                    adjacent_cost[pos] = adjacent_insertion_cost(in, taxi, view,
-                                             pos, pickup_node, delivery_node);
-                }
-                for (std::size_t pos = length + 1; pos-- > 0;)
-                    suffix_delivery[pos] = std::min(delivery_cost[pos],
-                                                    suffix_delivery[pos + 1]);
-                for (std::size_t a = 0; a <= length; ++a) {
-                    const auto best_delta = std::min(adjacent_cost[a],
-                        pickup_cost[a] + suffix_delivery[a + 1]);
-                    if (context.removal_savings() - best_delta + 1e-8 <
-                        std::max(1e-9, route_best ? route_best->gain : 1e-9)) continue;
-                    const auto prefix = context.pickup_prefix(taxi, route, a);
-                    if (!prefix) continue;
-                    for (std::size_t b = a; b <= length; ++b) {
-                        const auto delta = b == a ? adjacent_cost[a] :
-                                           pickup_cost[a] + delivery_cost[b];
-                        const auto objective = context.removal_savings() - delta;
-                        if (objective + 1e-8 <
-                            std::max(1e-9, route_best ? route_best->gain : 1e-9)) continue;
-                        const auto gain = context.gain_from_prefix(taxi, route, a, b, *prefix);
-                        if (gain && (!route_best || *gain > route_best->gain))
-                            route_best = InsertionChoice{r, taxi, a, b, *gain};
+// Swap requests between taxis at their existing pickup/delivery positions.
+bool improve_by_swap(SearchState &state, Deadline deadline) {
+    Real best = FEASIBILITY_EPSILON;
+    int best_first_taxi = -1, best_second_taxi = -1;
+    Route best_first_route, best_second_route;
+    // Examine served request pairs on different taxis and retain the best feasible swap.
+    for (int first_request = 0; first_request < instance.request_count && Clock::now() < deadline;
+         first_request++) {
+        if (state.request_owner[first_request] >= 0) {
+            for (int second_request = first_request + 1; second_request < instance.request_count;
+                 second_request++) {
+                if (state.request_owner[second_request] >= 0 &&
+                    state.request_owner[first_request] != state.request_owner[second_request]) {
+                    int first_taxi = state.request_owner[first_request],
+                        second_taxi = state.request_owner[second_request];
+                    // Reuse the old request's positions; keep incoming passenger stops adjacent.
+                    auto replace = [&](int taxi, int outgoing_request, int incoming_request) {
+                        auto route = state.routes[taxi];
+                        int pickup_position =
+                                find(route.begin(), route.end(),
+                                     instance.requests[outgoing_request].pickup_node) -
+                                route.begin(),
+                            delivery_position =
+                                find(route.begin(), route.end(),
+                                     instance.requests[outgoing_request].delivery_node) -
+                                route.begin();
+                        route.erase(route.begin() + delivery_position);
+                        route.erase(route.begin() + pickup_position);
+                        return insert_request(route, incoming_request, pickup_position,
+                                              instance.requests[incoming_request].is_passenger
+                                                  ? pickup_position
+                                                  : delivery_position - 1);
+                    };
+                    auto first_route = replace(first_taxi, first_request, second_request),
+                         second_route = replace(second_taxi, second_request, first_request);
+                    Real profit_delta = route_profit(first_taxi, first_route) +
+                                        route_profit(second_taxi, second_route) -
+                                        state.route_profit[first_taxi] -
+                                        state.route_profit[second_taxi];
+                    if (profit_delta <= best) {
+                        continue;
+                    }
+                    // Profit is a cheap filter; accept only when both completed routes are feasible.
+                    if (evaluate_route(instance, first_taxi, first_route) &&
+                        evaluate_route(instance, second_taxi, second_route)) {
+                        best = profit_delta;
+                        best_first_taxi = first_taxi;
+                        best_second_taxi = second_taxi;
+                        best_first_route = move(first_route);
+                        best_second_route = move(second_route);
                     }
                 }
-                return route_best;
-            });
+            }
+        }
+    }
+    if (best_first_taxi < 0) {
+        return false;
+    }
+    update_route_pair(state, best_first_taxi, best_first_route, best_second_taxi,
+                      best_second_route);
+    return true;
 }
 
-bool ParcelRelocate::improve(SearchState& state) const {
-    return improve_relocations<ParcelRelocationContext, false>(state, state.passenger_count(), state.request_count(),
-        [this](const SearchState& current, const ParcelRelocationContext& context,
-               std::size_t request, std::size_t taxi, const RouteCache& route,
-               std::uint64_t source_version) {
-            return best_on_taxi(current, context, request, taxi, route, source_version);
+// ============================================================================
+// Helper implementations: input, route bookkeeping, bounds, caches, and LP kernels.
+// ============================================================================
+
+// --- Helpers: Input and route evaluation ---
+Instance read_instance() {
+    // Read fleet dimensions and map one-based service nodes back to zero-based requests.
+    Instance input;
+    cin >> input.taxi_count >> input.passenger_count >> input.parcel_count;
+    input.request_count = input.passenger_count + input.parcel_count;
+    input.node_count = input.taxi_count + 2 * input.request_count;
+    input.taxi_origin.resize(input.taxi_count);
+    input.taxi_capacity.resize(input.taxi_count);
+    for (int taxi = 0; taxi < input.taxi_count; taxi++) {
+        cin >> input.taxi_origin[taxi] >> input.taxi_capacity[taxi];
+    }
+    input.requests.resize(input.request_count);
+    input.node_request.assign(input.node_count + 1, -1);
+    input.is_delivery.assign(input.node_count + 1, 0);
+    // Passenger records have pickup windows; parcel records also include weight and delivery windows.
+    for (int passenger = 0; passenger < input.passenger_count; passenger++) {
+        auto &request_data = input.requests[passenger];
+        request_data.is_passenger = 1;
+        cin >> request_data.pickup_node >> request_data.delivery_node >>
+            request_data.pickup_earliest >> request_data.pickup_latest >>
+            request_data.service_time >> request_data.revenue;
+        input.node_request[request_data.pickup_node] =
+            input.node_request[request_data.delivery_node] = passenger;
+        input.is_delivery[request_data.delivery_node] = 1;
+    }
+    for (int parcel = 0; parcel < input.parcel_count; parcel++) {
+        auto &request_data = input.requests[input.passenger_count + parcel];
+        request_data.is_passenger = 0;
+        cin >> request_data.pickup_node >> request_data.delivery_node >> request_data.weight >>
+            request_data.pickup_earliest >> request_data.pickup_latest >>
+            request_data.delivery_earliest >> request_data.delivery_latest >>
+            request_data.service_time >> request_data.revenue;
+        input.node_request[request_data.pickup_node] =
+            input.node_request[request_data.delivery_node] = input.passenger_count + parcel;
+        input.is_delivery[request_data.delivery_node] = 1;
+    }
+    // Store the directed travel matrices in row-major order.
+    input.travel_time.resize(input.node_count * input.node_count);
+    input.travel_cost.resize(input.node_count * input.node_count);
+    for (auto &value : input.travel_time) {
+        cin >> value;
+    }
+    for (auto &value : input.travel_cost) {
+        cin >> value;
+    }
+    return input;
+}
+
+// Return profit for a feasible route, or no value when a route constraint fails.
+// Passengers require adjacent pickup/delivery; parcels may stay onboard between stops.
+optional<Real> evaluate_route(const Instance &input, int taxi, const IntVector &route) {
+    // Visit stamps avoid clearing per-request pickup/delivery markers on every evaluation.
+    static vector<UInt64> picked_at, delivered_at;
+    static UInt64 evaluation_stamp = 0;
+    if (picked_at.size() != (size_t)input.request_count) {
+        picked_at.assign(input.request_count, 0);
+        delivered_at.assign(input.request_count, 0);
+    }
+    ++evaluation_stamp;
+    Real departure_time = 0, load = 0, total_cost = 0, revenue = 0;
+    int previous_node = input.taxi_origin[taxi], open_requests = 0;
+    // Simulate stops in order, accumulating arc cost and checking time, load, and precedence.
+    for (int position = 0; position < (int)route.size(); ++position) {
+        int node = route[position], request = input.node_request[node];
+        auto &request_data = input.requests[request];
+        Real arrival =
+            departure_time + input.travel_time[(previous_node - 1) * input.node_count + node - 1];
+        if (!isfinite(arrival)) {
+            return {};
+        }
+        total_cost += input.travel_cost[(previous_node - 1) * input.node_count + node - 1];
+        if (!input.is_delivery[node]) {
+            if (picked_at[request] == evaluation_stamp ||
+                arrival > request_data.pickup_latest + FEASIBILITY_EPSILON) {
+                return {};
+            }
+            if (request_data.is_passenger && (position + 1 == (int)route.size() ||
+                                              route[position + 1] != request_data.delivery_node)) {
+                return {};
+            }
+            load += request_data.weight;
+            if (load > input.taxi_capacity[taxi] + FEASIBILITY_EPSILON) {
+                return {};
+            }
+            picked_at[request] = evaluation_stamp;
+            ++open_requests;
+            revenue += request_data.revenue;
+            departure_time = max(arrival, request_data.pickup_earliest) + request_data.service_time;
+        } else {
+            if (picked_at[request] != evaluation_stamp ||
+                delivered_at[request] == evaluation_stamp ||
+                (!request_data.is_passenger &&
+                 arrival > request_data.delivery_latest + FEASIBILITY_EPSILON)) {
+                return {};
+            }
+            load -= request_data.weight;
+            delivered_at[request] = evaluation_stamp;
+            --open_requests;
+            departure_time =
+                max(arrival, request_data.delivery_earliest) + request_data.service_time;
+        }
+        previous_node = node;
+    }
+    // Revenue counts at pickup; all picked-up requests must be delivered before the route ends.
+    if (open_requests) {
+        return {};
+    }
+    return revenue - total_cost;
+}
+
+// --- Helpers: Time, travel, and route accounting ---
+Deadline deadline_after(Real seconds) {
+    return Clock::now() + chrono::duration_cast<Clock::duration>(chrono::duration<Real>(seconds));
+}
+
+Real travel_time(int from_node, int to_node) {
+    return instance.travel_time[(from_node - 1) * instance.node_count + to_node - 1];
+}
+
+Real travel_cost(int from_node, int to_node) {
+    return instance.travel_cost[(from_node - 1) * instance.node_count + to_node - 1];
+}
+
+IntVector served_requests(const Route &route) {
+    IntVector requests;
+    for (int node : route) {
+        if (!instance.is_delivery[node]) {
+            requests.push_back(instance.node_request[node]);
+        }
+    }
+    sort(requests.begin(), requests.end());
+    return requests;
+}
+
+// Arc cost only; the route need not be feasible.
+Real route_cost(int taxi, const Route &route) {
+    Real total_cost = 0;
+    int previous_node = instance.taxi_origin[taxi];
+    for (int node : route) {
+        total_cost += travel_cost(previous_node, node);
+        previous_node = node;
+    }
+    return total_cost;
+}
+
+// Revenue minus arc cost; feasibility is checked by the caller when required.
+Real route_profit(int taxi, const Route &route) {
+    Real total_profit = -route_cost(taxi, route);
+    for (int node : route) {
+        if (!instance.is_delivery[node]) {
+            total_profit += instance.requests[instance.node_request[node]].revenue;
+        }
+    }
+    return total_profit;
+}
+
+Real fleet_profit(const Fleet &fleet) {
+    Real total_profit = 0;
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        total_profit += route_profit(taxi, fleet[taxi]);
+    }
+    return total_profit;
+}
+
+// --- Helpers: Route-bank maintenance ---
+// Ordinary DFS routes obey the bank cap; fleet and priced routes bypass it.
+void store_route(int taxi, const Route &route, bool enforce_limit, Real profit) {
+    if (full_probe_mode)
+        enforce_limit = false;
+    // Discard unprofitable routes and candidates below a full capped bank's profit floor.
+    if (profit == -INF) {
+        profit = route_profit(taxi, route);
+    }
+    if (profit <= FEASIBILITY_EPSILON) {
+        return;
+    }
+    auto &taxi_bank = route_bank[taxi];
+    if (enforce_limit && taxi_bank.size() >= (size_t)bank_route_limit &&
+        profit < bank_profit_floor[taxi]) {
+        return;
+    }
+    // Routes covering the same request set compete for one bank entry, keeping the best profit.
+    auto requests = served_requests(route);
+    auto entry = taxi_bank.lower_bound(requests);
+    if (entry != taxi_bank.end() && entry->first == requests) {
+        if (entry->second.profit >= profit) {
+            return;
+        }
+        entry->second = {route, profit};
+    } else {
+        if (full_probe_mode) {
+            if (full_probe_columns >= FULL_PROBE_COLUMN_GUARD) {
+                full_probe_truncated = true;
+                dfs_stopped = true;
+                return;
+            }
+            full_probe_columns++;
+        }
+        taxi_bank.emplace_hint(entry, requests, StoredRoute{route, profit});
+    }
+    // Protected insertions bypass the cap; capped insertions evict the least profitable route.
+    if (!enforce_limit) {
+        bank_profit_floor[taxi] = -INF;
+    }
+    if (enforce_limit && taxi_bank.size() > (size_t)bank_route_limit) {
+        auto worst = min_element(taxi_bank.begin(), taxi_bank.end(), [](auto &left, auto &right) {
+            return left.second.profit < right.second.profit;
         });
+        taxi_bank.erase(worst);
+        bank_profit_floor[taxi] =
+            min_element(taxi_bank.begin(), taxi_bank.end(), [](auto &left, auto &right) {
+                return left.second.profit < right.second.profit;
+            })->second.profit;
+    }
 }
 
-} // namespace soict::alns
+void store_fleet(const Fleet &fleet) {
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        store_route(taxi, fleet[taxi]);
+    }
+}
 
-// END src/search/alns/operators/LocalSearch/ParcelRelocate.cpp
+// --- Helpers: Fleet-state updates ---
+SearchState make_search_state(const Fleet &fleet) {
+    SearchState state;
+    state.routes = fleet;
+    state.request_owner.assign(instance.request_count, -1);
+    state.route_profit.resize(instance.taxi_count);
+    state.route_version.resize(instance.taxi_count);
+    for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
+        for (int request : served_requests(fleet[taxi])) {
+            state.request_owner[request] = taxi;
+        }
+        state.route_profit[taxi] = route_profit(taxi, fleet[taxi]);
+        state.profit += state.route_profit[taxi];
+        state.route_version[taxi] = next_route_version++;
+    }
+    return state;
+}
 
-// BEGIN src/search/alns/operators/LocalSearch/CleanCut2OptStar.cpp
+void update_route(SearchState &state, int taxi, const Route &route) {
+    for (int request : served_requests(state.routes[taxi])) {
+        state.request_owner[request] = -1;
+    }
+    state.profit -= state.route_profit[taxi];
+    state.routes[taxi] = route;
+    state.route_profit[taxi] = route_profit(taxi, route);
+    state.profit += state.route_profit[taxi];
+    for (int request : served_requests(route)) {
+        state.request_owner[request] = taxi;
+    }
+    state.route_version[taxi] = next_route_version++;
+}
 
-#include <vector>
+void update_route_pair(SearchState &state, int first_taxi, const Route &first_route,
+                       int second_taxi, const Route &second_route) {
+    if (first_taxi == second_taxi) {
+        update_route(state, first_taxi, second_route);
+        return;
+    }
+    // Release both old request sets before assigning either new route, avoiding ownership conflicts.
+    for (int taxi : {first_taxi, second_taxi}) {
+        for (int request : served_requests(state.routes[taxi])) {
+            state.request_owner[request] = -1;
+        }
+        state.profit -= state.route_profit[taxi];
+    }
+    state.routes[first_taxi] = first_route;
+    state.routes[second_taxi] = second_route;
+    // Rebuild ownership, profit, and cache versions for both new routes.
+    for (int taxi : {first_taxi, second_taxi}) {
+        state.route_profit[taxi] = route_profit(taxi, state.routes[taxi]);
+        state.profit += state.route_profit[taxi];
+        for (int request : served_requests(state.routes[taxi])) {
+            state.request_owner[request] = taxi;
+        }
+        state.route_version[taxi] = next_route_version++;
+    }
+}
 
-namespace soict::alns {
-namespace {
-struct RouteCuts {
-    std::size_t taxi;
-    std::vector<std::size_t> boundaries;
-};
+void apply_insertion(SearchState &state, InsertionChoice choice) {
+    update_route(state, choice.taxi,
+                 insert_request(state.routes[choice.taxi], choice.request, choice.pickup_position,
+                                choice.delivery_position));
+    store_route(choice.taxi, state.routes[choice.taxi]);
+}
 
-std::vector<std::size_t> clean_boundaries(const SearchState& state, std::size_t taxi) {
-    const auto& in = state.instance();
-    const auto& route = state.cache(taxi);
-    const auto k = in.taxis.size(), n = in.passengers.size(), m = in.parcels.size();
-    std::size_t open_parcels = 0;
-    std::vector<std::size_t> cuts{0};
-    for (std::size_t pos = 0; pos < route.nodes().size(); ++pos) {
-        const auto node = route.nodes()[pos];
-        if (node >= k + 2 * n && node < k + 2 * n + m) ++open_parcels;
-        else if (node >= k + 2 * n + m) --open_parcels;
-        if (!open_parcels && route.boundary_allowed(in, pos + 1)) cuts.push_back(pos + 1);
+// --- Helpers: Route edits and cut positions ---
+// Never split a passenger's adjacent pickup/delivery block.
+bool is_insertion_boundary(const Route &route, int position) {
+    return !position || instance.is_delivery[route[position - 1]] ||
+           !instance.requests[instance.node_request[route[position - 1]]].is_passenger;
+}
+
+Route remove_request(const Route &route, int request) {
+    Route reduced_route;
+    for (int node : route) {
+        if (instance.node_request[node] != request) {
+            reduced_route.push_back(node);
+        }
+    }
+    return reduced_route;
+}
+
+Route insert_request(Route route, int request, int pickup_position, int delivery_position) {
+    route.insert(route.begin() + delivery_position, instance.requests[request].delivery_node);
+    route.insert(route.begin() + pickup_position, instance.requests[request].pickup_node);
+    return route;
+}
+
+// Tail exchanges cut only where every picked-up request has been delivered.
+IntVector empty_load_cuts(const Route &route) {
+    IntVector cuts{0};
+    int open_requests = 0;
+    for (int i = 0; i < (int)route.size(); i++) {
+        open_requests += instance.is_delivery[route[i]] ? -1 : 1;
+        if (!open_requests) {
+            cuts.push_back(i + 1);
+        }
     }
     return cuts;
 }
-} // namespace
 
-bool CleanCut2OptStar::improve(SearchState& state) const {
-    const auto& in = state.instance();
-    bool changed = false;
-    for (;;) {
-        std::vector<RouteCuts> routes;
-        routes.reserve(state.active_taxis().size());
-        for (const auto taxi : state.active_taxis())
-            routes.push_back({taxi, clean_boundaries(state, taxi)});
-        bool applied = false;
-        for (std::size_t i = 0; i < routes.size() && !applied; ++i) {
-            for (std::size_t j = i + 1; j < routes.size() && !applied; ++j) {
-                const auto taxi_a = routes[i].taxi, taxi_b = routes[j].taxi;
-                const auto& a = state.cache(taxi_a);
-                const auto& b = state.cache(taxi_b);
-                const auto length_a = a.nodes().size(), length_b = b.nodes().size();
-                double best_gain = 1e-9;
-                std::size_t best_a = 0, best_b = 0;
-                for (const auto cut_a : routes[i].boundaries) {
-                    for (const auto cut_b : routes[j].boundaries) {
-                        const auto prev_a = cut_a ? a.nodes()[cut_a - 1] : taxi_a;
-                        const auto prev_b = cut_b ? b.nodes()[cut_b - 1] : taxi_b;
-                        double gain = 0;
-                        if (cut_a < length_a) {
-                            const auto next_a = a.nodes()[cut_a];
-                            gain += in.cost(prev_a, next_a) - in.cost(prev_b, next_a);
-                        }
-                        if (cut_b < length_b) {
-                            const auto next_b = b.nodes()[cut_b];
-                            gain += in.cost(prev_b, next_b) - in.cost(prev_a, next_b);
-                        }
-                        if (gain <= best_gain + 1e-8) continue;
-                        FastRouteCheck new_a(in, taxi_a, a);
-                        new_a.range(0, cut_a);
-                        if (cut_b < length_b) new_a.segment(b.range(in, cut_b, length_b - 1));
-                        if (!new_a.feasible()) continue;
-                        FastRouteCheck new_b(in, taxi_b, b);
-                        new_b.range(0, cut_b);
-                        if (cut_a < length_a) new_b.segment(a.range(in, cut_a, length_a - 1));
-                        if (!new_b.feasible()) continue;
-                        best_gain = gain;
-                        best_a = cut_a;
-                        best_b = cut_b;
+// --- Helpers: Directed delivery bounds ---
+// Landmark shortest paths bound parcel delivery time on directed, nonmetric input.
+// A direct arc is not a valid lower bound when intermediate stops can be faster.
+void build_delivery_lower_bounds(Deadline deadline) {
+    int node_count = instance.node_count;
+    vector<RealVector> landmarks;
+    RealVector spread(node_count, INF);
+    vector<char> used(node_count);
+    int landmark = 0;
+    auto bound_deadline = min(
+        deadline, deadline_after(min(LANDMARK_MAX_SECONDS,
+                                     LANDMARK_BUDGET_FRACTION *
+                                         chrono::duration<Real>(deadline - Clock::now()).count())));
+    // Run a bounded number of dense Dijkstra searches from spread-out landmarks.
+    for (int pass = 0; pass < min(LANDMARK_LIMIT, node_count) && Clock::now() < bound_deadline;
+         pass++) {
+        RealVector distances(instance.travel_time.begin() + landmark * node_count,
+                             instance.travel_time.begin() + (landmark + 1) * node_count);
+        vector<char> visited(node_count);
+        distances[landmark] = 0;
+        bool complete = true;
+        for (int step = 0; step < node_count; step++) {
+            if (step % LANDMARK_CLOCK_INTERVAL == 0 && Clock::now() >= bound_deadline) {
+                complete = false;
+                break;
+            }
+            int closest_node = -1;
+            Real closest_distance = INF;
+            for (int node = 0; node < node_count; node++) {
+                if (!visited[node] && distances[node] < closest_distance) {
+                    closest_distance = distances[node];
+                    closest_node = node;
+                }
+            }
+            if (closest_node < 0) {
+                break;
+            }
+            visited[closest_node] = 1;
+            for (int node = 0; node < node_count; node++) {
+                if (!visited[node]) {
+                    distances[node] = min(
+                        distances[node],
+                        closest_distance + instance.travel_time[closest_node * node_count + node]);
+                }
+            }
+        }
+        // Discard interrupted searches; only completed shortest-path distances define valid bounds.
+        if (!complete) {
+            break;
+        }
+        used[landmark] = 1;
+        for (int node = 0; node < node_count; node++) {
+            spread[node] = min(spread[node], distances[node]);
+        }
+        landmarks.push_back(move(distances));
+        // Pick the next landmark farthest from its nearest existing landmark.
+        Real farthest = -1;
+        for (int node = 0; node < node_count; node++) {
+            if (!used[node] && spread[node] > farthest) {
+                farthest = spread[node];
+                landmark = node;
+            }
+        }
+    }
+    // Directed triangle inequality for shortest paths gives d(L, delivery) - d(L, node).
+    // Reduce by a rounding margin and retain the strongest nonnegative landmark bound.
+    delivery_time_lower_bound.assign(node_count * instance.parcel_count, 0);
+    for (int node = 0; node < node_count; node++) {
+        for (int parcel = 0; parcel < instance.parcel_count; parcel++) {
+            for (auto &distances : landmarks) {
+                int delivery_node =
+                    instance.requests[instance.passenger_count + parcel].delivery_node - 1;
+                Real rounding_margin =
+                    FEASIBILITY_EPSILON + 64 * numeric_limits<Real>::epsilon() * node_count *
+                                              max({1.0, distances[delivery_node], distances[node]});
+                auto &lower_bound =
+                    delivery_time_lower_bound[node * instance.parcel_count + parcel];
+                lower_bound =
+                    max(lower_bound, distances[delivery_node] - distances[node] - rounding_margin);
+            }
+        }
+    }
+}
+
+// --- Helpers: Segment composition and cache queries ---
+Segment make_node_segment(int node) {
+    auto &request_data = instance.requests[instance.node_request[node]];
+    bool is_delivery = instance.is_delivery[node];
+    Segment segment;
+    segment.first_node = segment.last_node = node;
+    segment.duration = request_data.service_time;
+    segment.earliest_departure =
+        (!is_delivery ? request_data.pickup_earliest : request_data.delivery_earliest) +
+        request_data.service_time;
+    segment.latest_arrival =
+        (!is_delivery ? request_data.pickup_latest : request_data.delivery_latest) +
+        FEASIBILITY_EPSILON;
+    if (is_delivery && request_data.is_passenger) {
+        segment.earliest_departure = -INF;
+        segment.latest_arrival = numeric_limits<Real>::max();
+    }
+    segment.load_change = is_delivery ? -request_data.weight : request_data.weight;
+    segment.minimum_load = min(0.0, segment.load_change);
+    segment.maximum_load = max(0.0, segment.load_change);
+    return segment;
+}
+
+Segment join_segments(Segment left, const Segment &right) {
+    if (!left.first_node) {
+        return right;
+    }
+    if (!right.first_node) {
+        return left;
+    }
+    Real arc_time = travel_time(left.last_node, right.first_node), duration = left.duration,
+         earliest_departure = left.earliest_departure, load_change = left.load_change;
+    // Compose waiting and latest-arrival limits across the connecting arc.
+    left.feasible =
+        left.feasible && right.feasible && earliest_departure + arc_time <= right.latest_arrival;
+    left.latest_arrival = min(left.latest_arrival, right.latest_arrival - arc_time - duration);
+    left.duration = duration + arc_time + right.duration;
+    left.earliest_departure =
+        max(earliest_departure + arc_time + right.duration, right.earliest_departure);
+    // Shift right-segment load extrema by the net load change in the left segment.
+    left.minimum_load = min(left.minimum_load, load_change + right.minimum_load);
+    left.maximum_load = max(left.maximum_load, load_change + right.maximum_load);
+    left.load_change = load_change + right.load_change;
+    left.last_node = right.last_node;
+    return left;
+}
+
+bool is_segment_feasible(int taxi, const Segment &segment) {
+    return !segment.first_node ||
+           (segment.feasible &&
+            travel_time(instance.taxi_origin[taxi], segment.first_node) <= segment.latest_arrival &&
+            segment.minimum_load >= -FEASIBILITY_EPSILON &&
+            segment.maximum_load <= instance.taxi_capacity[taxi] + FEASIBILITY_EPSILON);
+}
+
+RouteSegmentCache &cached_route_segments(int taxi, const Route &route) {
+    if (route_segment_cache.empty()) {
+        route_segment_cache.resize(instance.taxi_count);
+    }
+    auto &segments = route_segment_cache[taxi];
+    if (segments.nodes != route) {
+        // Rebuild only when route contents change; first summarize each service node.
+        segments.nodes = route;
+        segments.node_segments.clear();
+        segments.range_table.clear();
+        int node_count = route.size();
+        for (int node : route) {
+            segments.node_segments.push_back(make_node_segment(node));
+        }
+        // Each level stores suffixes left of a block midpoint and prefixes to its right.
+        for (int half = 1; half < node_count; half *= 2) {
+            segments.range_table.emplace_back(node_count);
+            auto &level = segments.range_table.back();
+            for (int start = 0; start < node_count; start += 2 * half) {
+                int middle = min(start + half, node_count), end = min(start + 2 * half, node_count);
+                if (middle > start) {
+                    level[middle - 1] = segments.node_segments[middle - 1];
+                    for (int i = middle - 1; i > start; i--) {
+                        level[i - 1] = join_segments(segments.node_segments[i - 1], level[i]);
                     }
                 }
-                if (best_gain > 1e-9) {
-                    (void)(!state.exchange_route_suffixes(taxi_a, best_a, taxi_b, best_b));
-                    changed = applied = true;
+                if (middle < end) {
+                    level[middle] = segments.node_segments[middle];
+                    for (int i = middle + 1; i < end; i++) {
+                        level[i] = join_segments(level[i - 1], segments.node_segments[i]);
+                    }
                 }
             }
         }
-        if (!applied) return changed;
     }
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/LocalSearch/CleanCut2OptStar.cpp
-
-// BEGIN src/search/alns/operators/LocalSearch/ReplaceRequest.cpp
-
-#include <algorithm>
-#include <tuple>
-
-namespace soict::alns {
-std::optional<ReplacementChoice> ReplaceRequest::best_choice(const SearchState& state) const {
-    synchronize(state);
-    discard_stale();
-    return queue_.empty() ? std::nullopt : std::optional(queue_.top().choice);
+    return segments;
 }
 
-void ReplaceRequest::discard_stale() const {
-    while (!queue_.empty()) {
-        const auto& entry = queue_.top();
-        const auto taxi = entry.choice.insertion.taxi;
-        const auto incoming = entry.choice.insertion.request;
-        if (unserved_[incoming] && entry.route_version == route_versions_[taxi] &&
-            entry.generation == descriptors_[taxi][incoming].generation) break;
-        queue_.pop();
+// Query the half-open range [begin, end).
+Segment segment_range(const RouteSegmentCache &segments, int begin, int end) {
+    if (begin >= end) {
+        return {};
     }
-}
-
-bool ReplaceRequest::LowerPriority::operator()(const QueuedChoice& a,
-                                              const QueuedChoice& b) const {
-    if (a.choice.gain != b.choice.gain) return a.choice.gain < b.choice.gain;
-    const auto key = [](const ReplacementChoice& c) {
-        return std::tuple(c.outgoing, c.insertion.request,
-                          c.insertion.pickup, c.insertion.delivery);
-    };
-    // Match the original outgoing/incoming/position traversal on equal gains.
-    return key(a.choice) > key(b.choice);
-}
-
-void ReplaceRequest::refresh_descriptors(const SearchState& state, std::size_t taxi,
-    const std::vector<std::size_t>& outgoing,
-    const std::vector<std::size_t>& incoming) const {
-    if (incoming.empty()) return;
-    auto& row = descriptors_[taxi];
-    for (const auto request : incoming) {
-        ++row[request].generation;
-        row[request].choice.reset();
+    if (begin + 1 == end) {
+        return segments.node_segments[begin];
     }
-    const auto& original = state.cache(taxi);
-    std::vector<std::size_t> nodes;
-    for (const auto request : outgoing) {
-        const auto loc = state.location(request);
-        auto& cached = rows_[request];
-        if (cached.reduced_version != original.version()) {
-            nodes = original.nodes();
-            nodes.erase(nodes.begin() + loc.dropoff);
-            nodes.erase(nodes.begin() + loc.pickup);
-            cached.reduced.rebuild(state.instance(), taxi, nodes);
-            cached.removal_gain = removal_savings_cost(state.instance(), taxi,
-                original.nodes(), loc.pickup, loc.dropoff) - state.revenue(request);
-            cached.reduced_version = original.version();
-        }
-        for (const auto replacement : incoming) {
-            auto& descriptor = row[replacement];
-            const double threshold = descriptor.choice ? descriptor.choice->gain : 1e-9;
-            const auto insertion = best_insertion_on_route(state, replacement, taxi,
-                cached.reduced, threshold - cached.removal_gain);
-            if (insertion && insertion->gain + cached.removal_gain > threshold)
-                descriptor.choice = ReplacementChoice{request, *insertion,
-                                                       insertion->gain + cached.removal_gain};
-        }
-    }
-    for (const auto request : incoming) enqueue(taxi, request);
+    // The highest differing endpoint bit selects two disjoint summaries covering the range.
+    int level = 31 - __builtin_clz((unsigned)(begin ^ (end - 1)));
+    return join_segments(segments.range_table[level][begin], segments.range_table[level][end - 1]);
 }
 
-void ReplaceRequest::enqueue(std::size_t taxi, std::size_t incoming) const {
-    const auto& descriptor = descriptors_[taxi][incoming];
-    if (descriptor.choice) {
-        queue_.push({*descriptor.choice, route_versions_[taxi], descriptor.generation});
-    }
-}
-
-void ReplaceRequest::synchronize(const SearchState& state) const {
-    const auto taxis = state.taxi_count(), requests = state.request_count();
-    if (smd_instance_ != &state.instance() || route_versions_.size() != taxis ||
-        unserved_.size() != requests) {
-        smd_instance_ = &state.instance();
-        route_versions_.assign(taxis, std::numeric_limits<std::uint64_t>::max());
-        unserved_.assign(requests, false);
-        descriptors_.assign(taxis, std::vector<Descriptor>(requests));
-        queue_ = Queue{};
-        rows_.resize(requests);
-    }
-    std::vector<std::vector<std::size_t>> outgoing(taxis);
-    std::vector<std::size_t> incoming, newly_unserved;
-    for (std::size_t request = 0; request < requests; ++request) {
-        const auto loc = state.location(request);
-        const bool unserved = loc.taxi < 0;
-        if (unserved) {
-            incoming.push_back(request);
-            if (!unserved_[request]) newly_unserved.push_back(request);
-        } else outgoing[loc.taxi].push_back(request);
-        unserved_[request] = unserved;
-    }
-    for (std::size_t taxi = 0; taxi < taxis; ++taxi) {
-        const auto version = state.cache(taxi).version();
-        if (route_versions_[taxi] != version) {
-            route_versions_[taxi] = version;
-            // Timing and load changes can affect every position on this route.
-            refresh_descriptors(state, taxi, outgoing[taxi], incoming);
-        } else if (!newly_unserved.empty()) {
-            // Unchanged routes only gain candidates for newly unserved requests.
-            refresh_descriptors(state, taxi, outgoing[taxi], newly_unserved);
-        }
-    }
-    // Lazy invalidation retains obsolete queue entries briefly. Bound storage
-    // across long ALNS runs, including restored/rejected candidate states.
-    if (queue_.size() > 2 * taxis * requests + 32) compact_queue();
-}
-
-void ReplaceRequest::compact_queue() const {
-    queue_ = Queue{};
-    for (std::size_t taxi = 0; taxi < descriptors_.size(); ++taxi)
-        for (std::size_t incoming = 0; incoming < unserved_.size(); ++incoming) {
-            if (unserved_[incoming]) enqueue(taxi, incoming);
-        }
-}
-
-
-
-bool ReplaceRequest::improve(SearchState& state) const {
-    bool changed = false;
-    while (const auto choice = best_choice(state)) {
-        (void)(!state.replace_request(choice->outgoing, choice->insertion.request,
-                                   choice->insertion.pickup, choice->insertion.delivery));
-        changed = true;
-    }
-    return changed;
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/LocalSearch/ReplaceRequest.cpp
-
-// BEGIN src/search/alns/operators/LocalSearch/SwapRequest.cpp
-
-#include <algorithm>
-#include <limits>
-#include <tuple>
-
-namespace soict::alns {
-namespace {
-bool better(const RequestSwapChoice& a, const RequestSwapChoice& b) {
-    return a.gain > b.gain || (a.gain == b.gain &&
-        std::tie(a.first, a.second) < std::tie(b.first, b.second));
-}
-
-std::optional<double> swapped_route_cost(const SearchState& state,
-                                        std::size_t outgoing, std::size_t incoming) {
-    const auto loc = state.location(outgoing);
-    const auto taxi = static_cast<std::size_t>(loc.taxi);
-    const auto& route = state.cache(taxi);
-    const auto& in = state.instance();
-    const bool passenger = incoming < state.passenger_count();
-    const auto delivery = passenger ? in.passenger_dropoff(incoming) :
-        in.parcel_dropoff(incoming - state.passenger_count());
-    RouteCandidate candidate(in, taxi, route);
-    candidate.add_range(0, loc.pickup);
-    candidate.add_node(state.pickup_node(incoming));
-    if (passenger) candidate.add_node(delivery);
-    candidate.add_range(loc.pickup + 1, loc.dropoff);
-    if (!passenger) candidate.add_node(delivery);
-    candidate.add_range(loc.dropoff + 1, route.nodes().size());
-    return candidate.cost_if_feasible();
-}
-} // namespace
-
-std::optional<double> request_swap_gain(const SearchState& state,
-                                       std::size_t first, std::size_t second) {
-    if (first >= state.request_count() || second >= state.request_count()) return std::nullopt;
-    if (second < first) std::swap(first, second);
-    const auto a = state.location(first), b = state.location(second);
-    if (a.taxi < 0 || b.taxi < 0 || a.taxi == b.taxi) return std::nullopt;
-    const auto cost_a = swapped_route_cost(state, first, second);
-    if (!cost_a) return std::nullopt;
-    const auto cost_b = swapped_route_cost(state, second, first);
-    if (!cost_b) return std::nullopt;
-    return state.cache(a.taxi).cost() + state.cache(b.taxi).cost() - *cost_a - *cost_b;
-}
-
-bool SwapRequest::LowerPriority::operator()(const QueuedChoice& a, const QueuedChoice& b) const {
-    return better(b.choice, a.choice);
-}
-
-void SwapRequest::enqueue(std::size_t taxi_a, std::size_t taxi_b) const {
-    const auto& descriptor = descriptors_[taxi_a][taxi_b];
-    if (descriptor.choice)
-        queue_.push({*descriptor.choice, taxi_a, taxi_b,
-                     versions_[taxi_a], versions_[taxi_b], descriptor.generation});
-}
-
-void SwapRequest::synchronize(const SearchState& state) const {
-    const auto taxis = state.taxi_count();
-    if (instance_ != &state.instance() || versions_.size() != taxis) {
-        instance_ = &state.instance();
-        versions_.assign(taxis, std::numeric_limits<std::uint64_t>::max());
-        descriptors_.assign(taxis, std::vector<Descriptor>(taxis));
-        queue_ = Queue{};
-    }
-    std::vector<std::size_t> changed;
-    std::vector<bool> dirty(taxis, false);
-    for (std::size_t taxi = 0; taxi < taxis; ++taxi) {
-        const auto version = state.cache(taxi).version();
-        if (versions_[taxi] != version) {
-            versions_[taxi] = version;
-            changed.push_back(taxi);
-            dirty[taxi] = true;
-        }
-    }
-    if (changed.empty()) return;
-    std::vector<std::vector<std::size_t>> requests(taxis);
-    for (std::size_t request = 0; request < state.request_count(); ++request) {
-        const auto taxi = state.location(request).taxi;
-        if (taxi >= 0) requests[taxi].push_back(request);
-    }
-    for (const auto taxi : changed) {
-        for (std::size_t other = 0; other < taxis; ++other) {
-            if (other == taxi || (dirty[other] && other < taxi)) continue;
-            const auto taxi_a = std::min(taxi, other), taxi_b = std::max(taxi, other);
-            auto& descriptor = descriptors_[taxi_a][taxi_b];
-            ++descriptor.generation;
-            descriptor.choice.reset();
-            for (const auto first : requests[taxi_a]) {
-                for (const auto second : requests[taxi_b]) {
-                    const auto gain = request_swap_gain(state, first, second);
-                    if (!gain || *gain <= 1e-9) continue;
-                    const RequestSwapChoice choice{std::min(first, second),
-                                                  std::max(first, second), *gain};
-                    if (!descriptor.choice || better(choice, *descriptor.choice))
-                        descriptor.choice = choice;
-                }
+// --- Helpers: Packing matrix and simplex kernels ---
+// Rows enforce one route per taxi and at most one visit per shared request.
+// Requests appearing only in one taxi's columns need no separate resource row.
+PackingMatrix build_packing_matrix(const vector<MasterColumn> &columns, size_t taxi_count,
+                                   size_t request_count) {
+    PackingMatrix matrix;
+    matrix.columns = &columns;
+    matrix.column_rows.resize(columns.size());
+    matrix.taxi_count = taxi_count;
+    // Mark requests shared across taxis; private requests are already limited by their taxi row.
+    IntVector request_taxi(request_count, -1);
+    for (auto &column : columns) {
+        for (auto resource : column.requests) {
+            if (request_taxi[resource] == -1) {
+                request_taxi[resource] = column.taxi;
+            } else if (request_taxi[resource] != (int)column.taxi) {
+                request_taxi[resource] = -2;
             }
-            enqueue(taxi_a, taxi_b);
         }
     }
-    if (queue_.size() > 2 * taxis * taxis + 32) {
-        queue_ = Queue{};
-        for (std::size_t a = 0; a < taxis; ++a)
-            for (std::size_t b = a + 1; b < taxis; ++b) enqueue(a, b);
-    }
-}
-
-std::optional<RequestSwapChoice> SwapRequest::best_choice(const SearchState& state) const {
-
-    synchronize(state);
-    while (!queue_.empty()) {
-        const auto& entry = queue_.top();
-        if (entry.version_a == versions_[entry.taxi_a] &&
-            entry.version_b == versions_[entry.taxi_b] &&
-            entry.generation == descriptors_[entry.taxi_a][entry.taxi_b].generation)
-            return entry.choice;
-        queue_.pop();
-    }
-    return std::nullopt;
-}
-
-bool SwapRequest::improve(SearchState& state) const {
-    bool changed = false;
-    while (const auto choice = best_choice(state)) {
-        (void)(!state.swap_requests(choice->first, choice->second));
-        changed = true;
-    }
-    return changed;
-}
-} // namespace soict::alns
-
-// END src/search/alns/operators/LocalSearch/SwapRequest.cpp
-#include <iostream>
-#include <chrono>
-
-// Judge entry point. Include input parsing in the five-minute wall budget.
-int main() {
-    const auto started = std::chrono::steady_clock::now();
-        std::ios::sync_with_stdio(false);
-        std::cin.tie(nullptr);
-        const auto instance = soict::read_instance(std::cin);
-        soict::alns::Config config;
-        config.seed = 1ULL;
-        const double elapsed = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - started).count();
-        const double allowance = 300;
-        const double reserve = allowance > 2 ? 1.0 : allowance * 0.1;
-        config.time_limit = allowance - elapsed - reserve;
-        if (config.time_limit <= 0) {
-            soict::Solution empty;
-            empty.routes.resize(instance.taxis.size());
-            soict::write_solution(std::cout, empty, instance);
-        } else {
-            const auto result = soict::alns::solve(instance, config);
-            soict::write_solution(std::cout, result.solution, instance);
+    // Compress taxi and shared-request resources into the rows touched by each column.
+    IntVector resource_row(taxi_count + request_count, -1);
+    for (size_t j = 0; j < columns.size(); ++j) {
+        auto add_resource = [&](size_t resource) {
+            if (resource >= taxi_count && request_taxi[resource - taxi_count] != -2) {
+                return;
+            }
+            if (resource_row[resource] < 0) {
+                resource_row[resource] = int(matrix.dimension++);
+                matrix.row_resources.push_back(resource);
+            }
+            matrix.column_rows[j].push_back(resource_row[resource]);
+        };
+        add_resource(columns[j].taxi);
+        for (auto resource : columns[j].requests) {
+            add_resource(taxi_count + resource);
         }
-        return 0;
+    }
+    return matrix;
+}
+
+PackingLP initialize_lp(const PackingMatrix &matrix) {
+
+    PackingLP lp;
+    lp.matrix = &matrix;
+    lp.row_count = matrix.dimension;
+    lp.right_hand_sides.assign(lp.row_count, 1);
+    lp.bound_signs.assign(lp.row_count, 0);
+    lp.dual_prices.assign(lp.row_count, 0);
+    lp.column_bound_rows.assign(matrix.columns->size(), -1);
+    lp.backend_lower.assign(matrix.columns->size(), 0);
+    lp.backend_upper.assign(matrix.columns->size(), INF);
+    return lp;
+}
+
+Real column_coefficient(const PackingLP &lp, size_t row, size_t column) {
+    auto column_count = lp.matrix->columns->size();
+    if (column >= column_count) {
+        return lp.basis_inverse[row * lp.row_count + column - column_count];
+    }
+    Real value = 0;
+    for (auto resource_row : lp.matrix->column_rows[column]) {
+        value += lp.basis_inverse[row * lp.row_count + resource_row];
+    }
+    if (lp.column_bound_rows[column] >= 0) {
+        auto resource_row = size_t(lp.column_bound_rows[column]);
+        value += lp.bound_signs[resource_row] * lp.basis_inverse[row * lp.row_count + resource_row];
+    }
+    return value;
+}
+
+Real reduced_cost(const PackingLP &lp, size_t column) {
+    auto column_count = lp.matrix->columns->size();
+    if (column >= column_count) {
+        return -lp.dual_prices[column - column_count];
+    }
+    Real value = (*lp.matrix->columns)[column].profit;
+    for (auto resource_row : lp.matrix->column_rows[column]) {
+        value -= lp.dual_prices[resource_row];
+    }
+    if (lp.column_bound_rows[column] >= 0) {
+        auto resource_row = size_t(lp.column_bound_rows[column]);
+        value -= lp.bound_signs[resource_row] * lp.dual_prices[resource_row];
+    }
+    return value;
+}
+
+void pivot_basis(PackingLP &lp, size_t leaving, size_t entering) {
+    // Transform the entering column through the current basis inverse.
+    RealVector pivot_column(lp.row_count), pivot_row(lp.row_count);
+    for (size_t i = 0; i < lp.row_count; ++i) {
+        pivot_column[i] = column_coefficient(lp, i, entering);
+    }
+    auto divisor = pivot_column[leaving];
+    Real step = lp.basic_values[leaving] / divisor, reduced_gain = reduced_cost(lp, entering);
+    // Normalize the leaving row and use it to update resource dual prices.
+    for (size_t resource_row = 0; resource_row < lp.row_count; ++resource_row) {
+        pivot_row[resource_row] = lp.basis_inverse[leaving * lp.row_count + resource_row] / divisor;
+        lp.dual_prices[resource_row] += reduced_gain * pivot_row[resource_row];
+    }
+    // Eliminate the pivot column from other rows and update their basic values.
+    for (size_t i = 0; i < lp.row_count; ++i) {
+        if (i != leaving) {
+            lp.basic_values[i] -= step * pivot_column[i];
+            if (pivot_column[i] == 0) {
+                continue;
+            }
+            for (size_t resource_row = 0; resource_row < lp.row_count; ++resource_row) {
+                lp.basis_inverse[i * lp.row_count + resource_row] -=
+                    pivot_column[i] * pivot_row[resource_row];
+            }
+        }
+    }
+    // Install the new basis row and mark the entering/leaving variables.
+    copy(pivot_row.begin(), pivot_row.end(), lp.basis_inverse.begin() + leaving * lp.row_count);
+    lp.basic_values[leaving] = step;
+    lp.in_basis[lp.basis_columns[leaving]] = 0;
+    lp.basis_columns[leaving] = entering;
+    lp.in_basis[entering] = 1;
+}
+
+void primal_simplex(PackingLP &lp, Deadline deadline) { solve_embedded_lp(lp, deadline); }
+
+// Include/exclude a column with -x <= -1 or x <= 0, retaining the current basis.
+void add_column_bound(PackingLP &lp, size_t column, bool include) {
+
+    lp.column_bound_rows[column] = static_cast<int>(lp.row_count++);
+    lp.bound_signs.push_back(include ? -1 : 1);
+    lp.right_hand_sides.push_back(include ? -1 : 0);
+    lp.dual_prices.push_back(0);
+    if (include)
+        lp.backend_lower[column] = 1;
+    else
+        lp.backend_upper[column] = 0;
+}
+
+// Restore primal feasibility after a branch adds a bound.
+void dual_simplex(PackingLP &lp, Deadline deadline) { solve_embedded_lp(lp, deadline); }
+
+RealVector primal_values(const PackingLP &lp) {
+    return lp.backend ? lp.backend->primal : RealVector(lp.matrix->columns->size(), 0);
+}
+
+// Correct dual residuals per taxi and add a rounding margin for safe pruning.
+Real dual_upper_bound(const PackingLP &lp) {
+    // Nonnegative resource prices contribute the main dual bound, including branch rows.
+    auto prices = lp.dual_prices;
+    Real bound = 0, magnitude = 0;
+    for (size_t resource_row = 0; resource_row < lp.row_count; ++resource_row) {
+        if (!isfinite(prices[resource_row])) {
+            return INF;
+        }
+        prices[resource_row] = max(0.0, prices[resource_row]);
+        bound += prices[resource_row] * lp.right_hand_sides[resource_row];
+        magnitude += abs(prices[resource_row] * lp.right_hand_sides[resource_row]);
+    }
+    // Add each taxi's largest positive reduced-profit residual to cover dual violations.
+    RealVector residual(lp.matrix->taxi_count, 0);
+    for (size_t j = 0; j < lp.matrix->columns->size(); ++j) {
+        auto &column = (*lp.matrix->columns)[j];
+        Real value = column.profit;
+        for (auto resource_row : lp.matrix->column_rows[j]) {
+            value -= prices[resource_row];
+        }
+        if (lp.column_bound_rows[j] >= 0) {
+            auto resource_row = size_t(lp.column_bound_rows[j]);
+            value -= lp.bound_signs[resource_row] * prices[resource_row];
+        }
+        residual[column.taxi] = max(residual[column.taxi], value);
+    }
+    // Include residuals and numerical margins before using the bound for branch pruning.
+    auto remainder = accumulate(residual.begin(), residual.end(), 0.0);
+    bound += remainder;
+    magnitude += remainder;
+    if (!isfinite(bound) || !isfinite(magnitude)) {
+        return INF;
+    }
+    return bound + LP_FEASIBILITY_EPSILON + BOUND_RELATIVE_EPSILON * magnitude;
+}
+
+RealVector request_prices_from_lp(const PackingLP &lp, size_t request_count) {
+    RealVector result(request_count, 0);
+    for (size_t row = 0; row < lp.matrix->row_resources.size(); ++row) {
+        auto resource = lp.matrix->row_resources[row];
+        if (resource >= lp.matrix->taxi_count && resource < lp.matrix->taxi_count + request_count &&
+            isfinite(lp.dual_prices[row])) {
+            result[resource - lp.matrix->taxi_count] = max(0.0, lp.dual_prices[row]);
+        }
+    }
+    return result;
 }
