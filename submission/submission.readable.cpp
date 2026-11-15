@@ -27,6 +27,8 @@ SOFTWARE.
 */
 #include <bits/stdc++.h>
 #include <sys/time.h>
+#include <sys/resource.h>
+#include <unistd.h>
 
 namespace hsol_embed {
 
@@ -6010,7 +6012,6 @@ void HModel::computeFactor() {
     } catch (runtime_error &error) {
         cerr << error.what() << endl;
         problemStatus = 3;
-        // TODO Change to return
         throw runtime_error("HSOL basis factorization failed");
     }
     countUpdate = 0;
@@ -6339,7 +6340,6 @@ void HPrimal::primalChooseColumn() {
     for (int iCol = 0; iCol < numTot; iCol++) {
         if (jFlag[iCol] && fabs(workDual[iCol]) > dualTolerance) {
             // Always take free
-            // TODO: if we found free,
             // Then deal with it in dual phase 1
             if (workLower[iCol] == -HSOL_CONST_INF && workUpper[iCol] == HSOL_CONST_INF) {
                 columnIn = iCol;
@@ -6805,7 +6805,7 @@ constexpr int LONG_GENERATION_TAXI_LIMIT = 64;
 constexpr int LARGE_FLEET_TAXI_LIMIT = 96;
 
 // Phase budgets in seconds, with the output margin included in the search deadline.
-constexpr int SEARCH_SECONDS = 299;
+constexpr int SEARCH_SECONDS = 298;
 constexpr int INITIAL_LARGE_DFS_SECONDS = 2;
 constexpr int INITIAL_SMALL_DFS_SECONDS = 40;
 constexpr int INITIAL_SELECTION_SECONDS = 20;
@@ -6868,7 +6868,7 @@ struct Request {
 
 // Each taxi keeps its best route for each sorted set of served requests.
 struct StoredRoute {
-    IntVector route;
+    string route;
     Real profit;
 };
 
@@ -6881,10 +6881,23 @@ struct Instance {
 };
 
 // A master column is one complete taxi route and the requests it covers.
+// Views refer to immutable map keys during selection; reduced/group masters
+// share those same lists instead of allocating a copy for every column.
+struct RequestList {
+    const IntVector *values = nullptr;
+    RequestList() = default;
+    RequestList(const IntVector &source) : values(&source) {}
+    RequestList(IntVector &&) = delete;
+    auto begin() const { return values->begin(); }
+    auto end() const { return values->end(); }
+    size_t size() const { return values->size(); }
+};
 struct MasterColumn {
-    size_t taxi;
-    IntVector requests;
-    Real profit;
+    uint32_t taxi = 0;
+    RequestList requests;
+    Real profit = 0;
+    MasterColumn(size_t taxi_id, RequestList ids, Real value)
+        : taxi(static_cast<uint32_t>(taxi_id)), requests(ids), profit(value) {}
 };
 
 struct MasterResult {
@@ -7007,11 +7020,12 @@ MasterResult solve_route_master(const vector<MasterColumn> &columns, size_t taxi
 MasterResult solve_taxi_groups(const vector<MasterColumn> &columns, size_t taxi_count,
                                size_t request_count, const IntVector &initial_columns,
                                Deadline deadline, UInt64 group_seed,
-                               const RealVector &request_prices);
+                               const RealVector &request_prices, Real bank_upper = INF);
 MasterResult solve_ranked_master(const vector<MasterColumn> &columns, int taxi_count,
                                  int request_count, const IntVector &initial_columns,
                                  Deadline deadline);
-RealVector estimate_request_prices(Real incumbent_profit = 0);
+RealVector estimate_request_prices(Real incumbent_profit = 0, Deadline deadline = Deadline::max());
+static void refine_parcel_deliveries(SearchState &state, Deadline deadline);
 void improve_solution(SearchState &state, Deadline deadline, bool full_neighborhoods,
                       int cycles = 3);
 InsertionChoice find_route_insertion(int request, int taxi, const Route &route,
@@ -7064,6 +7078,79 @@ RealVector primal_values(const PackingLP &lp);
 Real dual_upper_bound(const PackingLP &lp);
 RealVector request_prices_from_lp(const PackingLP &lp, size_t request_count);
 
+// Compact route bytes preserve every node. Large vertex IDs use a wide fallback.
+static string pack_stored_route(const Route &route) {
+    const bool narrow = instance.node_count <= numeric_limits<uint16_t>::max();
+    const size_t width = narrow ? sizeof(uint16_t) : sizeof(uint32_t);
+    string packed(route.size() * width, '\0');
+    for (size_t i = 0; i < route.size(); ++i) {
+        if (narrow) {
+            const uint16_t node = static_cast<uint16_t>(route[i]);
+            memcpy(&packed[i * width], &node, width);
+        } else {
+            const uint32_t node = static_cast<uint32_t>(route[i]);
+            memcpy(&packed[i * width], &node, width);
+        }
+    }
+    return packed;
+}
+static Route unpack_stored_route(const string &packed) {
+    const bool narrow = instance.node_count <= numeric_limits<uint16_t>::max();
+    const size_t width = narrow ? sizeof(uint16_t) : sizeof(uint32_t);
+    Route route(packed.size() / width);
+    for (size_t i = 0; i < route.size(); ++i) {
+        if (narrow) {
+            uint16_t node;
+            memcpy(&node, &packed[i * width], width);
+            route[i] = node;
+        } else {
+            uint32_t node;
+            memcpy(&node, &packed[i * width], width);
+            route[i] = static_cast<int>(node);
+        }
+    }
+    return route;
+}
+
+// Check before constructing large LP data. The budget reserves headroom below
+// the observed500MB judge failure; smaller models keep the original selector.
+constexpr uint64_t MASTER_MEMORY_BUDGET = 450000000;
+static bool master_memory_limited = false;
+static uint64_t process_memory_bytes() {
+    ifstream status("/proc/self/statm");
+    uint64_t pages = 0, resident = 0;
+    if (status >> pages >> resident) {
+        const long page_size = sysconf(_SC_PAGESIZE);
+        return max(pages, resident) * uint64_t(page_size > 0 ? page_size : 4096);
+    }
+    rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) == 0)
+        return uint64_t(usage.ru_maxrss) * 1024 + 32000000;
+    return MASTER_MEMORY_BUDGET; // Unknown accounting: decline large allocation.
+}
+static bool master_memory_allows(uint64_t additional) {
+    const uint64_t current = process_memory_bytes();
+    return current < MASTER_MEMORY_BUDGET && additional <= MASTER_MEMORY_BUDGET - current;
+}
+static uint64_t master_lp_workspace(size_t columns, size_t rows, uint64_t nonzeros) {
+    // Include CSC and row copies, factor workspaces, solver arrays and transient
+    // result buffers. This is conservative and checked again after adding cuts.
+    return uint64_t(columns) * 256 + nonzeros * 48 + uint64_t(rows) * rows * 256 + 16000000;
+}
+static bool full_master_fits(const vector<MasterColumn> &columns) {
+    uint64_t nonzeros = 0;
+    for (const auto &column : columns) nonzeros += 1 + column.requests.size();
+    return master_memory_allows(master_lp_workspace(columns.size(),
+        instance.taxi_count + instance.request_count, nonzeros));
+}
+static bool lp_copy_fits(const PackingLP &lp) {
+    const uint64_t copy_bytes = uint64_t(lp.backend_lower.size() + lp.backend_upper.size()) * sizeof(Real)
+        + uint64_t(lp.column_bound_rows.size()) * sizeof(int)
+        + uint64_t(lp.basis_inverse.size() + lp.dual_prices.size() + lp.right_hand_sides.size()
+                   + lp.bound_signs.size() + lp.basic_values.size()) * sizeof(Real) + 1000000;
+    return master_memory_allows(copy_bytes);
+}
+
 // --- Search pipeline ---
 
 // Embedded LP adapter with independently recomputed feasibility and dual checks.
@@ -7074,6 +7161,13 @@ static void solve_embedded_lp(PackingLP &lp, Deadline deadline) {
     profit.reserve(columns.size());
     for (auto &column : columns)
         profit.push_back(column.profit);
+    uint64_t nonzeros = 0;
+    for (const auto &rows : lp.matrix->column_rows) nonzeros += rows.size();
+    if (!master_memory_allows(master_lp_workspace(columns.size(), lp.matrix->dimension, nonzeros))) {
+        master_memory_limited = true;
+        lp.timed_out = true;
+        return;
+    }
     auto result = embedded_hsol::solve(lp.matrix->dimension, lp.matrix->column_rows, profit,
                                        lp.backend_lower, lp.backend_upper, deadline);
 
@@ -7145,100 +7239,6 @@ static void solve_embedded_lp(PackingLP &lp, Deadline deadline) {
 bool full_probe_mode = false, full_probe_truncated = false, route_bank_complete = false;
 size_t full_probe_columns = 0;
 constexpr size_t FULL_PROBE_COLUMN_GUARD = 350000;
-
-// Supplementary short routes are generated once after the existing fleet search.
-// Keeping each parcel's best partner preserves coverage beyond a raw top-profit
-// list. This pool is heuristic: other partners may still matter to the fleet.
-struct ParcelPairSeed {
-    int taxi = -1, first = -1, second = -1;
-    Real profit = -INF;
-    array<int, 4> nodes{};
-};
-vector<ParcelPairSeed> parcel_pair_seeds;
-static void generate_parcel_pair_seeds(Deadline deadline) {
-    // Each permutation respects both pickup-before-delivery constraints.
-    constexpr int orders[6][4] = {{0, 1, 2, 3}, {0, 2, 1, 3}, {0, 2, 3, 1},
-                                  {2, 0, 1, 3}, {2, 0, 3, 1}, {2, 3, 0, 1}};
-    Route route(4);
-    for (int taxi = 0; taxi < instance.taxi_count && Clock::now() < deadline; ++taxi) {
-        vector<ParcelPairSeed> best_partner(instance.parcel_count);
-        for (int a = 0; a < instance.parcel_count && Clock::now() < deadline; ++a) {
-            const int first = instance.passenger_count + a;
-            const auto &ra = instance.requests[first];
-            for (int b = a + 1; b < instance.parcel_count; ++b) {
-                if ((b & 63) == 0 && Clock::now() >= deadline)
-                    break;
-                const int second = instance.passenger_count + b;
-                const auto &rb = instance.requests[second];
-                const int nodes[4] = {ra.pickup_node, ra.delivery_node, rb.pickup_node,
-                                      rb.delivery_node};
-                ParcelPairSeed candidate;
-                candidate.taxi = taxi;
-                candidate.first = first;
-                candidate.second = second;
-                for (const auto &order : orders) {
-                    for (int i = 0; i < 4; ++i)
-                        route[i] = nodes[order[i]];
-                    const auto value = evaluate_route(instance, taxi, route);
-                    if (value && *value > candidate.profit) {
-                        candidate.profit = *value;
-                        copy(route.begin(), route.end(), candidate.nodes.begin());
-                    }
-                }
-                // Judge the complete pair; neither individual insertion needs
-                // positive profit. Every retained final route is profitable.
-                if (candidate.profit <= FEASIBILITY_EPSILON)
-                    continue;
-                for (int request : {a, b}) {
-                    if (candidate.profit > best_partner[request].profit) {
-                        best_partner[request] = candidate;
-                    }
-                }
-            }
-        }
-        map<pair<int, int>, ParcelPairSeed> distinct;
-        for (const auto &seed : best_partner) {
-            if (seed.first >= 0)
-                distinct[{seed.first, seed.second}] = seed;
-        }
-        for (const auto &entry : distinct)
-            parcel_pair_seeds.push_back(entry.second);
-    }
-    // Build this ranking once, so repeated construction only scans the pool.
-    stable_sort(parcel_pair_seeds.begin(), parcel_pair_seeds.end(),
-                [](const ParcelPairSeed &a, const ParcelPairSeed &b) {
-                    if (a.profit != b.profit)
-                        return a.profit > b.profit;
-                    return tie(a.taxi, a.first, a.second) < tie(b.taxi, b.first, b.second);
-                });
-
-    // Ordinary DFS's absolute-profit floor can evict complementary short routes.
-    // Protected storage adds at most K*M candidates; original caps are unchanged.
-    for (const auto &seed : parcel_pair_seeds) {
-        store_route(seed.taxi, Route(seed.nodes.begin(), seed.nodes.end()), false, seed.profit);
-    }
-}
-
-static void apply_parcel_pair_seeds(SearchState &state, Deadline deadline) {
-    if (parcel_pair_seeds.empty())
-        return;
-    size_t empty = count_if(state.routes.begin(), state.routes.end(),
-                            [](const Route &route) { return route.empty(); });
-    if (!empty)
-        return;
-    size_t examined = 0;
-    for (const auto &seed : parcel_pair_seeds) {
-        if ((++examined & 63) == 0 && Clock::now() >= deadline)
-            break;
-        if (!state.routes[seed.taxi].empty() || state.request_owner[seed.first] >= 0 ||
-            state.request_owner[seed.second] >= 0)
-            continue;
-        // These complete routes were checked for this taxi from its origin.
-        update_route(state, seed.taxi, Route(seed.nodes.begin(), seed.nodes.end()));
-        if (!--empty)
-            break;
-    }
-}
 
 // Relax request identities while retaining per-taxi route choices and the total
 // passenger/parcel counts. This can certify a fleet without allocating an LP.
@@ -7330,29 +7330,7 @@ static bool bank_cardinality_certified(const SearchState &state, Deadline deadli
     return certified;
 }
 
-// Each independent start constructs a fresh fleet, preserving the best complete one.
-// All starts share the existing generation deadline and the same route bank.
-static void rebuild_multistart_fleets(SearchState &incumbent, Deadline deadline) {
-    const UInt64 base_seed =
-        1; // deterministic anchor for small-fleet construction; later stages retain the external seed
-    const size_t saved_calls = fleet_generation_calls;
-    SearchState best = incumbent;
-    int completed = 0;
-    for (int start = 0; start < 3 && Clock::now() < deadline; start++) {
-        random_seed = base_seed + start;
-        fleet_generation_calls = 0;
-        auto candidate = make_search_state(Fleet(instance.taxi_count));
-        auto now = Clock::now();
-        rebuild_fleets(candidate, now + (deadline - now) / (3 - start));
-        if (candidate.profit > best.profit)
-            best = move(candidate);
-        completed++;
-    }
-    random_seed = base_seed;
-    fleet_generation_calls = saved_calls + completed;
-    incumbent = move(best);
-    store_fleet(incumbent.routes);
-}
+static void improve_parcel_alns(SearchState &state,Deadline deadline);
 int main(int argc, char **argv) {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
@@ -7401,14 +7379,11 @@ int main(int argc, char **argv) {
         auto generation_deadline =
             search_deadline - Seconds(FINAL_SELECTION_SECONDS + FINAL_SELECTION_RESERVE_SECONDS);
         do {
-            if (instance.taxi_count <= SMALL_FLEET_TAXI_LIMIT) {
-                rebuild_multistart_fleets(state, generation_deadline);
-            } else {
-                rebuild_fleets(state,
-                               min(generation_deadline, deadline_after(REBUILD_ROUND_SECONDS)));
-            }
-            if (instance.taxi_count > SMALL_FLEET_TAXI_LIMIT &&
-                Clock::now() + Seconds(PRICING_GUARD_SECONDS) < generation_deadline) {
+            // Small fleets also need independently priced route alternatives;
+            // a single long feasible-fleet rebuild restricts their transformations.
+            rebuild_fleets(state,
+                           min(generation_deadline, deadline_after(REBUILD_ROUND_SECONDS)));
+            if (Clock::now() + Seconds(PRICING_GUARD_SECONDS) < generation_deadline) {
                 select_fleet_routes(
                     state, min(generation_deadline, deadline_after(SELECTION_ROUND_SECONDS)));
                 if (Clock::now() < generation_deadline) {
@@ -7419,25 +7394,38 @@ int main(int argc, char **argv) {
                     } else {
                         enumerate_routes(
                             min(generation_deadline, deadline_after(PRICED_GENERATION_SECONDS)),
-                            estimate_request_prices(state.profit));
+                            estimate_request_prices(state.profit, generation_deadline));
                     }
                 }
             }
-        } while (instance.taxi_count > SMALL_FLEET_TAXI_LIMIT &&
-                 Clock::now() < generation_deadline);
+        } while (Clock::now() < generation_deadline);
     }
 
     // Reserve the final seconds for selection and local descent; allow output before 300 s.
     auto final_master_deadline = search_deadline - Seconds(FINAL_SELECTION_RESERVE_SECONDS);
-    if (!route_bank_complete) {
-        generate_parcel_pair_seeds(final_master_deadline);
-        apply_parcel_pair_seeds(state, final_master_deadline);
-    }
     if (!route_bank_complete)
         final_master_deadline = min(final_master_deadline, deadline_after(FINAL_SELECTION_SECONDS));
     select_fleet_routes(state, final_master_deadline, true);
+    // Refine the selected fleet directly; share the remaining polish budget.
+    const auto parcel_start = Clock::now();
+    if (parcel_start < search_deadline)
+        refine_parcel_deliveries(state, parcel_start + (search_deadline - parcel_start) / 2);
     if (Clock::now() < search_deadline) {
         improve_solution(state, search_deadline, true, FINAL_POLISH_CYCLES);
+    }
+
+    // Keep searching after a converged final descent. Independent priced
+    // routes can change several taxi assignments through the master even
+    // when the complete fleet has no improving local move.
+    if (!route_bank_complete) {
+        while (Clock::now() + Seconds(1) < search_deadline) {
+            generate_priced_replacements(state,
+                min(search_deadline, deadline_after(PRICED_GENERATION_SECONDS)));
+            select_fleet_routes(state,
+                min(search_deadline, deadline_after(SELECTION_ROUND_SECONDS)), true);
+        }
+        if (Clock::now() < search_deadline)
+            improve_solution(state, search_deadline, true, FINAL_POLISH_CYCLES);
     }
 
     // Output only the objective, followed by one node sequence per taxi.
@@ -7787,6 +7775,7 @@ void rebuild_fleets(SearchState &incumbent, Deadline deadline) {
         }
         if (round_index % REBUILD_POLISH_INTERVAL == 0 && Clock::now() < deadline) {
             improve_solution(current, deadline, false);
+            if (Clock::now()<deadline) improve_parcel_alns(current,deadline);
         }
 
         // Keep the best complete fleet even when later rounds deliberately lose profit.
@@ -7890,7 +7879,7 @@ void destroy_solution(SearchState &state, int round_index) {
 // Start from the incumbent route and several bank routes, with bounded restarts.
 void generate_priced_replacements(SearchState &state, Deadline deadline) {
     // Penalize expensive-to-share requests and vary that penalty across generation calls.
-    auto prices = estimate_request_prices(state.profit);
+    auto prices = estimate_request_prices(state.profit, deadline);
     auto call = priced_replacement_calls++;
     random_engine.seed(random_seed + SEED_STRIDE * call);
     Real scale[] = {1, .8, 1.2};
@@ -7915,7 +7904,7 @@ void generate_priced_replacements(SearchState &state, Deadline deadline) {
                      [](auto &left, auto &right) { return left.first > right.first; });
         vector<Route> seeds{state.routes[taxi]};
         for (int i = 0; i < count; i++) {
-            seeds.push_back(ranked[i].second->route);
+            seeds.push_back(unpack_stored_route(ranked[i].second->route));
         }
         SearchState candidate_state = make_search_state(Fleet(instance.taxi_count));
         update_route(candidate_state, taxi, seeds[0]);
@@ -8038,16 +8027,23 @@ static bool bank_incumbent_certified(const SearchState &state) {
 // --- Route selection: master dispatch ---
 // Build the master from the bank and retain the incumbent unless profit improves.
 void select_fleet_routes(SearchState &state, Deadline deadline, bool full_fleet) {
+    // The preceding generation/pricing call may have used its whole slice.
+    if (Clock::now() >= deadline) return;
 
     // Preserve incumbent routes and map every stored route to a master column.
     store_fleet(state.routes);
     if (bank_incumbent_certified(state))
         return;
-    if (full_fleet && !route_bank_complete && bank_cardinality_certified(state, deadline)) {
+    Real bank_upper = INF;
+    if (full_fleet && !route_bank_complete && bank_cardinality_certified(state, deadline, &bank_upper)) {
         return;
     }
+    size_t column_count = 0;
+    for (const auto &bank : route_bank) column_count += bank.size();
     vector<MasterColumn> columns;
-    vector<const Route *> routes;
+    vector<const StoredRoute *> routes;
+    columns.reserve(column_count);
+    routes.reserve(column_count);
     IntVector initial(instance.taxi_count, -1);
     for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
         for (auto &[ids, stored_route] : route_bank[taxi]) {
@@ -8055,16 +8051,21 @@ void select_fleet_routes(SearchState &state, Deadline deadline, bool full_fleet)
                 initial[taxi] = columns.size();
             }
             columns.push_back(
-                {(size_t)taxi, IntVector(ids.begin(), ids.end()), stored_route.profit});
-            routes.push_back(&stored_route.route);
+                {(size_t)taxi, ids, stored_route.profit});
+            routes.push_back(&stored_route);
         }
     }
     // Choose a master strategy by fleet size; larger fleets use request opportunity costs.
     auto prices = instance.taxi_count > SMALL_FLEET_TAXI_LIMIT
-                      ? estimate_request_prices(state.profit)
+                      ? estimate_request_prices(state.profit, deadline)
                       : RealVector{};
+    if (Clock::now() >= deadline) return;
     MasterResult solved;
-    if (full_fleet) {
+    master_memory_limited = false;
+    if (full_fleet && !full_master_fits(columns)) {
+        solved = solve_taxi_groups(columns, instance.taxi_count, instance.request_count, initial,
+                                   deadline, random_seed, prices, bank_upper);
+    } else if (full_fleet) {
         solved = solve_route_master(columns, instance.taxi_count, instance.request_count, initial,
                                     deadline, true);
     } else if (instance.taxi_count > GROUP_MASTER_TAXI_LIMIT) {
@@ -8077,11 +8078,18 @@ void select_fleet_routes(SearchState &state, Deadline deadline, bool full_fleet)
         solved = solve_route_master(columns, instance.taxi_count, instance.request_count, initial,
                                     deadline);
     }
+    // A later cut or branch can also exceed the workspace budget. Continue
+    // with overlapping small masters, carrying forward the best feasible fleet.
+    if (master_memory_limited && Clock::now() < deadline) {
+        master_memory_limited = false;
+        solved = solve_taxi_groups(columns, instance.taxi_count, instance.request_count,
+                                   solved.selected_columns, deadline, random_seed, prices, bank_upper);
+    }
     // Reconstruct the selected fleet and accept it only when actual profit improves.
     Fleet selected_fleet(instance.taxi_count);
     for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
         if (solved.selected_columns[taxi] >= 0) {
-            selected_fleet[taxi] = *routes[solved.selected_columns[taxi]];
+            selected_fleet[taxi] = unpack_stored_route(routes[solved.selected_columns[taxi]]->route);
         }
     }
     if (fleet_profit(selected_fleet) > state.profit + FEASIBILITY_EPSILON) {
@@ -8173,6 +8181,11 @@ MasterResult solve_route_master(const vector<MasterColumn> &columns, size_t taxi
         return result;
     }
     // Solve the root LP relaxation before exploring include/exclude branches.
+    if (!full_master_fits(columns)) {
+        master_memory_limited = true;
+        result.timed_out = true;
+        return result;
+    }
     auto matrix = build_packing_matrix(columns, taxi_count, request_count);
     auto root = initialize_lp(matrix);
     primal_simplex(root, deadline);
@@ -8286,6 +8299,11 @@ MasterResult solve_route_master(const vector<MasterColumn> &columns, size_t taxi
                     for (size_t t = 0; t < taxi_count; t++)
                         if (result.selected_columns[t] >= 0)
                             reduced_initial[t] = remap[result.selected_columns[t]];
+                    root = PackingLP{};
+                    matrix = PackingMatrix{};
+                    RealVector{}.swap(values);
+                    IndexVector{}.swap(order);
+                    IntVector{}.swap(remap);
                     auto solved = solve_route_master(reduced, taxi_count, request_count,
                                                      reduced_initial, deadline, true);
                     for (int &j : solved.selected_columns)
@@ -8399,6 +8417,11 @@ MasterResult solve_route_master(const vector<MasterColumn> &columns, size_t taxi
 
         // Include this route, repair the LP by dual simplex, recurse, then undo conflicts.
         {
+            if (!lp_copy_fits(lp)) {
+                master_memory_limited = true;
+                result.timed_out = true;
+                return;
+            }
             auto child = lp;
             add_column_bound(child, branch_column, true);
             dual_simplex(child, deadline);
@@ -8420,6 +8443,11 @@ MasterResult solve_route_master(const vector<MasterColumn> &columns, size_t taxi
         }
         // Explore the sibling branch with this route excluded, unless time has expired.
         if (!result.timed_out) {
+            if (!lp_copy_fits(lp)) {
+                master_memory_limited = true;
+                result.timed_out = true;
+                return;
+            }
             auto child = lp;
             add_column_bound(child, branch_column, false);
             dual_simplex(child, deadline);
@@ -8441,7 +8469,7 @@ MasterResult solve_route_master(const vector<MasterColumn> &columns, size_t taxi
 MasterResult solve_taxi_groups(const vector<MasterColumn> &columns, size_t taxi_count,
                                size_t request_count, const IntVector &initial_columns,
                                Deadline deadline, UInt64 group_seed,
-                               const RealVector &request_prices) {
+                               const RealVector &request_prices, Real bank_upper) {
     // Index routes by taxi and precompute each route's request-price penalty.
     MasterResult result;
     result.selected_columns = initial_columns;
@@ -8450,6 +8478,12 @@ MasterResult solve_taxi_groups(const vector<MasterColumn> &columns, size_t taxi_
             result.profit += columns[column_id].profit;
         }
     }
+    bool integral = true;
+    for (const auto &column : columns) integral &= column.profit == round(column.profit);
+    auto reached_upper = [&] {
+        return isfinite(bank_upper) &&
+            (integral ? bank_upper < floor(result.profit) + 1 : bank_upper <= result.profit);
+    };
     vector<IndexVector> taxi_columns(taxi_count);
     for (size_t j = 0; j < columns.size(); ++j) {
         taxi_columns[columns[j].taxi].push_back(j);
@@ -8507,7 +8541,7 @@ MasterResult solve_taxi_groups(const vector<MasterColumn> &columns, size_t taxi_
     }
     mt19937_64 group_random_engine(group_seed);
     size_t rounds = 0, last_gain = 0;
-    while (Clock::now() < deadline) {
+    while (Clock::now() < deadline && !reached_upper()) {
         // Rebuild request ownership from the latest incumbent fleet.
         IntVector request_owner(request_count, -1);
         for (size_t taxi = 0; taxi < taxi_count; ++taxi) {
@@ -8720,22 +8754,30 @@ MasterResult solve_ranked_master(const vector<MasterColumn> &columns, int taxi_c
 // --- Route selection: request prices ---
 // Subgradient request prices penalize collisions between independently chosen taxi routes.
 // A feasible fleet profit supplies the lower bound used by the step size.
-RealVector estimate_request_prices(Real incumbent_profit) {
+RealVector estimate_request_prices(Real incumbent_profit, Deadline deadline) {
     // Collect bank columns and build a feasible greedy profit bound for step-size control.
     RealVector prices(instance.request_count), best_prices(instance.request_count);
+    // A partial subgradient sweep is not a valid evaluated dual vector.
+    // On timeout retain the best fully completed iteration (or zero prices).
+    if (Clock::now() >= deadline) return best_prices;
     Real lower = 0, best = INF;
+    size_t scanned = 0;
     vector<MasterColumn> columns;
     for (int taxi = 0; taxi < instance.taxi_count; taxi++) {
         for (auto &[ids, column] : route_bank[taxi]) {
-            columns.push_back({(size_t)taxi, IntVector(ids.begin(), ids.end()), column.profit});
+            if ((++scanned & 1023) == 0 && Clock::now() >= deadline) return best_prices;
+            columns.push_back({(size_t)taxi, ids, column.profit});
         }
     }
+    if (Clock::now() >= deadline) return best_prices;
     IntVector ranking(columns.size());
     iota(ranking.begin(), ranking.end(), 0);
     sort(ranking.begin(), ranking.end(),
          [&](int left, int right) { return columns[left].profit > columns[right].profit; });
+    if (Clock::now() >= deadline) return best_prices;
     vector<char> used_requests(instance.request_count), assigned_taxis(instance.taxi_count);
     for (int j : ranking) {
+        if ((++scanned & 1023) == 0 && Clock::now() >= deadline) return best_prices;
         auto &column = columns[j];
         if (assigned_taxis[column.taxi]) {
             continue;
@@ -8754,10 +8796,12 @@ RealVector estimate_request_prices(Real incumbent_profit) {
     }
     lower = max(lower, incumbent_profit);
     for (int iteration = 0; iteration < PRICE_ITERATION_LIMIT; iteration++) {
+        if (Clock::now() >= deadline) return best_prices;
         // Relax shared-request conflicts: let each taxi choose its best priced route independently.
         RealVector best_taxi_score(instance.taxi_count);
         IntVector chosen(instance.taxi_count, -1), request_usage(instance.request_count);
         for (int j = 0; j < (int)columns.size(); j++) {
+            if ((j & 1023) == 0 && Clock::now() >= deadline) return best_prices;
             auto &column = columns[j];
             Real reduced_profit = column.profit;
             for (int request : column.requests) {
@@ -8797,6 +8841,227 @@ RealVector estimate_request_prices(Real incumbent_profit) {
         }
     }
     return best_prices;
+}
+
+// --- Local search: parcel delivery refinement ---
+// Evaluate edits with constant-many cached segments. Build a route only when
+// applying a move; each taxi caches one edit rather than a pool of routes.
+struct ParcelRouteEdit {
+    enum Kind { NONE, DELIVERY, INSERT, JOINT } kind = NONE;
+    Real gain = FEASIBILITY_EPSILON;
+    int first_added = -1, second_added = -1;
+    int pickup_position = 0, delivery_position = 0, old_delivery = 0;
+    array<int, 4> nodes{};
+};
+
+struct ParcelRouteSummary {
+    Segment constraints;
+    Real cost = 0;
+};
+
+static ParcelRouteSummary join_parcel_summaries(ParcelRouteSummary left,
+                                                const ParcelRouteSummary &right) {
+    if (!left.constraints.first_node)
+        return right;
+    if (!right.constraints.first_node)
+        return left;
+    left.cost += travel_cost(left.constraints.last_node, right.constraints.first_node) + right.cost;
+    left.constraints = join_segments(left.constraints, right.constraints);
+    return left;
+}
+
+static ParcelRouteEdit find_parcel_route_edit(const SearchState &state, int taxi,
+                                              Deadline deadline) {
+    const Route &route = state.routes[taxi];
+    const int length = route.size();
+    ParcelRouteEdit best;
+
+    // Preprocess the unchanged route. Prefix costs and disjoint-table summaries
+    // then provide O(1) cost, time-window and load information for any piece.
+    const auto &segments = cached_route_segments(taxi, route);
+    RealVector prefix_cost(length + 1, 0);
+    for (int i = 1; i < length; ++i)
+        prefix_cost[i + 1] = prefix_cost[i] + travel_cost(route[i - 1], route[i]);
+    IntVector pickup_positions(instance.request_count, -1);
+    for (int i = 0; i < length; ++i)
+        if (!instance.is_delivery[route[i]])
+            pickup_positions[instance.node_request[route[i]]] = i;
+    const Real old_cost = length ? prefix_cost[length] +
+        travel_cost(instance.taxi_origin[taxi], route.front()) : 0;
+    auto piece = [&](int begin, int end) {
+        return ParcelRouteSummary{segment_range(segments, begin, end),
+                                   begin < end ? prefix_cost[end] - prefix_cost[begin + 1] : 0};
+    };
+    auto consider = [&](const ParcelRouteSummary &summary, Real added_revenue,
+                        ParcelRouteEdit edit) {
+        const Real cost = summary.cost +
+            travel_cost(instance.taxi_origin[taxi], summary.constraints.first_node);
+        const Real gain = added_revenue + old_cost - cost;
+        if (gain > best.gain && is_segment_feasible(taxi, summary.constraints)) {
+            edit.gain = gain;
+            best = edit;
+        }
+    };
+
+    // Reposition an existing parcel delivery, retaining all other stop order.
+    // Three unchanged pieces and one delivery stop describe the entire edit.
+    for (int delivery = 0; delivery < length && Clock::now() < deadline; ++delivery) {
+        const int node = route[delivery], request = instance.node_request[node];
+        if (!instance.is_delivery[node] || instance.requests[request].is_passenger)
+            continue;
+        const int pickup = pickup_positions[request];
+        const ParcelRouteSummary stop{segments.node_segments[delivery], 0};
+        for (int position = int(pickup) + 1; position < length; ++position) {
+            const int previous = position - 1 < delivery ? position - 1 : position;
+            const int previous_node = route[previous];
+            if (!instance.is_delivery[previous_node] &&
+                instance.requests[instance.node_request[previous_node]].is_passenger)
+                continue;
+            ParcelRouteSummary summary;
+            if (position <= delivery) {
+                summary = join_parcel_summaries(
+                    join_parcel_summaries(
+                        join_parcel_summaries(piece(0, position), stop), piece(position, delivery)),
+                    piece(delivery + 1, length));
+            } else {
+                summary = join_parcel_summaries(
+                    join_parcel_summaries(
+                        join_parcel_summaries(piece(0, delivery), piece(delivery + 1, position + 1)),
+                        stop), piece(position + 1, length));
+            }
+            ParcelRouteEdit edit;
+            edit.kind = ParcelRouteEdit::DELIVERY;
+            edit.old_delivery = delivery;
+            edit.delivery_position = position;
+            consider(summary, 0, edit);
+        }
+    }
+
+    IntVector unserved;
+    for (int request = instance.passenger_count; request < instance.request_count; ++request) {
+        if (state.request_owner[request] < 0 &&
+            instance.requests[request].weight <= instance.taxi_capacity[taxi] + FEASIBILITY_EPSILON)
+            unserved.push_back(request);
+    }
+
+    // Existing single-insertion checks also use O(1) segment composition per
+    // placement. Keep its positions without constructing a trial route.
+    for (int request : unserved) {
+        if (Clock::now() >= deadline)
+            return best;
+        const auto choice = find_route_insertion(request, taxi, route, best.gain);
+        if (choice.taxi >= 0 && choice.profit_delta > best.gain) {
+            best.kind = ParcelRouteEdit::INSERT;
+            best.gain = choice.profit_delta;
+            best.first_added = request;
+            best.second_added = -1;
+            best.pickup_position = choice.pickup_position;
+            best.delivery_position = choice.delivery_position;
+        }
+    }
+
+    // Joint insertion replaces one arc with four stops. Neither singleton has
+    // to be profitable or feasible; only the complete move is tested.
+    static constexpr int orders[6][4] = {{0, 1, 2, 3}, {0, 2, 1, 3}, {0, 2, 3, 1},
+                                         {2, 0, 1, 3}, {2, 0, 3, 1}, {2, 3, 0, 1}};
+    vector<array<ParcelRouteSummary, 2>> stops;
+    for (int request : unserved)
+        stops.push_back({ParcelRouteSummary{make_node_segment(instance.requests[request].pickup_node), 0},
+                         ParcelRouteSummary{make_node_segment(instance.requests[request].delivery_node), 0}});
+    size_t examined = 0;
+    for (size_t a = 0; a < unserved.size(); ++a) {
+        for (size_t b = a + 1; b < unserved.size(); ++b) {
+            const int first = unserved[a], second = unserved[b];
+            const auto &ra = instance.requests[first], &rb = instance.requests[second];
+            const ParcelRouteSummary nodes[4] = {stops[a][0], stops[a][1], stops[b][0], stops[b][1]};
+            for (const auto &order : orders) {
+                if ((++examined & 255) == 0 && Clock::now() >= deadline)
+                    return best;
+                ParcelRouteSummary chain;
+                for (int i : order)
+                    chain = join_parcel_summaries(chain, nodes[i]);
+                if (!chain.constraints.feasible ||
+                    chain.constraints.maximum_load > instance.taxi_capacity[taxi] + FEASIBILITY_EPSILON)
+                    continue;
+                for (int gap = 0; gap <= length; ++gap) {
+                    if ((++examined & 255) == 0 && Clock::now() >= deadline)
+                        return best;
+                    if (!is_insertion_boundary(route, gap))
+                        continue;
+                    const int previous = gap ? route[gap - 1] : instance.taxi_origin[taxi];
+                    Real added_cost = travel_cost(previous, chain.constraints.first_node) + chain.cost;
+                    if (gap < length)
+                        added_cost += travel_cost(chain.constraints.last_node, route[gap])
+                                      - travel_cost(previous, route[gap]);
+                    if (ra.revenue + rb.revenue - added_cost <= best.gain - FEASIBILITY_EPSILON)
+                        continue;
+                    const auto summary = join_parcel_summaries(
+                        join_parcel_summaries(piece(0, gap), chain), piece(gap, length));
+                    ParcelRouteEdit edit;
+                    edit.kind = ParcelRouteEdit::JOINT;
+                    edit.first_added = first;
+                    edit.second_added = second;
+                    edit.pickup_position = gap;
+                    for (int i = 0; i < 4; ++i)
+                        edit.nodes[i] = nodes[order[i]].constraints.first_node;
+                    consider(summary, ra.revenue + rb.revenue, edit);
+                }
+            }
+        }
+    }
+    return best;
+}
+
+static Route apply_parcel_route_edit(const Route &route, const ParcelRouteEdit &edit) {
+    if (edit.kind == ParcelRouteEdit::INSERT)
+        return insert_request(route, edit.first_added, edit.pickup_position, edit.delivery_position);
+    Route result = route;
+    if (edit.kind == ParcelRouteEdit::DELIVERY) {
+        const int node = result[edit.old_delivery];
+        result.erase(result.begin() + edit.old_delivery);
+        result.insert(result.begin() + edit.delivery_position, node);
+    } else if (edit.kind == ParcelRouteEdit::JOINT) {
+        result.insert(result.begin() + edit.pickup_position, edit.nodes.begin(), edit.nodes.end());
+    }
+    return result;
+}
+
+static void refine_parcel_deliveries(SearchState &state, Deadline deadline) {
+    if (!instance.parcel_count)
+        return;
+    vector<ParcelRouteEdit> edits(instance.taxi_count);
+    vector<UInt64> versions(instance.taxi_count, 0);
+    while (Clock::now() < deadline) {
+        int chosen = -1;
+        Real best_gain = FEASIBILITY_EPSILON;
+        for (int taxi = 0; taxi < instance.taxi_count && Clock::now() < deadline; ++taxi) {
+            auto &edit = edits[taxi];
+            const bool unavailable =
+                (edit.first_added >= 0 && state.request_owner[edit.first_added] >= 0) ||
+                (edit.second_added >= 0 && state.request_owner[edit.second_added] >= 0);
+            if (versions[taxi] != state.route_version[taxi] || unavailable) {
+                edit = find_parcel_route_edit(state, taxi, deadline);
+                versions[taxi] = state.route_version[taxi];
+            }
+            // Other taxis only shrink the unserved set. A cached best edit
+            // remains best if its route and added requests are still available.
+            if (edit.gain > best_gain) {
+                best_gain = edit.gain;
+                chosen = taxi;
+            }
+        }
+        if (chosen < 0)
+            break;
+        Route candidate = apply_parcel_route_edit(state.routes[chosen], edits[chosen]);
+        // Build and independently simulate only the chosen move: O(route length)
+        // per application, outside the O(1) neighborhood evaluation loop.
+        const auto value = evaluate_route(instance, chosen, candidate);
+        if (value && *value > state.route_profit[chosen] + FEASIBILITY_EPSILON)
+            update_route(state, chosen, candidate);
+        else
+            edits[chosen] = ParcelRouteEdit{};
+        // This phase follows the last master solve; no trial routes enter an LP.
+    }
 }
 
 // --- Local search: descent ---
@@ -9466,7 +9731,7 @@ void store_route(int taxi, const Route &route, bool enforce_limit, Real profit) 
         if (entry->second.profit >= profit) {
             return;
         }
-        entry->second = {route, profit};
+        entry->second = {pack_stored_route(route), profit};
     } else {
         if (full_probe_mode) {
             if (full_probe_columns >= FULL_PROBE_COLUMN_GUARD) {
@@ -9476,7 +9741,7 @@ void store_route(int taxi, const Route &route, bool enforce_limit, Real profit) 
             }
             full_probe_columns++;
         }
-        taxi_bank.emplace_hint(entry, requests, StoredRoute{route, profit});
+        taxi_bank.emplace_hint(entry, requests, StoredRoute{pack_stored_route(route), profit});
     }
     // Protected insertions bypass the cap; capped insertions evict the least profitable route.
     if (!enforce_limit) {
@@ -9981,4 +10246,194 @@ RealVector request_prices_from_lp(const PackingLP &lp, size_t request_count) {
         }
     }
     return result;
+}
+
+// Parcel-only descent during fleet reconstruction. Probe cost/feasibility with
+// constant-many segment summaries; materialize only the chosen complete move.
+// Preserve the periodic clock check across swap scans.
+static size_t parcel_swap_clock_count = 0;
+
+static bool improve_alns_parcel_relocation(SearchState &state, Deadline deadline) {
+    Real best = FEASIBILITY_EPSILON;
+    int source = -1, target = -1, chosen_request = -1;
+    InsertionChoice chosen;
+    for (int request = instance.passenger_count;
+         request < instance.request_count && Clock::now() < deadline; ++request) {
+        int taxi = state.request_owner[request];
+        if (taxi < 0)
+            continue;
+        Route base = remove_request(state.routes[taxi], request);
+        const auto source_value = evaluate_route(instance, taxi, base);
+        Real removal = route_profit(taxi, base) - state.route_profit[taxi];
+        for (int destination = 0; destination < instance.taxi_count; ++destination) {
+            if (Clock::now() >= deadline)
+                break;
+            // Same-taxi reinsertion may repair an infeasible removal skeleton.
+            if (destination != taxi && !source_value)
+                continue;
+            const auto &route = destination == taxi ? base : state.routes[destination];
+            auto choice = find_route_insertion(request, destination, route, best - removal);
+            if (choice.taxi >= 0 && removal + choice.profit_delta > best) {
+                best = removal + choice.profit_delta;
+                source = taxi;
+                target = destination;
+                chosen_request = request;
+                chosen = choice;
+            }
+        }
+    }
+    if (source < 0)
+        return false;
+    // Build and simulate only the selected complete move.
+    Route reduced = remove_request(state.routes[source], chosen_request);
+    Route inserted =
+        insert_request(source == target ? reduced : state.routes[target], chosen_request,
+                       chosen.pickup_position, chosen.delivery_position);
+    auto target_value = evaluate_route(instance, target, inserted);
+    if (!target_value)
+        return false;
+    const Real delta = source == target
+                           ? *target_value - state.route_profit[source]
+                           : route_profit(source, reduced) + *target_value -
+                                 state.route_profit[source] - state.route_profit[target];
+    if (delta <= FEASIBILITY_EPSILON || abs(delta - best) > 1e-7)
+        return false;
+    update_route_pair(state, source, reduced, target, inserted);
+    return true;
+}
+
+struct ParcelSwapScan {
+    const Route *route = nullptr;
+    RouteSegmentCache *segments = nullptr;
+    RealVector prefix;
+    Real cost = 0;
+    ParcelRouteSummary piece(int begin, int end) const {
+        return {segment_range(*segments, begin, end),
+                begin < end ? prefix[end] - prefix[begin + 1] : 0};
+    }
+};
+static bool improve_alns_parcel_swap(SearchState &state, Deadline deadline) {
+    struct Parcel {
+        int request, taxi, pickup, delivery;
+    };
+    vector<Parcel> parcels;
+    vector<ParcelSwapScan> scans(instance.taxi_count);
+    // Build one cache per unchanged route, before probing any swap.
+    for (int taxi = 0; taxi < instance.taxi_count; ++taxi) {
+        const auto &route = state.routes[taxi];
+        auto &scan = scans[taxi];
+        scan.route = &route;
+        scan.segments = &cached_route_segments(taxi, route);
+        scan.prefix.assign(route.size() + 1, 0);
+        IntVector pickup(instance.request_count, -1);
+        for (int pos = 0; pos < int(route.size()); ++pos) {
+            if (pos)
+                scan.prefix[pos + 1] = scan.prefix[pos] + travel_cost(route[pos - 1], route[pos]);
+            int request = instance.node_request[route[pos]];
+            if (!instance.is_delivery[route[pos]])
+                pickup[request] = pos;
+            else if (!instance.requests[request].is_passenger)
+                parcels.push_back({request, taxi, pickup[request], pos});
+        }
+        scan.cost = route.empty() ? 0
+                                  : scan.prefix.back() +
+                                        travel_cost(instance.taxi_origin[taxi], route.front());
+    }
+    auto substitution = [&](const Parcel &outgoing, int incoming) {
+        auto &scan = scans[outgoing.taxi];
+        const auto &q = instance.requests[incoming];
+        ParcelRouteSummary pickup{make_node_segment(q.pickup_node), 0},
+            delivery{make_node_segment(q.delivery_node), 0};
+        return join_parcel_summaries(
+            join_parcel_summaries(
+                join_parcel_summaries(join_parcel_summaries(scan.piece(0, outgoing.pickup), pickup),
+                                      scan.piece(outgoing.pickup + 1, outgoing.delivery)),
+                delivery),
+            scan.piece(outgoing.delivery + 1, scan.route->size()));
+    };
+    auto total_cost = [&](int taxi, const ParcelRouteSummary &summary) {
+        return summary.cost +
+               travel_cost(instance.taxi_origin[taxi], summary.constraints.first_node);
+    };
+    Real best = FEASIBILITY_EPSILON;
+    int selected_a = -1, selected_b = -1;
+    bool same_route = false;
+    for (size_t a = 0; a < parcels.size() && Clock::now() < deadline; ++a)
+        for (size_t b = a + 1; b < parcels.size(); ++b) {
+            if ((++parcel_swap_clock_count & 255) == 0 && Clock::now() >= deadline)
+                break;
+            const auto &x = parcels[a], &y = parcels[b];
+            if (x.taxi == y.taxi) {
+                // Exchange delivery endpoints while retaining every other stop.
+                const Parcel &left = x.delivery < y.delivery ? x : y,
+                             &right = x.delivery < y.delivery ? y : x;
+                if (right.pickup >= left.delivery)
+                    continue;
+                const auto &scan = scans[x.taxi];
+                ParcelRouteSummary first{
+                    make_node_segment(instance.requests[right.request].delivery_node), 0};
+                ParcelRouteSummary second{
+                    make_node_segment(instance.requests[left.request].delivery_node), 0};
+                auto summary = join_parcel_summaries(
+                    join_parcel_summaries(
+                        join_parcel_summaries(
+                            join_parcel_summaries(scan.piece(0, left.delivery), first),
+                            scan.piece(left.delivery + 1, right.delivery)),
+                        second),
+                    scan.piece(right.delivery + 1, scan.route->size()));
+                Real gain = scan.cost - total_cost(x.taxi, summary);
+                if (gain > best && is_segment_feasible(x.taxi, summary.constraints)) {
+                    best = gain;
+                    selected_a = a;
+                    selected_b = b;
+                    same_route = true;
+                }
+            } else {
+                auto first = substitution(x, y.request), second = substitution(y, x.request);
+                Real gain = scans[x.taxi].cost + scans[y.taxi].cost - total_cost(x.taxi, first) -
+                            total_cost(y.taxi, second);
+                if (gain > best && is_segment_feasible(x.taxi, first.constraints) &&
+                    is_segment_feasible(y.taxi, second.constraints)) {
+                    best = gain;
+                    selected_a = a;
+                    selected_b = b;
+                    same_route = false;
+                }
+            }
+        }
+    if (selected_a < 0)
+        return false;
+    const auto &x = parcels[selected_a], &y = parcels[selected_b];
+    Route first = state.routes[x.taxi], second = state.routes[y.taxi];
+    if (same_route)
+        swap(first[x.delivery], first[y.delivery]);
+    else {
+        first[x.pickup] = instance.requests[y.request].pickup_node;
+        first[x.delivery] = instance.requests[y.request].delivery_node;
+        second[y.pickup] = instance.requests[x.request].pickup_node;
+        second[y.delivery] = instance.requests[x.request].delivery_node;
+    }
+    const auto a = evaluate_route(instance, x.taxi, first),
+               b = same_route ? optional<Real>{0} : evaluate_route(instance, y.taxi, second);
+    Real old = state.route_profit[x.taxi] + (same_route ? 0 : state.route_profit[y.taxi]);
+    if (!a || !b || *a + *b <= old + FEASIBILITY_EPSILON || abs(*a + *b - old - best) > 1e-7)
+        return false;
+    if (same_route) {
+        update_route(state, x.taxi, first);
+    } else {
+        update_route_pair(state, x.taxi, first, y.taxi, second);
+    }
+    return true;
+}
+
+static void improve_parcel_alns(SearchState &state, Deadline deadline) {
+    bool changed = true;
+    while (changed && Clock::now() < deadline) {
+        changed = false;
+        while (Clock::now() < deadline && improve_alns_parcel_relocation(state, deadline))
+            changed = true;
+        while (Clock::now() < deadline && improve_alns_parcel_swap(state, deadline))
+            changed = true;
+    }
+    store_fleet(state.routes);
 }
