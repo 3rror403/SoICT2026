@@ -5915,7 +5915,7 @@ struct WarmBasis {
     int rows = 0, cols = 0;
     std::vector<int> basic, move;
 };
-static size_t imported_bases = 0, cold_solves = 0, warm_fallbacks = 0;
+
 struct Result {
     std::shared_ptr<const WarmBasis> basis;
     // Upstream status: 0 optimal, 1 infeasible, 2 unbounded, 3 singular, 4 failure.
@@ -6053,11 +6053,9 @@ inline Result solve(int rows, const std::vector<std::vector<int>> &column_rows,
                         model.workValue[j] = model.workUpper[j];
                     }
                 imported = true;
-                ++imported_bases;
             }
         }
-        if (!imported)
-            ++cold_solves;
+
         hsol_embed::check_deadline();
         hsol_embed::HDual solver;
         auto start = std::chrono::steady_clock::now();
@@ -6090,7 +6088,6 @@ inline Result solve(int rows, const std::vector<std::vector<int>> &column_rows,
     }
     if (warm && result.status != 0 && result.status != 1 && result.status != 5 &&
         std::chrono::steady_clock::now() < deadline) {
-        ++warm_fallbacks;
         return solve(rows, column_rows, profit, lower, upper, deadline, nullptr);
     }
     return result;
@@ -6993,7 +6990,6 @@ void enumerate_route_prefix(int taxi, int last_node, Real departure_time, Real t
 // --- Route generation: fleet rebuilding ---
 // Randomized destroy/rebuild rounds add diverse routes to the bank.
 // Periodically restart from the best fleet, including after a sufficient profit loss.
-static size_t heavy_alns_rounds = 0;
 void rebuild_fleets(SearchState &incumbent, Deadline deadline) {
     random_engine.seed(random_seed + SEED_STRIDE * fleet_generation_calls++);
     SearchState current = incumbent, best_state = incumbent;
@@ -7039,7 +7035,7 @@ void rebuild_fleets(SearchState &incumbent, Deadline deadline) {
             best_state = current;
         }
         ++measured_rounds;
-        ++heavy_alns_rounds;
+
         round_index++;
     }
     // Return the best fleet; preserve its routes as candidates for later master solves.
@@ -10062,42 +10058,195 @@ static bool improve_alns_parcel_swap(SearchState &state, Deadline deadline) {
 // High-throughput, bounded ruin/repair. This intentionally changes search effort:
 // repair visits removed requests plus a rotating external shortlist; local search
 // probes affected routes instead of exhaustive fleet-wide neighborhoods.
-struct FastAlnsCounters {
-    size_t rounds = 0, removed = 0, repair_requests = 0, local_probes = 0, local_moves = 0;
+struct RebuildProgress {
+    size_t rounds = 0;
 };
-static FastAlnsCounters fast_alns_counters;
+static RebuildProgress rebuild_progress;
 // A completed descent exhausts the existing best-improvement neighborhoods.
 // An interrupted final sweep preserves feasible improvements but is not convergence.
-static size_t descent_attempts = 0, descent_completed = 0, descent_interrupted = 0;
+// Exchange closed blocks of one or two complete requests between taxis.
+// At least one exchanged block contains two requests, and at least one parcel
+// participates. Existing request order inside each block is preserved, including
+// interleaved parcel pickups/deliveries. No removal-only feasibility gate is used.
+struct ClosedBlock {
+    int begin = 0, end = 0, requests = 0, parcels = 0, previous = 0, next = 0;
+    Segment prefix, body, suffix;
+    Real removed_boundary_cost = 0;
+};
+struct ClosedBlockContext {
+    UInt64 version = 0;
+    vector<ClosedBlock> blocks;
+};
+struct ClosedBlockMemo {
+    UInt64 first_version = 0, second_version = 0;
+    Real gain = 0;
+    int first_block = -1, second_block = -1;
+};
+static vector<ClosedBlockContext> closed_block_contexts;
+static vector<ClosedBlockMemo> closed_block_memos;
+static const vector<ClosedBlock> &closed_blocks(const SearchState &state, int taxi) {
+    if (closed_block_contexts.size() != size_t(instance.taxi_count))
+        closed_block_contexts.resize(instance.taxi_count);
+    auto &context = closed_block_contexts[taxi];
+    if (context.version == state.route_version[taxi])
+        return context.blocks;
+    const auto &idx = delta_index(state, taxi);
+    const auto &route = state.routes[taxi];
+    context.blocks.clear();
+    for (int begin = 0; begin < int(route.size()); ++begin) {
+        for (int end = begin + 2; end <= min<int>(route.size(), begin + 4); end += 2) {
+            bool closed = true;
+            int parcels = 0;
+            for (int p = begin; p < end; ++p) {
+                int r = instance.node_request[route[p]];
+                if (idx.pickup[r] < begin || idx.delivery[r] >= end) {
+                    closed = false;
+                    break;
+                }
+                if (!instance.is_delivery[route[p]] && !instance.requests[r].is_passenger)
+                    ++parcels;
+            }
+            if (!closed)
+                continue;
+            ClosedBlock block;
+            block.begin = begin;
+            block.end = end;
+            block.requests = (end - begin) / 2;
+            block.parcels = parcels;
+            block.prefix = segment_range(idx.segments, 0, begin);
+            block.body = segment_range(idx.segments, begin, end);
+            block.suffix = segment_range(idx.segments, end, route.size());
+            block.previous = begin ? route[begin - 1] : instance.taxi_origin[taxi];
+            block.next = end < int(route.size()) ? route[end] : 0;
+            block.removed_boundary_cost =
+                travel_cost(block.previous, block.body.first_node) +
+                (block.next ? travel_cost(block.body.last_node, block.next) : 0);
+            context.blocks.push_back(block);
+        }
+    }
+    context.version = state.route_version[taxi];
+    return context.blocks;
+}
+static Real closed_block_delta(const ClosedBlock &a, const ClosedBlock &b) {
+    // All served revenues and internal block arcs cancel in the fleet sum.
+    // Only four boundary arcs change. No modified route is constructed.
+    return a.removed_boundary_cost + b.removed_boundary_cost -
+           travel_cost(a.previous, b.body.first_node) -
+           (a.next ? travel_cost(b.body.last_node, a.next) : 0) -
+           travel_cost(b.previous, a.body.first_node) -
+           (b.next ? travel_cost(a.body.last_node, b.next) : 0);
+}
+static bool improve_closed_block_exchange(SearchState &state, Deadline deadline) {
+    if (Clock::now() >= deadline)
+        return false;
+
+    size_t count = size_t(instance.taxi_count) * instance.taxi_count;
+    if (closed_block_memos.size() != count)
+        closed_block_memos.resize(count);
+    for (int t = 0; t < instance.taxi_count; ++t)
+        closed_blocks(state, t);
+    Real best = FEASIBILITY_EPSILON;
+    int first = -1, second = -1, ai = -1, bi = -1;
+    for (int a = 0; a < instance.taxi_count; ++a)
+        for (int b = a + 1; b < instance.taxi_count; ++b) {
+            auto &memo = closed_block_memos[size_t(a) * instance.taxi_count + b];
+            const auto &as = closed_block_contexts[a].blocks;
+            const auto &bs = closed_block_contexts[b].blocks;
+            if (memo.first_version != state.route_version[a] ||
+                memo.second_version != state.route_version[b]) {
+                memo = {};
+                memo.first_version = state.route_version[a];
+                memo.second_version = state.route_version[b];
+                memo.gain = FEASIBILITY_EPSILON;
+                for (int i = 0; i < int(as.size()); ++i)
+                    for (int j = 0; j < int(bs.size()); ++j) {
+                        const auto &x = as[i];
+                        const auto &y = bs[j];
+                        if ((x.requests == 1 && y.requests == 1) || !(x.parcels + y.parcels))
+                            continue;
+
+                        Real gain = closed_block_delta(x, y);
+                        if (gain <= memo.gain)
+                            continue;
+                        auto left = join_segments(join_segments(x.prefix, y.body), x.suffix);
+                        if (!is_segment_feasible(a, left))
+                            continue;
+                        auto right = join_segments(join_segments(y.prefix, x.body), y.suffix);
+                        if (!is_segment_feasible(b, right))
+                            continue;
+                        memo.gain = gain;
+                        memo.first_block = i;
+                        memo.second_block = j;
+                    }
+            }
+            if (memo.first_block >= 0 && memo.gain > best) {
+                best = memo.gain;
+                first = a;
+                second = b;
+                ai = memo.first_block;
+                bi = memo.second_block;
+            }
+        }
+    if (first < 0)
+        return false;
+    const auto &a = closed_block_contexts[first].blocks[ai],
+               &b = closed_block_contexts[second].blocks[bi];
+    const auto &old_a = state.routes[first], &old_b = state.routes[second];
+    Route left, right;
+    left.reserve(old_a.size() + old_b.size());
+    right.reserve(old_a.size() + old_b.size());
+    left.insert(left.end(), old_a.begin(), old_a.begin() + a.begin);
+    left.insert(left.end(), old_b.begin() + b.begin, old_b.begin() + b.end);
+    left.insert(left.end(), old_a.begin() + a.end, old_a.end());
+    right.insert(right.end(), old_b.begin(), old_b.begin() + b.begin);
+    right.insert(right.end(), old_a.begin() + a.begin, old_a.begin() + a.end);
+    right.insert(right.end(), old_b.begin() + b.end, old_b.end());
+    auto lv = evaluate_route(instance, first, left), rv = evaluate_route(instance, second, right);
+    if (!lv || !rv)
+        throw runtime_error("Closed-block feasibility disagreement");
+    Real gain = *lv + *rv - state.route_profit[first] - state.route_profit[second];
+    if (abs(gain - best) > 1e-6 * max(1.0, abs(best)))
+        throw runtime_error("Closed-block delta disagreement");
+    if (gain <= FEASIBILITY_EPSILON)
+        return false;
+    update_route_pair(state, first, left, second, right);
+    store_route(first, state.routes[first]);
+    store_route(second, state.routes[second]);
+    return true;
+}
+
 static bool best_neighborhood_descent(SearchState &state, Deadline deadline) {
-    ++descent_attempts;
+
     while (Clock::now() < deadline) {
         Real before = state.profit;
         improve_solution(state, deadline, true, 1);
         if (Clock::now() < deadline)
             improve_parcel_alns(state, deadline);
         if (Clock::now() >= deadline) {
-            ++descent_interrupted;
             return false;
         }
+        improve_closed_block_exchange(state, deadline);
         if (state.profit <= before + FEASIBILITY_EPSILON) {
-            ++descent_completed;
             return true;
         }
     }
-    ++descent_interrupted;
     return false;
 }
+// Greedy acceptance after a complete destroy,repair and local descent.
 static void fast_rebuild_fleets(SearchState &incumbent, Deadline deadline) {
-    random_engine.seed(random_seed + SEED_STRIDE * fleet_generation_calls++);
+    const auto call_id = fleet_generation_calls++;
+    random_engine.seed(random_seed + SEED_STRIDE * call_id);
     SearchState current = incumbent, best = incumbent;
     InsertionCache cache;
     IntVector served, repair;
     vector<char> scheduled(instance.request_count, 0);
     size_t round = 0, cursor = random_engine() % max(1, instance.request_count);
-    while (Clock::now() < deadline) {
-        if (round && (round % 32 == 0 || current.profit < best.profit * .98))
-            current = best;
+    while (true) {
+        const auto now = Clock::now();
+        if (now >= deadline)
+            break;
+        SearchState previous = current;
+
         served.clear();
         for (int r = 0; r < instance.request_count; ++r)
             if (current.request_owner[r] >= 0)
@@ -10120,7 +10269,6 @@ static void fast_rebuild_fleets(SearchState &incumbent, Deadline deadline) {
                 for (int r : ids)
                     add(r);
                 update_route(current, source, {});
-                fast_alns_counters.removed += ids.size();
             } else {
                 int amount = 2 + random_engine() % 4;
                 if (round % 4 == 1) {
@@ -10156,7 +10304,6 @@ static void fast_rebuild_fleets(SearchState &incumbent, Deadline deadline) {
                     if (evaluate_route(instance, taxi, route)) {
                         update_route(current, taxi, route);
                         add(r);
-                        ++fast_alns_counters.removed;
                     }
                 }
             }
@@ -10176,7 +10323,7 @@ static void fast_rebuild_fleets(SearchState &incumbent, Deadline deadline) {
                 break;
             if (current.request_owner[r] >= 0)
                 continue;
-            ++fast_alns_counters.repair_requests;
+
             auto choice = find_fleet_insertion(current, r, cache);
             if (choice.taxi >= 0)
                 apply_insertion(current, choice);
@@ -10186,9 +10333,14 @@ static void fast_rebuild_fleets(SearchState &incumbent, Deadline deadline) {
             best = current;
             store_fleet(best.routes);
         }
+        // Preserve a better interrupted proposal,but do not start another round.
+        if (!complete)
+            break;
+        const Real change = current.profit - previous.profit;
+        if (!(change >= -FEASIBILITY_EPSILON))
+            current = move(previous);
         ++round;
-        if (complete)
-            ++fast_alns_counters.rounds;
+        ++rebuild_progress.rounds;
     }
     incumbent = best;
     store_fleet(incumbent.routes);
@@ -10197,18 +10349,18 @@ static void fast_rebuild_fleets(SearchState &incumbent, Deadline deadline) {
 // Incremental priced repair: one taxi at a time, cached request prices and a
 // bounded rotating request scan. Candidate routes may reuse requests assigned
 // to other taxis; only the master reconciles cross-taxi conflicts.
-struct FastPricingCounters {
-    size_t calls = 0, probes = 0, stored = 0, cursor = 0, taxi_cursor = 0;
+struct PricingProgress {
+    size_t calls = 0, probes = 0, cursor = 0, taxi_cursor = 0;
 };
-static FastPricingCounters fast_pricing_counters;
+static PricingProgress pricing_progress;
 RealVector fast_request_prices;
 static void fast_price_routes(SearchState &state, Deadline deadline) {
     if (Clock::now() >= deadline || !instance.request_count)
         return;
-    ++fast_pricing_counters.calls;
+    ++pricing_progress.calls;
     if (fast_request_prices.size() != size_t(instance.request_count))
         fast_request_prices.assign(instance.request_count, 0);
-    int taxi = fast_pricing_counters.taxi_cursor++ % instance.taxi_count;
+    int taxi = pricing_progress.taxi_cursor++ % instance.taxi_count;
     auto score = [&](const Route &route) {
         Real value = route_profit(taxi, route);
         for (int r : served_requests(route))
@@ -10219,7 +10371,7 @@ static void fast_price_routes(SearchState &state, Deadline deadline) {
     Real current_score = score(route);
     // Bank seeds supply alternatives that are unavailable to a feasible-fleet
     // repair. Read map entries before writing a new candidate.
-    if (fast_pricing_counters.calls % 3 == 0) {
+    if (pricing_progress.calls % 3 == 0) {
         const StoredRoute *best = nullptr;
         Real value = -INF;
         for (const auto &entry : route_bank[taxi]) {
@@ -10243,7 +10395,7 @@ static void fast_price_routes(SearchState &state, Deadline deadline) {
         for (int r : ids)
             used[r] = 1;
         for (int scan = 0; scan < instance.request_count && candidates.size() < 24; ++scan) {
-            int r = fast_pricing_counters.cursor++ % instance.request_count;
+            int r = pricing_progress.cursor++ % instance.request_count;
             if (!used[r])
                 candidates.push_back(r);
         }
@@ -10255,7 +10407,7 @@ static void fast_price_routes(SearchState &state, Deadline deadline) {
         for (int r : candidates) {
             if (Clock::now() >= deadline)
                 break;
-            ++fast_pricing_counters.probes;
+            ++pricing_progress.probes;
             auto insert = find_route_insertion(r, taxi, route,
                                                best_score - current_score + fast_request_prices[r]);
             if (insert.taxi >= 0) {
@@ -10287,7 +10439,6 @@ static void fast_price_routes(SearchState &state, Deadline deadline) {
         route = move(chosen);
         current_score = best_score;
         store_route(taxi, route, false, *value);
-        ++fast_pricing_counters.stored;
     }
 }
 
@@ -10393,22 +10544,24 @@ static BankRetentionStats retain_bank(const SearchState &state, const RealVector
     return stats;
 }
 
+// --- Driver: generation,greedy rebuilding,bank selection,pricing and polish ---
 int main(int argc, char **argv) {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
-    auto start = Clock::now();
+    const auto start = Clock::now();
     if (argc > 1)
         random_seed = strtoull(argv[1], nullptr, 10);
     random_engine.seed(random_seed);
     instance = read_instance();
-    const auto wall_deadline = start + Seconds(299);
-    // Finish an already-started scan and serialize output within this reserve.
-    search_deadline = wall_deadline - Seconds(2);
+    // Include input time;reserve two seconds for an in-flight scan and output.
+    search_deadline = start + Seconds(299) - Seconds(2);
     route_bank.resize(instance.taxi_count);
     bank_profit_floor.assign(instance.taxi_count, -INF);
     if (instance.taxi_count > LARGE_FLEET_TAXI_LIMIT)
         bank_route_limit = LARGE_FLEET_BANK_LIMIT;
     SearchState state = make_search_state(Fleet(instance.taxi_count));
+
+    // Probe completeness,then build the ordinary bounded bank when necessary.
     full_probe_mode = true;
     bool complete = enumerate_routes(min(search_deadline, deadline_after(1)));
     full_probe_mode = false;
@@ -10419,66 +10572,53 @@ int main(int argc, char **argv) {
         dfs_generation_calls = 0;
         enumerate_routes(min(search_deadline, deadline_after(20)));
     }
-    size_t cycles = 0, master_calls = 0, price_refreshes = 0, compactions = 0;
-    double alns_seconds = 0, selection_seconds = 0, pricing_seconds = 0, price_seconds = 0,
-           retention_seconds = 0;
-    auto loop_deadline = search_deadline - Seconds(8);
-    auto bootstrap_begin = Clock::now();
+
+    // Preserve eight seconds for the final full-bank solve and route refinement.
+    const auto loop_deadline = search_deadline - Seconds(8);
     rebuild_fleets(state, min(loop_deadline, deadline_after(10)));
-    alns_seconds += chrono::duration<double>(Clock::now() - bootstrap_begin).count();
+    size_t cycles = 0;
     while (Clock::now() < loop_deadline) {
-        auto tick = Clock::now();
-        size_t old_rounds = fast_alns_counters.rounds;
+        const size_t old_rounds = rebuild_progress.rounds;
         fast_rebuild_fleets(state, min(loop_deadline, deadline_after(.25)));
-        alns_seconds += chrono::duration<double>(Clock::now() - tick).count();
         if (cycles && cycles % 16 == 0 && Clock::now() < loop_deadline) {
-            tick = Clock::now();
             rebuild_fleets(state, min(loop_deadline, deadline_after(.5)));
             improve_solution(state, min(loop_deadline, deadline_after(.2)), true, 1);
-            alns_seconds += chrono::duration<double>(Clock::now() - tick).count();
         }
         if (Clock::now() >= loop_deadline)
             break;
+
+        // Bound bank storage while retaining incumbent and coverage alternatives.
         size_t columns = 0;
         for (const auto &bank : route_bank)
             columns += bank.size();
         if (columns > 2 * size_t(bank_route_limit) * instance.taxi_count) {
-            tick = Clock::now();
             if (fast_request_prices.empty())
                 fast_request_prices.assign(instance.request_count, 0);
             retain_bank(state, fast_request_prices, bank_route_limit, true, true);
-            ++compactions;
-            retention_seconds += chrono::duration<double>(Clock::now() - tick).count();
         }
-        tick = Clock::now();
         select_fleet_routes(state, min(loop_deadline, deadline_after(.30)));
-        ++master_calls;
-        selection_seconds += chrono::duration<double>(Clock::now() - tick).count();
         if (Clock::now() >= loop_deadline)
             break;
+
+        // Refresh opportunity costs periodically,and grow independent alternatives.
         if (cycles % 16 == 0) {
-            tick = Clock::now();
             auto prices =
                 estimate_request_prices(state.profit, min(loop_deadline, deadline_after(.04)));
             if (any_of(prices.begin(), prices.end(), [](Real p) { return p > 0; }))
                 fast_request_prices = move(prices);
-            ++price_refreshes;
-            price_seconds += chrono::duration<double>(Clock::now() - tick).count();
         }
-        tick = Clock::now();
-        size_t old_probes = fast_pricing_counters.probes;
+        const size_t old_probes = pricing_progress.probes;
         fast_price_routes(state, min(loop_deadline, deadline_after(.10)));
         if (cycles % 8 == 0 && Clock::now() < loop_deadline)
             generate_priced_replacements(state, min(loop_deadline, deadline_after(.30)));
-        pricing_seconds += chrono::duration<double>(Clock::now() - tick).count();
-        if (fast_alns_counters.rounds > old_rounds && fast_pricing_counters.probes > old_probes)
+        if (rebuild_progress.rounds > old_rounds && pricing_progress.probes > old_probes)
             ++cycles;
     }
-    auto polish_begin = Clock::now();
+
+    // Reconcile the full bank,then refine parcel deliveries and the complete fleet.
     select_fleet_routes(state, min(search_deadline, deadline_after(3)), true);
     refine_parcel_deliveries(state, min(search_deadline, deadline_after(2)));
     improve_solution(state, search_deadline, true, FINAL_POLISH_CYCLES);
-    double polish_seconds = chrono::duration<double>(Clock::now() - polish_begin).count();
     cout << setprecision(17) << state.profit << '\n';
     for (const auto &route : state.routes) {
         cout << route.size();
@@ -10486,4 +10626,5 @@ int main(int argc, char **argv) {
             cout << ' ' << node;
         cout << '\n';
     }
+    return 0;
 }
