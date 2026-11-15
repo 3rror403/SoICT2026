@@ -1,0 +1,12 @@
+{
+  "type": "one_crossing_consolidation_optimum",
+  "parcels": 100,
+  "passengers": 0,
+  "capacity": 100,
+  "per_request_revenue": 1000,
+  "crossing_cost": 98000,
+  "within_cost_rational": "1/1000",
+  "upper_bound_rational": "1999801/1000",
+  "optimum": 1999.801,
+  "argument": "A served route must cross from pickup cluster to delivery cluster. For q served requests it uses 2q arcs, at least one crossing, so its profit is at most 1000q-C-(2q-1)/1000. Returning to pick up more is impossible after time 0.5. Splitting parcels across routes pays extra crossings. This bound increases in q and the supplied all-pickups-then-all-deliveries witness attains it at q=m. Each optional passenger adds at most 500-2/1000, cannot share a route with parcels or another passenger due to its pickup deadline and service time, and has its own taxi in the witness."
+}

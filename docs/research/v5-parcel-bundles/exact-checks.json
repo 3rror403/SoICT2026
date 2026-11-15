@@ -1,0 +1,624 @@
+{
+  "native_exact": [
+    {
+      "case": "no_requests",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "no_requests",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "no_return_to_origin",
+      "variant": "github",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "no_return_to_origin",
+      "variant": "hybrid",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "exact_parcel_capacity",
+      "variant": "github",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "exact_parcel_capacity",
+      "variant": "hybrid",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "overweight_request_optional",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "overweight_request_optional",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "passenger_uses_no_parcel_capacity",
+      "variant": "github",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "passenger_uses_no_parcel_capacity",
+      "variant": "hybrid",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "window_limits_arrival_not_service_finish",
+      "variant": "github",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "window_limits_arrival_not_service_finish",
+      "variant": "hybrid",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "zero_time_zero_width_window",
+      "variant": "github",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "zero_time_zero_width_window",
+      "variant": "hybrid",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "unreachable_pickup",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "unreachable_pickup",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "waiting_and_service_at_both_endpoints",
+      "variant": "github",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "waiting_and_service_at_both_endpoints",
+      "variant": "hybrid",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "unload_before_second_pickup",
+      "variant": "github",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "unload_before_second_pickup",
+      "variant": "hybrid",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "delivery_deadline_is_separate",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "delivery_deadline_is_separate",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "parcel_onboard_during_passenger_trip",
+      "variant": "github",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "parcel_onboard_during_passenger_trip",
+      "variant": "hybrid",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "two_loss_making_singletons_profitable_together",
+      "variant": "github",
+      "profit": 4.0,
+      "optimum": 4,
+      "valid": true
+    },
+    {
+      "case": "two_loss_making_singletons_profitable_together",
+      "variant": "hybrid",
+      "profit": 4.0,
+      "optimum": 4,
+      "valid": true
+    },
+    {
+      "case": "pair_seed_interleaved_parcels_capacity_2",
+      "variant": "github",
+      "profit": 4.0,
+      "optimum": 4,
+      "valid": true
+    },
+    {
+      "case": "pair_seed_interleaved_parcels_capacity_2",
+      "variant": "hybrid",
+      "profit": 4.0,
+      "optimum": 4,
+      "valid": true
+    },
+    {
+      "case": "pair_seed_interleaved_parcels_capacity_1",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "pair_seed_interleaved_parcels_capacity_1",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "zero_revenue_bridge_on_nonmetric_matrices",
+      "variant": "github",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "zero_revenue_bridge_on_nonmetric_matrices",
+      "variant": "hybrid",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "taxi_competition_requires_second_best_route",
+      "variant": "github",
+      "profit": 19.0,
+      "optimum": 19,
+      "valid": true
+    },
+    {
+      "case": "taxi_competition_requires_second_best_route",
+      "variant": "hybrid",
+      "profit": 19.0,
+      "optimum": 19,
+      "valid": true
+    },
+    {
+      "case": "heterogeneous_taxi_capacities",
+      "variant": "github",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "heterogeneous_taxi_capacities",
+      "variant": "hybrid",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "travel_time_and_cost_are_independent",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "travel_time_and_cost_are_independent",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "arrival_inside_feasibility_tolerance",
+      "variant": "github",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "arrival_inside_feasibility_tolerance",
+      "variant": "hybrid",
+      "profit": 10.0,
+      "optimum": 10,
+      "valid": true
+    },
+    {
+      "case": "arrival_outside_feasibility_tolerance",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "arrival_outside_feasibility_tolerance",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0,
+      "valid": true
+    },
+    {
+      "case": "delivery_waiting_can_require_interleaving",
+      "variant": "github",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "delivery_waiting_can_require_interleaving",
+      "variant": "hybrid",
+      "profit": 20.0,
+      "optimum": 20,
+      "valid": true
+    },
+    {
+      "case": "random_48200",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    },
+    {
+      "case": "random_48200",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    },
+    {
+      "case": "random_48201",
+      "variant": "github",
+      "profit": 43.0,
+      "optimum": 43.0,
+      "valid": true
+    },
+    {
+      "case": "random_48201",
+      "variant": "hybrid",
+      "profit": 43.0,
+      "optimum": 43.0,
+      "valid": true
+    },
+    {
+      "case": "random_48202",
+      "variant": "github",
+      "profit": 2.0,
+      "optimum": 2.0,
+      "valid": true
+    },
+    {
+      "case": "random_48202",
+      "variant": "hybrid",
+      "profit": 2.0,
+      "optimum": 2.0,
+      "valid": true
+    },
+    {
+      "case": "random_48203",
+      "variant": "github",
+      "profit": 44.5,
+      "optimum": 44.5,
+      "valid": true
+    },
+    {
+      "case": "random_48203",
+      "variant": "hybrid",
+      "profit": 44.5,
+      "optimum": 44.5,
+      "valid": true
+    },
+    {
+      "case": "random_48204",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    },
+    {
+      "case": "random_48204",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    },
+    {
+      "case": "random_48205",
+      "variant": "github",
+      "profit": 9.0,
+      "optimum": 9.0,
+      "valid": true
+    },
+    {
+      "case": "random_48205",
+      "variant": "hybrid",
+      "profit": 9.0,
+      "optimum": 9.0,
+      "valid": true
+    },
+    {
+      "case": "random_48206",
+      "variant": "github",
+      "profit": 35.0,
+      "optimum": 35.0,
+      "valid": true
+    },
+    {
+      "case": "random_48206",
+      "variant": "hybrid",
+      "profit": 35.0,
+      "optimum": 35.0,
+      "valid": true
+    },
+    {
+      "case": "random_48207",
+      "variant": "github",
+      "profit": 31.5,
+      "optimum": 31.5,
+      "valid": true
+    },
+    {
+      "case": "random_48207",
+      "variant": "hybrid",
+      "profit": 31.5,
+      "optimum": 31.5,
+      "valid": true
+    },
+    {
+      "case": "random_48208",
+      "variant": "github",
+      "profit": 25.0,
+      "optimum": 25.0,
+      "valid": true
+    },
+    {
+      "case": "random_48208",
+      "variant": "hybrid",
+      "profit": 25.0,
+      "optimum": 25.0,
+      "valid": true
+    },
+    {
+      "case": "random_48209",
+      "variant": "github",
+      "profit": 18.0,
+      "optimum": 18.0,
+      "valid": true
+    },
+    {
+      "case": "random_48209",
+      "variant": "hybrid",
+      "profit": 18.0,
+      "optimum": 18.0,
+      "valid": true
+    },
+    {
+      "case": "random_48210",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    },
+    {
+      "case": "random_48210",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    },
+    {
+      "case": "random_48211",
+      "variant": "github",
+      "profit": 78.5,
+      "optimum": 78.5,
+      "valid": true
+    },
+    {
+      "case": "random_48211",
+      "variant": "hybrid",
+      "profit": 78.5,
+      "optimum": 78.5,
+      "valid": true
+    },
+    {
+      "case": "random_48212",
+      "variant": "github",
+      "profit": 44.0,
+      "optimum": 44.0,
+      "valid": true
+    },
+    {
+      "case": "random_48212",
+      "variant": "hybrid",
+      "profit": 44.0,
+      "optimum": 44.0,
+      "valid": true
+    },
+    {
+      "case": "random_48213",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    },
+    {
+      "case": "random_48213",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    },
+    {
+      "case": "random_48214",
+      "variant": "github",
+      "profit": 20.0,
+      "optimum": 20.0,
+      "valid": true
+    },
+    {
+      "case": "random_48214",
+      "variant": "hybrid",
+      "profit": 20.0,
+      "optimum": 20.0,
+      "valid": true
+    },
+    {
+      "case": "random_48215",
+      "variant": "github",
+      "profit": 36.0,
+      "optimum": 36.0,
+      "valid": true
+    },
+    {
+      "case": "random_48215",
+      "variant": "hybrid",
+      "profit": 36.0,
+      "optimum": 36.0,
+      "valid": true
+    },
+    {
+      "case": "random_48216",
+      "variant": "github",
+      "profit": 27.0,
+      "optimum": 27.0,
+      "valid": true
+    },
+    {
+      "case": "random_48216",
+      "variant": "hybrid",
+      "profit": 27.0,
+      "optimum": 27.0,
+      "valid": true
+    },
+    {
+      "case": "random_48217",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    },
+    {
+      "case": "random_48217",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    },
+    {
+      "case": "random_48218",
+      "variant": "github",
+      "profit": 4.0,
+      "optimum": 4.0,
+      "valid": true
+    },
+    {
+      "case": "random_48218",
+      "variant": "hybrid",
+      "profit": 4.0,
+      "optimum": 4.0,
+      "valid": true
+    },
+    {
+      "case": "random_48219",
+      "variant": "github",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    },
+    {
+      "case": "random_48219",
+      "variant": "hybrid",
+      "profit": 0.0,
+      "optimum": 0.0,
+      "valid": true
+    }
+  ],
+  "seed_checks": [
+    {
+      "case": "idle_bundle_10",
+      "profit": 999.9809999999986,
+      "optimum": 999.981,
+      "valid": true
+    },
+    {
+      "case": "idle_bundle_100",
+      "profit": 999.8009999999747,
+      "optimum": 999.801,
+      "valid": true
+    },
+    {
+      "case": "idle_bundle_250",
+      "profit": 999.5010000011068,
+      "optimum": 999.501,
+      "valid": true
+    },
+    {
+      "case": "busy_parcel_m100_target2000_late5",
+      "profit": 2000.0,
+      "optimum": 2000,
+      "valid": true
+    },
+    {
+      "case": "busy_parcel_m50_target1000_late100",
+      "profit": 4606.0,
+      "optimum": 4606,
+      "valid": true
+    }
+  ]
+}

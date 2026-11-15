@@ -1,6 +1,6 @@
 # Current second-submission artifact
 
-The current upload is the readable standalone `submission/submission.cpp`, documented in [submission/README.md](../../submission/README.md). It contains v010 plus memory corrections and late parcel-pair generation, with the embedded HSOL backend and no research logging. Its current local source convention is500,000 characters. Compile and validate that exact file; the modular packagers below describe an older algorithm and do not regenerate this promoted version.
+The selected standalone `submission/submission.cpp` is V5 plus the conservative P2 parcel-bundle move, documented in [submission/README.md](../../submission/README.md) and the [version history and research report](../research/v5-parcel-bundles/README.md). It preserves embedded HSOL and V5's memory/deadline safeguards. Compile and validate that exact file; `submission.readable.cpp` and the modular packagers below describe historical artifacts and do not regenerate this selected version.
 
 The remainder is retained as historical packaging documentation.
 

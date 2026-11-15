@@ -7011,6 +7011,9 @@ bool enumerate_routes(Deadline deadline, const RealVector &prices = {});
 void enumerate_route_prefix(int taxi, int last_node, Real departure_time, Real total_cost,
                             Real revenue, Real load, int open_parcels);
 void rebuild_fleets(SearchState &incumbent, Deadline deadline);
+bool seed_parcel_bundle(SearchState &state, Deadline deadline,
+    const vector<unsigned char> *eligible = nullptr, bool save_candidate = true);
+bool seed_parcel_bundle_move(SearchState &state, Deadline deadline);
 void destroy_solution(SearchState &state, int round_index);
 void generate_priced_replacements(SearchState &state, Deadline deadline);
 void select_fleet_routes(SearchState &state, Deadline deadline, bool full_fleet = false);
@@ -7773,6 +7776,7 @@ void rebuild_fleets(SearchState &incumbent, Deadline deadline) {
         // Complete profitable insertions, then occasionally run the cheaper descent neighborhoods.
         while (Clock::now() < deadline && improve_by_insertion(current, cache)) {
         }
+        if (!round_index && Clock::now() < deadline) seed_parcel_bundle_move(current, deadline);
         if (round_index % REBUILD_POLISH_INTERVAL == 0 && Clock::now() < deadline) {
             improve_solution(current, deadline, false);
             if (Clock::now()<deadline) improve_parcel_alns(current,deadline);
@@ -7787,6 +7791,132 @@ void rebuild_fleets(SearchState &incumbent, Deadline deadline) {
     // Return the best fleet; preserve its routes as candidates for later master solves.
     incumbent = best_state;
     store_fleet(incumbent.routes);
+}
+
+// Some parcel groups are profitable only together: every singleton/pair may lose.
+// Build a bounded pickup-first batch, then test complete pickup/delivery routes.
+// This greedy neighborhood supplements insertion; it does not enumerate all orders.
+bool seed_parcel_bundle(SearchState &state, Deadline deadline,
+    const vector<unsigned char> *eligible, bool save_candidate) {
+	IntVector available, idle;
+	for (int r = instance.passenger_count; r < instance.request_count; ++r)
+		if (state.request_owner[r] < 0 && (!eligible || (*eligible)[r])) available.push_back(r);
+	if (available.size() < 3) return false;
+	for (int taxi = 0; taxi < instance.taxi_count; ++taxi)
+		if (state.routes[taxi].empty()) idle.push_back(taxi);
+	if (idle.empty()) return false;
+	deadline = min(deadline, Clock::now() + Milliseconds(50));
+	Real best = FEASIBILITY_EPSILON;
+	int best_taxi = -1;
+	Route best_route;
+	// Bound both taxi and parcel starts; the caller shares one 50-ms allowance.
+	const size_t taxi_starts = min<size_t>(8, idle.size()), seeds = min<size_t>(6, available.size());
+	for (size_t ti = 0; ti < taxi_starts && Clock::now() < deadline; ++ti) {
+		int taxi = idle[(ti + fleet_generation_calls) % idle.size()];
+		for (size_t seed = 0; seed < seeds && Clock::now() < deadline; ++seed) {
+			IntVector picked;
+			RealVector departures;
+			vector<unsigned char> used(instance.request_count, 0);
+			int last = instance.taxi_origin[taxi];
+			Real departure = 0, load = 0;
+			// Grow pickups by earliest service finish, respecting pickup windows and load.
+			while (picked.size() < available.size() && Clock::now() < deadline) {
+				int chosen = -1;
+				Real earliest_finish = INF;
+				for (int r : available) {
+					if (used[r]) continue;
+					if (picked.empty() && r != available[seed * available.size() / seeds]) continue;
+					const auto &request = instance.requests[r];
+					Real arrival = departure + travel_time(last, request.pickup_node);
+					if (arrival > request.pickup_latest + FEASIBILITY_EPSILON ||
+						load + request.weight > instance.taxi_capacity[taxi] + FEASIBILITY_EPSILON) continue;
+					Real finish = max(arrival, request.pickup_earliest) + request.service_time;
+					if (finish < earliest_finish) { earliest_finish = finish; chosen = r; }
+				}
+				if (chosen < 0) break;
+				used[chosen] = 1;
+				picked.push_back(chosen);
+				departures.push_back(earliest_finish);
+				departure = earliest_finish;
+				load += instance.requests[chosen].weight;
+				last = instance.requests[chosen].pickup_node;
+			}
+			// Try shorter pickup prefixes if the full batch has no feasible delivery order.
+			// Deliver greedily, but never accept an unfinished or partially profitable route.
+			for (int count = int(picked.size()); count >= 3 && Clock::now() < deadline; --count) {
+				Route route;
+				for (int i = 0; i < count; ++i) route.push_back(instance.requests[picked[i]].pickup_node);
+				last = route.back();
+				departure = departures[count-1];
+				vector<unsigned char> delivered(count, 0);
+				for (int step = 0; step < count && Clock::now() < deadline; ++step) {
+					int chosen = -1;
+					Real earliest_finish = INF;
+					for (int i = 0; i < count; ++i) {
+						if (delivered[i]) continue;
+						const auto &request = instance.requests[picked[i]];
+						Real arrival = departure + travel_time(last, request.delivery_node);
+						if (arrival > request.delivery_latest + FEASIBILITY_EPSILON) continue;
+						Real finish = max(arrival, request.delivery_earliest) + request.service_time;
+						if (finish < earliest_finish) { earliest_finish = finish; chosen = i; }
+					}
+					if (chosen < 0) break;
+					delivered[chosen] = 1;
+					last = instance.requests[picked[chosen]].delivery_node;
+					route.push_back(last);
+					departure = earliest_finish;
+				}
+				if (route.size() != size_t(2*count)) continue;
+				// The full simulator remains authoritative for feasibility and true profit.
+				auto value = evaluate_route(instance, taxi, route);
+				if (value && *value > FEASIBILITY_EPSILON) {
+					if (*value > best) { best = *value; best_taxi = taxi; best_route = move(route); }
+					break;
+				}
+			}
+		}
+	}
+	if (best_taxi < 0) return false;
+	update_route(state, best_taxi, best_route);
+	if (save_candidate) store_route(best_taxi, best_route, false, best);
+	return true;
+}
+
+// Keep the idle-taxi seed; otherwise test at most two weak occupied routes.
+// Only originally unserved parcels are eligible. Rejected trials never enter
+// the global route bank, and fleet acceptance includes the displaced profit.
+bool seed_parcel_bundle_move(SearchState &state, Deadline deadline) {
+	deadline = min(deadline, Clock::now() + Milliseconds(50));
+	if (seed_parcel_bundle(state, deadline)) return true;
+	// Preserve P2's conservative gate. An idle but undersized taxi can still block
+	// replacement; the broader P3 gate lost points on an ordinary parcel input.
+	if (Clock::now() >= deadline || any_of(state.routes.begin(), state.routes.end(),
+		[](const Route &route) { return route.empty(); })) return false;
+	// Freeze eligibility before eviction so released old jobs do not distract the seed.
+	vector<unsigned char> eligible(instance.request_count, 0);
+	int count = 0;
+	for (int r = instance.passenger_count; r < instance.request_count; ++r)
+		if (state.request_owner[r] < 0) { eligible[r] = 1; ++count; }
+	if (count < 3) return false;
+	IntVector order(instance.taxi_count);
+	iota(order.begin(), order.end(), 0);
+	stable_sort(order.begin(), order.end(), [&](int a, int b) {
+		return state.route_profit[a] < state.route_profit[b];
+	});
+	for (int i = 0; i < min<int>(2, order.size()) && Clock::now() < deadline; ++i) {
+		// Speculate in a copied fleet; update_route also refreshes route versions.
+		SearchState trial = state;
+		update_route(trial, order[i], {});
+		if (!seed_parcel_bundle(trial, deadline, &eligible, false)) continue;
+		// Charge the displaced route: a positive bundle alone is insufficient.
+		// Only a strict whole-fleet improvement is committed and added to the bank.
+		if (trial.profit > state.profit + FEASIBILITY_EPSILON) {
+			state = move(trial);
+			store_fleet(state.routes);
+			return true;
+		}
+	}
+	return false;
 }
 
 // Cycle through whole-taxi, random, related, and profit-based removals.

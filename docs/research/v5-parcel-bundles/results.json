@@ -1,0 +1,165 @@
+{
+  "commit": "ee67c9f0fa741055e9b189f50cfdf16b9de631d1",
+  "sources": {
+    "base_commit": "ee67c9f0fa741055e9b189f50cfdf16b9de631d1",
+    "base_sha256": "4d595ee28ad578d37d0fed7e9fd6dc757fd8022db3ce645b7f602eb998576e12",
+    "donor_sha256": "bb2ab54d600cb00ced0dc43f3d75ba56aa5dd7cfd5e1fc041a8fed81f77bd2b3",
+    "hybrid_sha256": "961c3c6709baf05548f7c5003c953ed2a14564f4cccac0c46fcf5d1ccd85e3fb",
+    "hybrid_bytes": 390356,
+    "changes": [
+      "P2 parcel-batch seed and occupied-route fallback",
+      "one call in first round of each V5 rebuilding phase"
+    ],
+    "unchanged": [
+      "HSOL backend",
+      "V5 compact bank representation",
+      "V5 memory guards",
+      "V5 deadlines",
+      "V5 parcel ALNS",
+      "speculative trial bank suppression"
+    ]
+  },
+  "publication": {
+    "tested_source_sha256": "961c3c6709baf05548f7c5003c953ed2a14564f4cccac0c46fcf5d1ccd85e3fb",
+    "published_source_sha256": "002eb667234edfba877349f7ca1ea7d83d43b7dbfbb0f50fdcbbf4590160870e",
+    "change_from_tested_source": "Inserted explanatory comments only"
+  },
+  "platform": "WSL Ubuntu 22.04; GCC 11.4; C++17 -O2 -DNDEBUG -pedantic-errors",
+  "seed": 1,
+  "internal_budget_seconds": 298,
+  "external_watchdog_seconds": 320,
+  "concurrency": 1,
+  "solutions_revalidated": true,
+  "peak_rss_method": "GNU time -v; KiB converted to MiB",
+  "native_exact_cases_per_variant": 42,
+  "hybrid_seed_checks": 5,
+  "comparisons": [
+    {
+      "instance": "r400_p200_m200.txt",
+      "input_sha256": "141c714cf334ad53e90bb28419f25491b4686b6693ede1a8bea5a19c151b03e5",
+      "v5_objective": 32012.0,
+      "hybrid_objective": 32012.0,
+      "delta": 0.0,
+      "v5_wall_seconds": 12.555057138999999,
+      "hybrid_wall_seconds": 11.851893464999996,
+      "v5_peak_rss_mib": 136.88671875,
+      "hybrid_peak_rss_mib": 136.7578125
+    },
+    {
+      "instance": "r500_p250_m250_k49_s349.txt",
+      "input_sha256": "cf8a496914e4dc0b7ea8f2be65e339cbaf62b8c7c09de1fa9a0e4b29e3a8600b",
+      "v5_objective": 33399.0,
+      "hybrid_objective": 33399.0,
+      "delta": 0.0,
+      "v5_wall_seconds": 298.11685877199994,
+      "hybrid_wall_seconds": 298.118899279,
+      "v5_peak_rss_mib": 106.80078125,
+      "hybrid_peak_rss_mib": 106.484375
+    },
+    {
+      "instance": "parcel_consolidation_m100_gap2000.txt",
+      "input_sha256": "312e1dec54cbf9b5991253ef34f754af78c7d3ec51167ce06d83178f77c246f6",
+      "v5_objective": 0.0,
+      "hybrid_objective": 1999.8009999999786,
+      "delta": 1999.8009999999786,
+      "v5_wall_seconds": 297.0622905629999,
+      "hybrid_wall_seconds": 297.13894239,
+      "v5_peak_rss_mib": 4.875,
+      "hybrid_peak_rss_mib": 5.375
+    }
+  ],
+  "earlier_v5_vs_p2": {
+    "variant_labels": {
+      "baseline": "V5",
+      "candidate": "P2"
+    },
+    "runs": [
+      {
+        "instance": "r400_p200_m200.txt",
+        "instance_id": "r400_p200_m200_141c714cf3",
+        "seed": 1,
+        "variant": "baseline",
+        "status": "feasible",
+        "objective": 32012.0,
+        "wall_seconds": 14.203644318,
+        "returncode": 0,
+        "solution": "solutions/r400_p200_m200_141c714cf3_seed1_baseline.sol",
+        "solution_sha256": "9fa0122417b016c2ac976b807e6e2da8186301949db354188516b52b6c73e149",
+        "error": null
+      },
+      {
+        "instance": "r400_p200_m200.txt",
+        "instance_id": "r400_p200_m200_141c714cf3",
+        "seed": 1,
+        "variant": "candidate",
+        "status": "feasible",
+        "objective": 32012.0,
+        "wall_seconds": 114.98400100299999,
+        "returncode": 0,
+        "solution": "solutions/r400_p200_m200_141c714cf3_seed1_candidate.sol",
+        "solution_sha256": "9fa0122417b016c2ac976b807e6e2da8186301949db354188516b52b6c73e149",
+        "error": null
+      },
+      {
+        "instance": "parcel_decoy_m100_capacity30_gap2000.txt",
+        "instance_id": "parcel_decoy_m100_capacity30_gap2000_114011c7c3",
+        "seed": 1,
+        "variant": "candidate",
+        "status": "feasible",
+        "objective": 2291.0,
+        "wall_seconds": 102.55286494699999,
+        "returncode": 0,
+        "solution": "solutions/parcel_decoy_m100_capacity30_gap2000_114011c7c3_seed1_candidate.sol",
+        "solution_sha256": "b53beaa4f4ab4f6e1034488558210c11f69d6d9947d969a9e63b1d66c6f7bfc7",
+        "error": null
+      },
+      {
+        "instance": "parcel_decoy_m100_capacity30_gap2000.txt",
+        "instance_id": "parcel_decoy_m100_capacity30_gap2000_114011c7c3",
+        "seed": 1,
+        "variant": "baseline",
+        "status": "feasible",
+        "objective": 2291.0,
+        "wall_seconds": 298.093903102,
+        "returncode": 0,
+        "solution": "solutions/parcel_decoy_m100_capacity30_gap2000_114011c7c3_seed1_baseline.sol",
+        "solution_sha256": "4ee9d1ea139b6e14282f9434703882960cc8b65c631e695b12bcaea6d30e3cdb",
+        "error": null
+      },
+      {
+        "instance": "hetero_parcel_m100_cap20_fee1_target2000.txt",
+        "instance_id": "hetero_parcel_m100_cap20_fee1_target2000_9b9a5c79de",
+        "seed": 1,
+        "variant": "baseline",
+        "status": "feasible",
+        "objective": 2290.0,
+        "wall_seconds": 297.2786124219999,
+        "returncode": 0,
+        "solution": "solutions/hetero_parcel_m100_cap20_fee1_target2000_9b9a5c79de_seed1_baseline.sol",
+        "solution_sha256": "3e2d4b45e5df845d8b491c6dc2c58944d68cc14208cc0444efa8b1bf994fb2bf",
+        "error": null
+      },
+      {
+        "instance": "hetero_parcel_m100_cap20_fee1_target2000.txt",
+        "instance_id": "hetero_parcel_m100_cap20_fee1_target2000_9b9a5c79de",
+        "seed": 1,
+        "variant": "candidate",
+        "status": "feasible",
+        "objective": 291.0,
+        "wall_seconds": 102.95518890899996,
+        "returncode": 0,
+        "solution": "solutions/hetero_parcel_m100_cap20_fee1_target2000_9b9a5c79de_seed1_candidate.sol",
+        "solution_sha256": "53fef620176df4e3c5f7456f612daaa9b5a3ff9b0e47adb8a4eb87370ea25efb",
+        "error": null
+      }
+    ]
+  },
+  "active_submission": "V5 + P2; executable source text unchanged, explanatory comments added",
+  "limitations": [
+    "One seed per large input; no hidden-test win-rate estimate",
+    "Constructed consolidation case is deliberately adversarial",
+    "Peak RSS is measured on WSL, not the unknown contest server",
+    "V5 and hybrid use Linux APIs; native Windows build is unverified",
+    "Old P3 was not imported; capacity-aware P3C remains untested"
+  ]
+}
